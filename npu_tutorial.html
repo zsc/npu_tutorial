@@ -750,6 +750,1125 @@ if __name__ == "__main__":
                 </div>
             </div>
         </div>
+
+        <div id="chapter2" class="chapter">
+            <h2>第2章：神经网络计算基础</h2>
+            
+            <h3>2.1 神经网络基本运算</h3>
+            
+            <h4>2.1.1 神经元计算模型</h4>
+            <p>神经元是神经网络的基本计算单元，其数学模型为：</p>
+            <div class="code-block">
+y = f(Σ(wi * xi) + b)
+
+其中：
+- wi * xi：加权输入 (Weighted Input)
+- Σ(...)：求和 (Summation)  
+- b：偏置 (Bias)
+- f(...)：激活函数 (Activation Function)
+            </div>
+            
+            <div class="info-box">
+                <p><strong>硬件视角：</strong>神经元的核心运算是乘累加（MAC），这是NPU设计的基础。一个神经元的计算可以分解为：</p>
+                <ol>
+                    <li>多个乘法运算：wi * xi</li>
+                    <li>累加运算：Σ(wi * xi)</li>
+                    <li>加偏置：+ b</li>
+                    <li>激活函数：f(...)</li>
+                </ol>
+            </div>
+
+            <h4>2.1.2 激活函数的硬件实现</h4>
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>激活函数</th>
+                            <th>公式</th>
+                            <th>硬件实现方式</th>
+                            <th>硬件成本</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>ReLU</td>
+                            <td>max(0, x)</td>
+                            <td>比较器 + 选择器</td>
+                            <td>极低</td>
+                        </tr>
+                        <tr>
+                            <td>Leaky ReLU</td>
+                            <td>max(αx, x)</td>
+                            <td>乘法器 + 比较器 + 选择器</td>
+                            <td>低</td>
+                        </tr>
+                        <tr>
+                            <td>Sigmoid</td>
+                            <td>1/(1+e^(-x))</td>
+                            <td>查找表(LUT) / 分段线性逼近</td>
+                            <td>高</td>
+                        </tr>
+                        <tr>
+                            <td>Tanh</td>
+                            <td>(e^x - e^(-x))/(e^x + e^(-x))</td>
+                            <td>查找表(LUT) / 分段线性逼近</td>
+                            <td>高</td>
+                        </tr>
+                        <tr>
+                            <td>GeLU</td>
+                            <td>x * Φ(x)</td>
+                            <td>多级查找表 + 插值</td>
+                            <td>很高</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <h3>2.2 矩阵乘法与卷积运算</h3>
+            
+            <h4>2.2.1 通用矩阵乘法（GEMM）</h4>
+            <p>全连接层的本质是矩阵乘法：<code>Y = XW + B</code></p>
+            
+            <div class="code-block">
+// 矩阵乘法的基本实现
+for (int i = 0; i < M; i++) {
+    for (int j = 0; j < N; j++) {
+        float sum = 0;
+        for (int k = 0; k < K; k++) {
+            sum += A[i][k] * B[k][j];  // MAC运算
+        }
+        C[i][j] = sum;
+    }
+}
+
+// 硬件视角的优化考虑：
+// 1. 内层循环是MAC运算，适合并行化
+// 2. 数据复用：A的每一行被复用N次，B的每一列被复用M次
+// 3. 访存模式：顺序访问A，跳跃访问B（缓存不友好）
+            </div>
+
+            <h4>2.2.2 卷积运算的实现方式</h4>
+            
+            <div class="warning-box">
+                <p><strong>核心挑战：</strong>卷积运算涉及多维数据和复杂的访存模式，如何高效地映射到硬件是NPU设计的关键。</p>
+            </div>
+
+            <p><strong>方法1：Im2Col + GEMM</strong></p>
+            <div class="code-block">
+// Im2Col转换示例
+// 输入: [H, W, C_in]
+// 卷积核: [K_h, K_w, C_in, C_out]
+// 输出: [H_out, W_out, C_out]
+
+// Step 1: Im2Col展开
+// 将每个卷积窗口展开成一列
+// 展开后矩阵大小: [K_h * K_w * C_in, H_out * W_out]
+
+// Step 2: 矩阵乘法
+// 权重矩阵: [C_out, K_h * K_w * C_in]
+// 结果 = 权重矩阵 × Im2Col矩阵
+
+// 优点：可以复用高效的GEMM硬件
+// 缺点：内存开销大，数据冗余严重
+            </div>
+
+            <p><strong>方法2：直接卷积</strong></p>
+            <div class="code-block">
+// 直接卷积的硬件实现
+module ConvolutionEngine #(
+    parameter IN_WIDTH = 8,
+    parameter WEIGHT_WIDTH = 8,
+    parameter OUT_WIDTH = 32
+)(
+    input clk,
+    input rst_n,
+    input [IN_WIDTH-1:0] pixel_in,
+    input [WEIGHT_WIDTH-1:0] weight,
+    input valid_in,
+    output [OUT_WIDTH-1:0] conv_out,
+    output valid_out
+);
+    // Line Buffer用于缓存输入行
+    // Window Buffer用于提取卷积窗口
+    // MAC阵列执行并行乘累加
+endmodule
+            </div>
+
+            <h3>2.3 数据流与并行计算</h3>
+            
+            <h4>2.3.1 数据流架构</h4>
+            <p>NPU的数据流设计决定了如何在计算单元间移动和复用数据，直接影响性能和功耗。</p>
+            
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>数据流类型</th>
+                            <th>固定数据</th>
+                            <th>移动数据</th>
+                            <th>优势</th>
+                            <th>适用场景</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>权重固定(WS)</td>
+                            <td>权重</td>
+                            <td>输入、部分和</td>
+                            <td>权重复用率高</td>
+                            <td>权重大、批处理小</td>
+                        </tr>
+                        <tr>
+                            <td>输出固定(OS)</td>
+                            <td>部分和</td>
+                            <td>权重、输入</td>
+                            <td>减少部分和读写</td>
+                            <td>输出通道多</td>
+                        </tr>
+                        <tr>
+                            <td>输入固定(IS)</td>
+                            <td>输入</td>
+                            <td>权重、部分和</td>
+                            <td>输入复用率高</td>
+                            <td>输入大、权重小</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <h4>2.3.2 并行计算维度</h4>
+            <div class="code-block">
+// 卷积运算的7个循环维度
+for (n = 0; n < N; n++)         // Batch
+  for (k = 0; k < K; k++)       // 输出通道
+    for (c = 0; c < C; c++)     // 输入通道
+      for (y = 0; y < Y; y++)   // 输出高度
+        for (x = 0; x < X; x++) // 输出宽度
+          for (fy = 0; fy < FY; fy++)   // 卷积核高度
+            for (fx = 0; fx < FX; fx++) // 卷积核宽度
+              out[n][k][y][x] += in[n][c][y+fy][x+fx] * w[k][c][fy][fx]
+
+// NPU可以选择在不同维度上并行化：
+// 1. 空间并行：在Y、X维度展开
+// 2. 通道并行：在K、C维度展开
+// 3. 批处理并行：在N维度展开
+            </div>
+
+            <h3>2.4 量化与数据格式</h3>
+            
+            <h4>2.4.1 量化原理</h4>
+            <p>量化是将高精度浮点数转换为低精度定点数的过程，是NPU提升效率的关键技术。</p>
+            
+            <div class="code-block">
+// 对称量化
+int8_value = round(fp32_value / scale)
+fp32_value = int8_value * scale
+
+// 非对称量化
+int8_value = round(fp32_value / scale) + zero_point
+fp32_value = (int8_value - zero_point) * scale
+
+// 量化参数计算
+scale = (max_val - min_val) / (2^bits - 1)
+zero_point = round(-min_val / scale)
+            </div>
+
+            <h4>2.4.2 不同精度的硬件开销对比</h4>
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>数据类型</th>
+                            <th>位宽</th>
+                            <th>乘法器面积</th>
+                            <th>加法器面积</th>
+                            <th>功耗比例</th>
+                            <th>内存带宽</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>FP32</td>
+                            <td>32-bit</td>
+                            <td>1.0x</td>
+                            <td>1.0x</td>
+                            <td>1.0x</td>
+                            <td>1.0x</td>
+                        </tr>
+                        <tr>
+                            <td>FP16</td>
+                            <td>16-bit</td>
+                            <td>~0.25x</td>
+                            <td>~0.5x</td>
+                            <td>~0.4x</td>
+                            <td>0.5x</td>
+                        </tr>
+                        <tr>
+                            <td>INT8</td>
+                            <td>8-bit</td>
+                            <td>~0.125x</td>
+                            <td>~0.25x</td>
+                            <td>~0.25x</td>
+                            <td>0.25x</td>
+                        </tr>
+                        <tr>
+                            <td>INT4</td>
+                            <td>4-bit</td>
+                            <td>~0.06x</td>
+                            <td>~0.125x</td>
+                            <td>~0.1x</td>
+                            <td>0.125x</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="exercise">
+                <h4>练习题集 2</h4>
+                
+                <div class="question">
+                    <p><strong>题目2.1：</strong>某NPU的MAC阵列大小为32×32，计算一个[512, 1024] × [1024, 2048]的矩阵乘法需要多少个计算周期？假设每个周期可以完成阵列大小的MAC运算。</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <p><strong>答案：</strong></p>
+                        <p>矩阵分块计算：</p>
+                        <ol>
+                            <li>结果矩阵大小：[512, 2048]</li>
+                            <li>总MAC运算次数：512 × 1024 × 2048 = 1,073,741,824</li>
+                            <li>MAC阵列每周期运算次数：32 × 32 = 1,024</li>
+                            <li>分块数量：
+                                <ul>
+                                    <li>M维度分块：⌈512/32⌉ = 16</li>
+                                    <li>N维度分块：⌈2048/32⌉ = 64</li>
+                                    <li>K维度分块：⌈1024/32⌉ = 32</li>
+                                </ul>
+                            </li>
+                            <li>总周期数：16 × 64 × 32 = 32,768 周期</li>
+                        </ol>
+                        <p><strong>验证：</strong>32,768 × 1,024 = 33,554,432 ≈ 1,073,741,824 / 32（考虑边界填充）</p>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目2.2：</strong>设计一个支持ReLU和Sigmoid激活函数的硬件模块。对于Sigmoid，使用4段分段线性逼近。给出RTL设计框架。</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <div class="code-block">
+module ActivationUnit #(
+    parameter DATA_WIDTH = 16,
+    parameter FRAC_WIDTH = 8
+)(
+    input wire clk,
+    input wire rst_n,
+    input wire [DATA_WIDTH-1:0] data_in,
+    input wire [1:0] act_type,  // 00: bypass, 01: ReLU, 10: Sigmoid
+    input wire valid_in,
+    output reg [DATA_WIDTH-1:0] data_out,
+    output reg valid_out
+);
+
+    // Sigmoid分段线性逼近参数（4段）
+    // 区间: [-8, -2.5], [-2.5, 0], [0, 2.5], [2.5, 8]
+    localparam signed [DATA_WIDTH-1:0] SIGMOID_X1 = -16'd2048;  // -8 (Q8.8)
+    localparam signed [DATA_WIDTH-1:0] SIGMOID_X2 = -16'd640;   // -2.5
+    localparam signed [DATA_WIDTH-1:0] SIGMOID_X3 = 16'd0;      // 0
+    localparam signed [DATA_WIDTH-1:0] SIGMOID_X4 = 16'd640;    // 2.5
+    localparam signed [DATA_WIDTH-1:0] SIGMOID_X5 = 16'd2048;   // 8
+    
+    // 斜率和截距（根据Sigmoid曲线拟合得出）
+    localparam [DATA_WIDTH-1:0] SLOPE1 = 16'd13;    // 0.05
+    localparam [DATA_WIDTH-1:0] SLOPE2 = 16'd51;    // 0.2
+    localparam [DATA_WIDTH-1:0] SLOPE3 = 16'd64;    // 0.25
+    localparam [DATA_WIDTH-1:0] SLOPE4 = 16'd51;    // 0.2
+    
+    wire signed [DATA_WIDTH-1:0] data_in_signed;
+    reg [DATA_WIDTH-1:0] relu_out;
+    reg [DATA_WIDTH-1:0] sigmoid_out;
+    reg [2*DATA_WIDTH-1:0] mult_result;
+    
+    assign data_in_signed = data_in;
+    
+    // ReLU实现
+    always @(*) begin
+        if (data_in_signed < 0)
+            relu_out = 0;
+        else
+            relu_out = data_in;
+    end
+    
+    // Sigmoid分段线性逼近
+    always @(*) begin
+        if (data_in_signed <= SIGMOID_X1) begin
+            sigmoid_out = 16'd0;  // 0
+        end else if (data_in_signed <= SIGMOID_X2) begin
+            mult_result = (data_in_signed - SIGMOID_X1) * SLOPE1;
+            sigmoid_out = mult_result[DATA_WIDTH+FRAC_WIDTH-1:FRAC_WIDTH];
+        end else if (data_in_signed <= SIGMOID_X3) begin
+            mult_result = (data_in_signed - SIGMOID_X2) * SLOPE2;
+            sigmoid_out = 16'd26 + mult_result[DATA_WIDTH+FRAC_WIDTH-1:FRAC_WIDTH];  // 0.1 + ...
+        end else if (data_in_signed <= SIGMOID_X4) begin
+            mult_result = data_in_signed * SLOPE3;
+            sigmoid_out = 16'd128 + mult_result[DATA_WIDTH+FRAC_WIDTH-1:FRAC_WIDTH];  // 0.5 + ...
+        end else if (data_in_signed <= SIGMOID_X5) begin
+            mult_result = (data_in_signed - SIGMOID_X4) * SLOPE4;
+            sigmoid_out = 16'd230 + mult_result[DATA_WIDTH+FRAC_WIDTH-1:FRAC_WIDTH];  // 0.9 + ...
+        end else begin
+            sigmoid_out = 16'd256;  // 1.0
+        end
+    end
+    
+    // 输出选择
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            data_out <= 0;
+            valid_out <= 0;
+        end else if (valid_in) begin
+            case (act_type)
+                2'b00: data_out <= data_in;      // Bypass
+                2'b01: data_out <= relu_out;     // ReLU
+                2'b10: data_out <= sigmoid_out;  // Sigmoid
+                default: data_out <= data_in;
+            endcase
+            valid_out <= 1;
+        end else begin
+            valid_out <= 0;
+        end
+    end
+endmodule
+                        </div>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目2.3：</strong>比较Im2Col+GEMM和直接卷积两种实现方式。对于一个输入[224,224,3]、卷积核[3,3,3,64]的卷积层，计算Im2Col的内存开销。</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <p><strong>答案：</strong></p>
+                        <p><strong>1. Im2Col内存开销计算：</strong></p>
+                        <ol>
+                            <li>输出特征图大小（假设stride=1, padding=1）：[224, 224, 64]</li>
+                            <li>Im2Col展开后每个位置：3×3×3 = 27个元素</li>
+                            <li>总位置数：224×224 = 50,176</li>
+                            <li>Im2Col矩阵大小：[27, 50,176]</li>
+                            <li>内存占用（FP32）：27 × 50,176 × 4 bytes = 5.42 MB</li>
+                            <li>原始输入大小：224 × 224 × 3 × 4 bytes = 0.60 MB</li>
+                            <li><strong>内存扩展比例：9.0倍</strong></li>
+                        </ol>
+                        
+                        <p><strong>2. 两种方式对比：</strong></p>
+                        <table>
+                            <tr>
+                                <th>特性</th>
+                                <th>Im2Col + GEMM</th>
+                                <th>直接卷积</th>
+                            </tr>
+                            <tr>
+                                <td>内存开销</td>
+                                <td>高（9倍扩展）</td>
+                                <td>低（仅需Line Buffer）</td>
+                            </tr>
+                            <tr>
+                                <td>计算效率</td>
+                                <td>高（复用GEMM优化）</td>
+                                <td>中等</td>
+                            </tr>
+                            <tr>
+                                <td>硬件复杂度</td>
+                                <td>简单（复用GEMM单元）</td>
+                                <td>复杂（需要专用控制）</td>
+                            </tr>
+                            <tr>
+                                <td>适用场景</td>
+                                <td>大卷积核、服务器端</td>
+                                <td>小卷积核、边缘设备</td>
+                            </tr>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目2.4：</strong>设计一个简单的脉动阵列数据流控制器，支持权重固定（Weight Stationary）模式。要求能够处理8×8的MAC阵列。</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <div class="code-block">
+module WeightStationaryController #(
+    parameter ARRAY_SIZE = 8,
+    parameter DATA_WIDTH = 8,
+    parameter ADDR_WIDTH = 16
+)(
+    input wire clk,
+    input wire rst_n,
+    input wire start,
+    
+    // 配置接口
+    input wire [ADDR_WIDTH-1:0] input_base_addr,
+    input wire [ADDR_WIDTH-1:0] weight_base_addr,
+    input wire [ADDR_WIDTH-1:0] output_base_addr,
+    input wire [15:0] M, N, K,  // 矩阵维度
+    
+    // SRAM接口
+    output reg [ADDR_WIDTH-1:0] input_addr,
+    output reg input_rd_en,
+    input wire [DATA_WIDTH*ARRAY_SIZE-1:0] input_data,
+    
+    output reg [ADDR_WIDTH-1:0] weight_addr,
+    output reg weight_rd_en,
+    input wire [DATA_WIDTH*ARRAY_SIZE-1:0] weight_data,
+    
+    output reg [ADDR_WIDTH-1:0] output_addr,
+    output reg output_wr_en,
+    output reg [DATA_WIDTH*ARRAY_SIZE-1:0] output_data,
+    
+    // MAC阵列接口
+    output reg [DATA_WIDTH-1:0] input_to_array [0:ARRAY_SIZE-1],
+    output reg [DATA_WIDTH-1:0] weight_to_array [0:ARRAY_SIZE-1][0:ARRAY_SIZE-1],
+    output reg weight_load,
+    output reg compute_en,
+    input wire [DATA_WIDTH-1:0] output_from_array [0:ARRAY_SIZE-1],
+    
+    // 状态输出
+    output reg busy,
+    output reg done
+);
+
+    // 状态机定义
+    localparam IDLE = 3'd0;
+    localparam LOAD_WEIGHT = 3'd1;
+    localparam COMPUTE = 3'd2;
+    localparam STORE_OUTPUT = 3'd3;
+    localparam NEXT_TILE = 3'd4;
+    
+    reg [2:0] state, next_state;
+    reg [15:0] tile_m, tile_n, tile_k;  // 当前处理的分块索引
+    reg [15:0] cycle_cnt;                // 周期计数器
+    reg [15:0] k_iter;                   // K维度迭代计数
+    
+    // 计算分块数量
+    wire [15:0] num_tile_m = (M + ARRAY_SIZE - 1) / ARRAY_SIZE;
+    wire [15:0] num_tile_n = (N + ARRAY_SIZE - 1) / ARRAY_SIZE;
+    wire [15:0] num_tile_k = (K + ARRAY_SIZE - 1) / ARRAY_SIZE;
+    
+    // 状态机
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            state <= IDLE;
+        else
+            state <= next_state;
+    end
+    
+    // 状态转换逻辑
+    always @(*) begin
+        next_state = state;
+        case (state)
+            IDLE: begin
+                if (start)
+                    next_state = LOAD_WEIGHT;
+            end
+            
+            LOAD_WEIGHT: begin
+                if (cycle_cnt == ARRAY_SIZE - 1)
+                    next_state = COMPUTE;
+            end
+            
+            COMPUTE: begin
+                if (k_iter == K - 1)
+                    next_state = STORE_OUTPUT;
+            end
+            
+            STORE_OUTPUT: begin
+                if (cycle_cnt == ARRAY_SIZE - 1)
+                    next_state = NEXT_TILE;
+            end
+            
+            NEXT_TILE: begin
+                if (tile_n == num_tile_n - 1 && 
+                    tile_m == num_tile_m - 1)
+                    next_state = IDLE;
+                else
+                    next_state = LOAD_WEIGHT;
+            end
+        endcase
+    end
+    
+    // 控制逻辑
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            tile_m <= 0;
+            tile_n <= 0;
+            tile_k <= 0;
+            cycle_cnt <= 0;
+            k_iter <= 0;
+            weight_load <= 0;
+            compute_en <= 0;
+            busy <= 0;
+            done <= 0;
+        end else begin
+            case (state)
+                IDLE: begin
+                    if (start) begin
+                        tile_m <= 0;
+                        tile_n <= 0;
+                        tile_k <= 0;
+                        busy <= 1;
+                        done <= 0;
+                    end
+                end
+                
+                LOAD_WEIGHT: begin
+                    // 加载权重到阵列
+                    weight_load <= 1;
+                    weight_rd_en <= 1;
+                    weight_addr <= weight_base_addr + 
+                                  (tile_n * ARRAY_SIZE + cycle_cnt) * K + 
+                                  tile_k * ARRAY_SIZE;
+                    
+                    // 将权重数据分配到阵列
+                    for (int i = 0; i < ARRAY_SIZE; i++) begin
+                        for (int j = 0; j < ARRAY_SIZE; j++) begin
+                            weight_to_array[i][j] <= weight_data[j*DATA_WIDTH +: DATA_WIDTH];
+                        end
+                    end
+                    
+                    cycle_cnt <= cycle_cnt + 1;
+                    if (cycle_cnt == ARRAY_SIZE - 1) begin
+                        cycle_cnt <= 0;
+                        weight_load <= 0;
+                        weight_rd_en <= 0;
+                    end
+                end
+                
+                COMPUTE: begin
+                    // 启动计算
+                    compute_en <= 1;
+                    input_rd_en <= 1;
+                    
+                    // 读取输入数据
+                    input_addr <= input_base_addr + 
+                                 (tile_m * ARRAY_SIZE) * K + 
+                                 k_iter;
+                    
+                    // 将输入数据送入阵列
+                    for (int i = 0; i < ARRAY_SIZE; i++) begin
+                        input_to_array[i] <= input_data[i*DATA_WIDTH +: DATA_WIDTH];
+                    end
+                    
+                    k_iter <= k_iter + 1;
+                    if (k_iter == K - 1) begin
+                        k_iter <= 0;
+                        compute_en <= 0;
+                        input_rd_en <= 0;
+                    end
+                end
+                
+                STORE_OUTPUT: begin
+                    // 存储输出结果
+                    output_wr_en <= 1;
+                    output_addr <= output_base_addr + 
+                                  (tile_m * ARRAY_SIZE + cycle_cnt) * N + 
+                                  tile_n * ARRAY_SIZE;
+                    
+                    // 从阵列收集输出
+                    for (int i = 0; i < ARRAY_SIZE; i++) begin
+                        output_data[i*DATA_WIDTH +: DATA_WIDTH] <= output_from_array[i];
+                    end
+                    
+                    cycle_cnt <= cycle_cnt + 1;
+                    if (cycle_cnt == ARRAY_SIZE - 1) begin
+                        cycle_cnt <= 0;
+                        output_wr_en <= 0;
+                    end
+                end
+                
+                NEXT_TILE: begin
+                    // 移动到下一个分块
+                    if (tile_n < num_tile_n - 1) begin
+                        tile_n <= tile_n + 1;
+                    end else begin
+                        tile_n <= 0;
+                        tile_m <= tile_m + 1;
+                    end
+                    
+                    if (tile_n == num_tile_n - 1 && 
+                        tile_m == num_tile_m - 1) begin
+                        busy <= 0;
+                        done <= 1;
+                    end
+                end
+            endcase
+        end
+    end
+endmodule
+                        </div>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目2.5：</strong>分析深度可分离卷积（Depthwise Separable Convolution）的计算特点，说明为什么它对NPU的内存带宽要求更高。</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <p><strong>答案：</strong></p>
+                        <p><strong>深度可分离卷积分解为两步：</strong></p>
+                        <ol>
+                            <li><strong>Depthwise Convolution：</strong>每个输入通道独立卷积
+                                <ul>
+                                    <li>计算量：H×W×C×K×K</li>
+                                    <li>参数量：C×K×K</li>
+                                </ul>
+                            </li>
+                            <li><strong>Pointwise Convolution (1×1卷积)：</strong>跨通道混合
+                                <ul>
+                                    <li>计算量：H×W×C×M</li>
+                                    <li>参数量：C×M</li>
+                                </ul>
+                            </li>
+                        </ol>
+                        
+                        <p><strong>计算强度分析（Compute-to-Memory Ratio）：</strong></p>
+                        <table>
+                            <tr>
+                                <th>卷积类型</th>
+                                <th>计算量</th>
+                                <th>内存访问量</th>
+                                <th>计算强度</th>
+                            </tr>
+                            <tr>
+                                <td>标准卷积</td>
+                                <td>H×W×C×M×K×K</td>
+                                <td>H×W×(C+M) + C×M×K×K</td>
+                                <td>O(K×K)</td>
+                            </tr>
+                            <tr>
+                                <td>Depthwise</td>
+                                <td>H×W×C×K×K</td>
+                                <td>H×W×C×2 + C×K×K</td>
+                                <td>O(1)</td>
+                            </tr>
+                            <tr>
+                                <td>Pointwise</td>
+                                <td>H×W×C×M</td>
+                                <td>H×W×(C+M) + C×M</td>
+                                <td>O(1)</td>
+                            </tr>
+                        </table>
+                        
+                        <p><strong>为什么内存带宽要求更高：</strong></p>
+                        <ol>
+                            <li><strong>计算强度低：</strong>Depthwise卷积的计算强度为O(1)，而标准卷积为O(K²)。这意味着每次内存访问只能支撑很少的计算。</li>
+                            <li><strong>数据复用率低：</strong>
+                                <ul>
+                                    <li>标准卷积中，每个输入被M个输出通道复用</li>
+                                    <li>Depthwise中，每个输入只被1个输出通道使用</li>
+                                </ul>
+                            </li>
+                            <li><strong>Memory Bound：</strong>NPU的计算单元经常处于空闲状态，等待数据从内存加载。</li>
+                        </ol>
+                        
+                        <p><strong>优化策略：</strong></p>
+                        <ul>
+                            <li>增加片上缓存容量</li>
+                            <li>使用更宽的内存接口</li>
+                            <li>将Depthwise和Pointwise融合执行，减少中间结果的存储</li>
+                            <li>使用专门的DMA引擎进行数据预取</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目2.6：</strong>实现一个简单的INT8量化模块，支持对称量化和非对称量化两种模式。</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <div class="code-block">
+module Quantizer #(
+    parameter IN_WIDTH = 32,    // FP32输入
+    parameter OUT_WIDTH = 8,    // INT8输出
+    parameter SCALE_WIDTH = 16  // 定点scale表示
+)(
+    input wire clk,
+    input wire rst_n,
+    input wire [IN_WIDTH-1:0] fp_in,      // 浮点输入
+    input wire [SCALE_WIDTH-1:0] scale,   // 量化尺度
+    input wire [OUT_WIDTH-1:0] zero_point,// 零点（非对称量化）
+    input wire symmetric_mode,            // 0: 非对称, 1: 对称
+    input wire valid_in,
+    
+    output reg signed [OUT_WIDTH-1:0] int_out,  // 量化输出
+    output reg valid_out
+);
+
+    // 内部信号
+    reg [IN_WIDTH+SCALE_WIDTH-1:0] scaled_value;
+    reg signed [IN_WIDTH-1:0] rounded_value;
+    reg signed [IN_WIDTH-1:0] shifted_value;
+    wire signed [OUT_WIDTH-1:0] saturated_value;
+    
+    // 饱和边界
+    localparam signed [IN_WIDTH-1:0] MAX_INT8 = 127;
+    localparam signed [IN_WIDTH-1:0] MIN_INT8 = -128;
+    
+    // Step 1: 缩放
+    always @(*) begin
+        // 假设scale是定点表示 (Q8.8格式)
+        // 实际硬件中需要浮点转定点单元
+        scaled_value = fp_in * scale;
+    end
+    
+    // Step 2: 四舍五入
+    always @(*) begin
+        // 简化的四舍五入：加0.5后截断
+        rounded_value = scaled_value[IN_WIDTH+SCALE_WIDTH-1:SCALE_WIDTH] + 
+                       (scaled_value[SCALE_WIDTH-1] ? 1 : 0);
+    end
+    
+    // Step 3: 加零点（非对称量化）
+    always @(*) begin
+        if (symmetric_mode)
+            shifted_value = rounded_value;
+        else
+            shifted_value = rounded_value + {{(IN_WIDTH-OUT_WIDTH){1'b0}}, zero_point};
+    end
+    
+    // Step 4: 饱和处理
+    assign saturated_value = (shifted_value > MAX_INT8) ? MAX_INT8 :
+                            (shifted_value < MIN_INT8) ? MIN_INT8 :
+                            shifted_value[OUT_WIDTH-1:0];
+    
+    // 输出寄存
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            int_out <= 0;
+            valid_out <= 0;
+        end else if (valid_in) begin
+            int_out <= saturated_value;
+            valid_out <= 1;
+        end else begin
+            valid_out <= 0;
+        end
+    end
+endmodule
+
+// 反量化模块
+module Dequantizer #(
+    parameter IN_WIDTH = 8,     // INT8输入
+    parameter OUT_WIDTH = 32,   // FP32输出
+    parameter SCALE_WIDTH = 16
+)(
+    input wire clk,
+    input wire rst_n,
+    input wire signed [IN_WIDTH-1:0] int_in,
+    input wire [SCALE_WIDTH-1:0] scale,
+    input wire [IN_WIDTH-1:0] zero_point,
+    input wire symmetric_mode,
+    input wire valid_in,
+    
+    output reg [OUT_WIDTH-1:0] fp_out,
+    output reg valid_out
+);
+
+    // 内部信号
+    reg signed [OUT_WIDTH-1:0] shifted_value;
+    reg [OUT_WIDTH+SCALE_WIDTH-1:0] scaled_value;
+    
+    // Step 1: 减去零点
+    always @(*) begin
+        if (symmetric_mode)
+            shifted_value = {{(OUT_WIDTH-IN_WIDTH){int_in[IN_WIDTH-1]}}, int_in};
+        else
+            shifted_value = {{(OUT_WIDTH-IN_WIDTH){int_in[IN_WIDTH-1]}}, int_in} - 
+                           {{(OUT_WIDTH-IN_WIDTH){1'b0}}, zero_point};
+    end
+    
+    // Step 2: 乘以scale
+    always @(*) begin
+        scaled_value = shifted_value * scale;
+    end
+    
+    // 输出寄存
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            fp_out <= 0;
+            valid_out <= 0;
+        end else if (valid_in) begin
+            // 提取定点结果的整数部分
+            fp_out <= scaled_value[OUT_WIDTH+SCALE_WIDTH-1:SCALE_WIDTH];
+            valid_out <= 1;
+        end else begin
+            valid_out <= 0;
+        end
+    end
+endmodule
+                        </div>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目2.7：</strong>计算并比较不同批处理大小（batch size）对NPU效率的影响。假设处理一个ResNet50的第一个卷积层，输入[N,224,224,3]，卷积核[7,7,3,64]。</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <p><strong>答案：</strong></p>
+                        <p><strong>不同batch size的影响分析：</strong></p>
+                        
+                        <table>
+                            <tr>
+                                <th>Batch Size</th>
+                                <th>计算量(GFLOPs)</th>
+                                <th>内存占用(MB)</th>
+                                <th>并行度</th>
+                                <th>数据复用率</th>
+                            </tr>
+                            <tr>
+                                <td>1</td>
+                                <td>0.118</td>
+                                <td>输入: 0.6<br>输出: 3.2</td>
+                                <td>低</td>
+                                <td>权重复用率: 1x</td>
+                            </tr>
+                            <tr>
+                                <td>8</td>
+                                <td>0.944</td>
+                                <td>输入: 4.8<br>输出: 25.6</td>
+                                <td>中</td>
+                                <td>权重复用率: 8x</td>
+                            </tr>
+                            <tr>
+                                <td>32</td>
+                                <td>3.776</td>
+                                <td>输入: 19.2<br>输出: 102.4</td>
+                                <td>高</td>
+                                <td>权重复用率: 32x</td>
+                            </tr>
+                            <tr>
+                                <td>128</td>
+                                <td>15.104</td>
+                                <td>输入: 76.8<br>输出: 409.6</td>
+                                <td>很高</td>
+                                <td>权重复用率: 128x</td>
+                            </tr>
+                        </table>
+                        
+                        <p><strong>计算过程：</strong></p>
+                        <ol>
+                            <li>输出大小：(224-7+2*3)/2+1 = 112，即[N,112,112,64]</li>
+                            <li>每个输出像素的计算量：7×7×3×2 = 294 FLOPs</li>
+                            <li>总计算量：N×112×112×64×294</li>
+                        </ol>
+                        
+                        <p><strong>NPU效率影响：</strong></p>
+                        <ol>
+                            <li><strong>小batch size (1-8)：</strong>
+                                <ul>
+                                    <li>权重复用率低，需要频繁重新加载权重</li>
+                                    <li>MAC阵列利用率低，很多PE空闲</li>
+                                    <li>适合边缘设备，响应延迟低</li>
+                                </ul>
+                            </li>
+                            <li><strong>中等batch size (16-32)：</strong>
+                                <ul>
+                                    <li>权重复用率适中</li>
+                                    <li>MAC阵列利用率较好</li>
+                                    <li>内存占用在可接受范围</li>
+                                </ul>
+                            </li>
+                            <li><strong>大batch size (64-128)：</strong>
+                                <ul>
+                                    <li>权重复用率高，摊销权重加载开销</li>
+                                    <li>MAC阵列充分利用</li>
+                                    <li>可能受限于片上SRAM容量</li>
+                                    <li>适合云端训练场景</li>
+                                </ul>
+                            </li>
+                        </ol>
+                        
+                        <p><strong>优化建议：</strong></p>
+                        <ul>
+                            <li>边缘NPU：优化batch=1的性能，采用权重固定数据流</li>
+                            <li>云端NPU：支持大batch，增加片上SRAM容量</li>
+                            <li>动态批处理：根据负载自适应调整batch size</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目2.8：</strong>设计一个简单的稀疏计算单元，能够跳过零值计算。给出零检测和地址生成的RTL框架。</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <div class="code-block">
+module SparseComputeUnit #(
+    parameter DATA_WIDTH = 8,
+    parameter ADDR_WIDTH = 16,
+    parameter PE_NUM = 16       // 并行PE数量
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 输入数据和索引
+    input wire [DATA_WIDTH-1:0] activation_data [0:PE_NUM-1],
+    input wire [DATA_WIDTH-1:0] weight_data [0:PE_NUM-1],
+    input wire [PE_NUM-1:0] activation_valid,  // 非零标志
+    input wire [PE_NUM-1:0] weight_valid,      // 非零标志
+    input wire data_valid,
+    
+    // 稀疏索引
+    input wire [ADDR_WIDTH-1:0] activation_indices [0:PE_NUM-1],
+    input wire [ADDR_WIDTH-1:0] weight_indices [0:PE_NUM-1],
+    
+    // 输出接口
+    output reg [2*DATA_WIDTH-1:0] result_data [0:PE_NUM-1],
+    output reg [ADDR_WIDTH-1:0] result_indices [0:PE_NUM-1],
+    output reg [PE_NUM-1:0] result_valid,
+    output reg output_valid
+);
+
+    // 内部信号
+    reg [PE_NUM-1:0] compute_mask;
+    wire [2*DATA_WIDTH-1:0] mult_results [0:PE_NUM-1];
+    reg [4:0] valid_count;
+    reg [4:0] compact_indices [0:PE_NUM-1];
+    
+    // 生成计算掩码（只有当激活值和权重都非零时才计算）
+    always @(*) begin
+        compute_mask = activation_valid & weight_valid;
+    end
+    
+    // 并行乘法器
+    genvar i;
+    generate
+        for (i = 0; i < PE_NUM; i = i + 1) begin : mult_gen
+            assign mult_results[i] = activation_data[i] * weight_data[i];
+        end
+    endgenerate
+    
+    // 计算有效结果数量
+    always @(*) begin
+        valid_count = 0;
+        for (int j = 0; j < PE_NUM; j = j + 1) begin
+            if (compute_mask[j])
+                valid_count = valid_count + 1;
+        end
+    end
+    
+    // 压缩有效结果（去除零值结果）
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            output_valid <= 0;
+            result_valid <= 0;
+        end else if (data_valid) begin
+            int compact_idx = 0;
+            
+            // 压缩非零结果
+            for (int j = 0; j < PE_NUM; j = j + 1) begin
+                if (compute_mask[j]) begin
+                    result_data[compact_idx] <= mult_results[j];
+                    result_indices[compact_idx] <= activation_indices[j];
+                    result_valid[compact_idx] <= 1'b1;
+                    compact_idx = compact_idx + 1;
+                end
+            end
+            
+            // 清空未使用的输出
+            for (int j = compact_idx; j < PE_NUM; j = j + 1) begin
+                result_data[j] <= 0;
+                result_indices[j] <= 0;
+                result_valid[j] <= 1'b0;
+            end
+            
+            output_valid <= 1;
+        end else begin
+            output_valid <= 0;
+        end
+    end
+endmodule
+
+// 稀疏数据加载器
+module SparseDataLoader #(
+    parameter DATA_WIDTH = 8,
+    parameter ADDR_WIDTH = 16,
+    parameter SPARSE_FORMAT = "CSR"  // CSR或COO格式
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 内存接口
+    output reg [ADDR_WIDTH-1:0] mem_addr,
+    output reg mem_rd_en,
+    input wire [31:0] mem_data,
+    
+    // 稀疏数据输出
+    output reg [DATA_WIDTH-1:0] value_out,
+    output reg [ADDR_WIDTH-1:0] row_idx_out,
+    output reg [ADDR_WIDTH-1:0] col_idx_out,
+    output reg data_valid_out,
+    
+    // 控制接口
+    input wire start,
+    input wire [ADDR_WIDTH-1:0] base_addr,
+    input wire [15:0] nnz,  // 非零元素数量
+    output reg done
+);
+
+    // CSR格式存储结构
+    // values[nnz]: 非零值数组
+    // col_indices[nnz]: 列索引数组
+    // row_ptrs[rows+1]: 行指针数组
+    
+    reg [15:0] element_cnt;
+    reg [2:0] load_state;
+    
+    localparam IDLE = 3'd0;
+    localparam LOAD_VALUE = 3'd1;
+    localparam LOAD_COL_IDX = 3'd2;
+    localparam OUTPUT = 3'd3;
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            load_state <= IDLE;
+            element_cnt <= 0;
+            done <= 0;
+            mem_rd_en <= 0;
+            data_valid_out <= 0;
+        end else begin
+            case (load_state)
+                IDLE: begin
+                    if (start) begin
+                        element_cnt <= 0;
+                        load_state <= LOAD_VALUE;
+                        done <= 0;
+                    end
+                end
+                
+                LOAD_VALUE: begin
+                    mem_rd_en <= 1;
+                    mem_addr <= base_addr + element_cnt;
+                    load_state <= LOAD_COL_IDX;
+                end
+                
+                LOAD_COL_IDX: begin
+                    value_out <= mem_data[DATA_WIDTH-1:0];
+                    mem_addr <= base_addr + nnz + element_cnt;
+                    load_state <= OUTPUT;
+                end
+                
+                OUTPUT: begin
+                    col_idx_out <= mem_data[ADDR_WIDTH-1:0];
+                    data_valid_out <= 1;
+                    mem_rd_en <= 0;
+                    
+                    element_cnt <= element_cnt + 1;
+                    if (element_cnt == nnz - 1) begin
+                        load_state <= IDLE;
+                        done <= 1;
+                    end else begin
+                        load_state <= LOAD_VALUE;
+                    end
+                end
+            endcase
+        end
+    end
+endmodule
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
         
     </div>
 
