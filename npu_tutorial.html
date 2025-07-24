@@ -109,6 +109,8 @@
             font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
             font-size: 14px;
             line-height: 1.5;
+            white-space: pre-wrap;
+            word-wrap: break-word;
         }
 
         .exercise {
@@ -4807,6 +4809,3559 @@ endmodule
                 </div>
             </div>
         </div>
+
+        <!-- Chapter 5: 存储系统设计 -->
+        <section id="chapter5" class="chapter">
+            <h2>第5章：存储系统设计</h2>
+            
+            <p>存储系统是NPU性能的关键瓶颈之一。本章深入探讨NPU片上存储系统的架构与设计要点，包括SRAM设计、Memory Banking策略、数据预取机制、缓存一致性、DMA设计以及内存压缩技术。</p>
+
+            <h3>5.1 片上SRAM设计</h3>
+            
+            <p>片上SRAM是NPU存储层次结构的核心，为计算单元提供超低延迟、超高带宽的数据访问。</p>
+
+            <h4>5.1.1 SRAM设计权衡</h4>
+            <div class="code-block">
+SRAM设计的关键权衡：
+
+1. 容量 vs. 面积/功耗
+   - SRAM面积密度：~0.2 MB/mm² (7nm工艺)
+   - 静态功耗：~1mW/MB
+   - 动态功耗：与访问频率成正比
+
+2. 端口设计
+   - 单端口(1R1W)：面积最小，但限制并行访问
+   - 双端口(2R2W)：面积增加~70%，支持同时读写
+   - 多端口(nRmW)：面积随端口数超线性增长
+
+3. 访问延迟
+   - 容量增大 → 延迟增加（解码器、字线、位线延迟）
+   - 典型延迟：32KB ~1 cycle, 256KB ~2-3 cycles
+            </div>
+
+            <h4>5.1.2 多级存储层次</h4>
+            <div class="code-block">
+// 典型的三级存储层次设计
+module MemoryHierarchy (
+    input wire clk,
+    input wire rst_n,
+    // L0: PE本地寄存器文件
+    // L1: PE集群共享缓存
+    // L2: 全局共享缓存
+);
+
+// L0 Register File (每个PE私有)
+module L0_RegisterFile #(
+    parameter DEPTH = 16,       // 16个寄存器
+    parameter WIDTH = 256       // 256-bit宽度
+)(
+    input wire clk,
+    input wire [3:0] rd_addr,
+    input wire [3:0] wr_addr,
+    input wire wr_en,
+    input wire [WIDTH-1:0] wr_data,
+    output wire [WIDTH-1:0] rd_data
+);
+    reg [WIDTH-1:0] regs [0:DEPTH-1];
+    
+    assign rd_data = regs[rd_addr];
+    
+    always @(posedge clk) begin
+        if (wr_en)
+            regs[wr_addr] <= wr_data;
+    end
+endmodule
+
+// L1 Cluster Buffer (PE集群共享)
+module L1_ClusterBuffer #(
+    parameter SIZE = 64 * 1024,     // 64KB
+    parameter PORTS = 4,            // 4个访问端口
+    parameter WIDTH = 256
+)(
+    input wire clk,
+    input wire [PORTS-1:0] rd_en,
+    input wire [PORTS-1:0] wr_en,
+    input wire [15:0] rd_addr [PORTS-1:0],
+    input wire [15:0] wr_addr [PORTS-1:0],
+    input wire [WIDTH-1:0] wr_data [PORTS-1:0],
+    output wire [WIDTH-1:0] rd_data [PORTS-1:0]
+);
+    // 多端口SRAM实现
+endmodule
+            </div>
+
+            <h4>5.1.3 特殊SRAM结构</h4>
+            <div class="code-block">
+// 转置SRAM：支持行列双向访问
+module TransposeSRAM #(
+    parameter ROWS = 64,
+    parameter COLS = 64,
+    parameter DATA_WIDTH = 8
+)(
+    input wire clk,
+    input wire row_mode,    // 1: 行访问, 0: 列访问
+    input wire [5:0] addr_major,
+    input wire [5:0] addr_minor,
+    input wire wr_en,
+    input wire [DATA_WIDTH*COLS-1:0] wr_data,
+    output wire [DATA_WIDTH*COLS-1:0] rd_data
+);
+    // 实现支持行列转置访问的SRAM
+    reg [DATA_WIDTH-1:0] mem [0:ROWS-1][0:COLS-1];
+    
+    genvar i;
+    generate
+        for (i = 0; i < COLS; i = i + 1) begin
+            always @(posedge clk) begin
+                if (wr_en) begin
+                    if (row_mode)
+                        mem[addr_major][i] <= wr_data[i*DATA_WIDTH +: DATA_WIDTH];
+                    else
+                        mem[i][addr_major] <= wr_data[i*DATA_WIDTH +: DATA_WIDTH];
+                end
+            end
+            
+            assign rd_data[i*DATA_WIDTH +: DATA_WIDTH] = 
+                row_mode ? mem[addr_major][i] : mem[i][addr_major];
+        end
+    endgenerate
+endmodule
+            </div>
+
+            <h3>5.2 Memory Banking策略</h3>
+            
+            <p>Memory Banking通过将SRAM划分为多个独立的Bank，实现并行访问，成倍提升有效带宽。</p>
+
+            <h4>5.2.1 Bank冲突分析</h4>
+            <div class="code-block">
+Bank冲突的主要场景：
+
+1. 卷积中的步长访问
+   - 3×3卷积，stride=2时的访问模式
+   - Bank数量需要考虑GCD(stride, bank_num)
+
+2. 矩阵转置访问
+   - 行访问：连续地址
+   - 列访问：地址间隔为矩阵宽度
+
+3. 稀疏访问模式
+   - 不规则的访问地址
+   - 需要动态仲裁机制
+            </div>
+
+            <h4>5.2.2 地址映射策略</h4>
+            <div class="code-block">
+// 多Bank SRAM控制器
+module MultiBank_SRAM #(
+    parameter NUM_BANKS = 8,
+    parameter BANK_SIZE = 8192,     // 每个Bank 8KB
+    parameter DATA_WIDTH = 256,
+    parameter ADDR_WIDTH = 16
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 请求接口（支持多个并行请求）
+    input wire [3:0] req_valid,
+    input wire [ADDR_WIDTH-1:0] req_addr [3:0],
+    input wire [3:0] req_wr,
+    input wire [DATA_WIDTH-1:0] req_wdata [3:0],
+    output reg [3:0] req_ready,
+    output reg [DATA_WIDTH-1:0] resp_data [3:0],
+    output reg [3:0] resp_valid
+);
+
+    // Bank地址解码
+    wire [2:0] bank_id [3:0];
+    wire [12:0] bank_addr [3:0];
+    
+    genvar i;
+    generate
+        for (i = 0; i < 4; i = i + 1) begin
+            // 交织映射：低位作为bank索引
+            assign bank_id[i] = req_addr[i][2:0];
+            assign bank_addr[i] = req_addr[i][ADDR_WIDTH-1:3];
+        end
+    endgenerate
+    
+    // Bank仲裁逻辑
+    reg [3:0] bank_grant [NUM_BANKS-1:0];
+    
+    always @(*) begin
+        integer j, k;
+        // 初始化
+        for (j = 0; j < NUM_BANKS; j = j + 1)
+            bank_grant[j] = 4'b0000;
+            
+        // 仲裁：每个Bank只能授权一个请求
+        for (k = 0; k < 4; k = k + 1) begin
+            if (req_valid[k] && bank_grant[bank_id[k]] == 4'b0000) begin
+                bank_grant[bank_id[k]][k] = 1'b1;
+            end
+        end
+    end
+    
+    // Bank实例化
+    generate
+        for (i = 0; i < NUM_BANKS; i = i + 1) begin
+            BankSRAM #(
+                .SIZE(BANK_SIZE),
+                .WIDTH(DATA_WIDTH)
+            ) bank_inst (
+                .clk(clk),
+                .en(|bank_grant[i]),
+                .wr(/* 根据grant选择写请求 */),
+                .addr(/* 根据grant选择地址 */),
+                .wdata(/* 根据grant选择写数据 */),
+                .rdata(/* 连接到响应数据 */)
+            );
+        end
+    endgenerate
+endmodule
+
+// 专用于卷积的Bank映射
+module ConvBankMapping #(
+    parameter BANK_BITS = 3,        // 8个Bank
+    parameter CHANNEL_BITS = 6      // 64个通道
+)(
+    input wire [15:0] h_idx,        // Height坐标
+    input wire [15:0] w_idx,        // Width坐标
+    input wire [CHANNEL_BITS-1:0] c_idx,  // Channel坐标
+    output wire [BANK_BITS-1:0] bank_id,
+    output wire [15:0] bank_offset
+);
+    // 斜对角映射，避免3×3卷积的Bank冲突
+    wire [BANK_BITS-1:0] skew;
+    assign skew = (h_idx + w_idx) & ((1 << BANK_BITS) - 1);
+    assign bank_id = (c_idx[BANK_BITS-1:0] + skew) & ((1 << BANK_BITS) - 1);
+    
+    // Bank内偏移地址
+    assign bank_offset = {c_idx[CHANNEL_BITS-1:BANK_BITS], h_idx[7:0], w_idx[7:0]};
+endmodule
+            </div>
+
+            <h4>5.2.3 Bank冲突解决</h4>
+            <div class="code-block">
+// 带冲突缓冲的Bank访问调度器
+module BankScheduler #(
+    parameter NUM_BANKS = 8,
+    parameter NUM_REQUESTORS = 16,
+    parameter QUEUE_DEPTH = 4
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 请求端口
+    input wire [NUM_REQUESTORS-1:0] req_valid,
+    input wire [2:0] req_bank [NUM_REQUESTORS-1:0],
+    input wire [15:0] req_addr [NUM_REQUESTORS-1:0],
+    output reg [NUM_REQUESTORS-1:0] req_ready,
+    
+    // Bank接口
+    output reg [NUM_BANKS-1:0] bank_valid,
+    output reg [15:0] bank_addr [NUM_BANKS-1:0],
+    input wire [NUM_BANKS-1:0] bank_ready
+);
+
+    // 每个请求者的请求队列
+    reg [2:0] req_queue_bank [NUM_REQUESTORS-1:0][QUEUE_DEPTH-1:0];
+    reg [15:0] req_queue_addr [NUM_REQUESTORS-1:0][QUEUE_DEPTH-1:0];
+    reg [1:0] req_queue_head [NUM_REQUESTORS-1:0];
+    reg [1:0] req_queue_tail [NUM_REQUESTORS-1:0];
+    
+    // 冲突检测与调度
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            // 复位逻辑
+        end else begin
+            // 1. 将新请求加入队列
+            // 2. 从每个队列头部选择无冲突的请求
+            // 3. 发送到对应的Bank
+        end
+    end
+endmodule
+            </div>
+
+            <h3>5.3 数据预取机制</h3>
+            
+            <p>数据预取通过提前将数据从DRAM加载到片上SRAM，隐藏内存访问延迟，是提升NPU性能的关键技术。</p>
+
+            <h4>5.3.1 预取策略</h4>
+            <div class="code-block">
+预取机制的核心要素：
+
+1. 预取时机
+   - 基于计算进度的预取
+   - 基于地址模式的预取
+   - 软件控制的显式预取
+
+2. 预取粒度
+   - 细粒度：单个Tile (如16×16)
+   - 粗粒度：整个Feature Map
+   - 自适应粒度：根据可用空间动态调整
+
+3. 预取深度
+   - Double Buffering: 计算当前数据时预取下一批
+   - Triple Buffering: 更深的流水线，容忍更大延迟
+            </div>
+
+            <h4>5.3.2 硬件预取引擎</h4>
+            <div class="code-block">
+// 智能预取引擎
+module PrefetchEngine #(
+    parameter ADDR_WIDTH = 32,
+    parameter DATA_WIDTH = 256,
+    parameter PREFETCH_DEPTH = 4
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 控制接口
+    input wire prefetch_enable,
+    input wire [ADDR_WIDTH-1:0] base_addr,
+    input wire [15:0] stride,
+    input wire [15:0] count,
+    
+    // 计算进度监控
+    input wire [15:0] compute_progress,
+    
+    // DRAM接口
+    output reg dram_req_valid,
+    output reg [ADDR_WIDTH-1:0] dram_req_addr,
+    output reg [7:0] dram_req_len,
+    input wire dram_req_ready,
+    
+    // SRAM写接口
+    output reg sram_wr_valid,
+    output reg [15:0] sram_wr_addr,
+    output reg [DATA_WIDTH-1:0] sram_wr_data,
+    input wire sram_wr_ready
+);
+
+    // 预取状态机
+    localparam IDLE = 0, MONITOR = 1, ISSUE_REQ = 2, WAIT_RESP = 3;
+    reg [1:0] state, next_state;
+    
+    // 预取队列
+    reg [ADDR_WIDTH-1:0] prefetch_queue [PREFETCH_DEPTH-1:0];
+    reg [2:0] queue_head, queue_tail;
+    reg [3:0] queue_count;
+    
+    // 地址生成器
+    reg [ADDR_WIDTH-1:0] next_addr;
+    reg [15:0] fetch_count;
+    
+    // 预取距离计算
+    wire [15:0] prefetch_distance;
+    assign prefetch_distance = queue_count * 16; // 假设每次预取16个元素
+    
+    // 状态机逻辑
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state <= IDLE;
+            queue_head <= 0;
+            queue_tail <= 0;
+            queue_count <= 0;
+        end else begin
+            state <= next_state;
+            
+            case (state)
+                IDLE: begin
+                    if (prefetch_enable) begin
+                        next_addr <= base_addr;
+                        fetch_count <= 0;
+                    end
+                end
+                
+                MONITOR: begin
+                    // 监控计算进度，决定是否发起预取
+                    if (compute_progress + prefetch_distance < count && 
+                        queue_count < PREFETCH_DEPTH - 1) begin
+                        // 需要预取更多数据
+                        prefetch_queue[queue_tail] <= next_addr;
+                        queue_tail <= queue_tail + 1;
+                        queue_count <= queue_count + 1;
+                        next_addr <= next_addr + stride;
+                        fetch_count <= fetch_count + 1;
+                    end
+                end
+                
+                ISSUE_REQ: begin
+                    if (dram_req_ready && queue_count > 0) begin
+                        dram_req_valid <= 1'b1;
+                        dram_req_addr <= prefetch_queue[queue_head];
+                        dram_req_len <= 8'd16; // 预取16个元素
+                        queue_head <= queue_head + 1;
+                        queue_count <= queue_count - 1;
+                    end
+                end
+            endcase
+        end
+    end
+    
+    // 下一状态逻辑
+    always @(*) begin
+        next_state = state;
+        case (state)
+            IDLE: 
+                if (prefetch_enable) next_state = MONITOR;
+            MONITOR:
+                if (queue_count > 0) next_state = ISSUE_REQ;
+            ISSUE_REQ:
+                if (dram_req_ready) next_state = WAIT_RESP;
+            WAIT_RESP:
+                if (/* DRAM响应完成 */) next_state = MONITOR;
+        endcase
+    end
+endmodule
+
+// 双缓冲预取控制器
+module DoubleBufferPrefetch #(
+    parameter BUFFER_SIZE = 16384,  // 16KB per buffer
+    parameter DATA_WIDTH = 256
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 计算单元接口
+    input wire compute_req,
+    input wire [13:0] compute_addr,
+    output wire [DATA_WIDTH-1:0] compute_data,
+    output wire compute_ready,
+    
+    // 预取控制
+    input wire [31:0] prefetch_base_addr,
+    input wire [15:0] prefetch_length,
+    input wire prefetch_start,
+    
+    // DRAM接口
+    output wire dram_req_valid,
+    output wire [31:0] dram_req_addr,
+    input wire dram_resp_valid,
+    input wire [DATA_WIDTH-1:0] dram_resp_data
+);
+    
+    // 双缓冲控制
+    reg buffer_sel;  // 0: Buffer A用于计算, 1: Buffer B用于计算
+    reg [13:0] buffer_write_addr [1:0];
+    reg buffer_ready [1:0];
+    
+    // 缓冲区实例
+    wire [DATA_WIDTH-1:0] buffer_rdata [1:0];
+    
+    genvar i;
+    generate
+        for (i = 0; i < 2; i = i + 1) begin
+            SimpleDualPortRAM #(
+                .DEPTH(BUFFER_SIZE/32),
+                .WIDTH(DATA_WIDTH)
+            ) buffer (
+                .clk(clk),
+                .wr_en(dram_resp_valid && (buffer_sel != i)),
+                .wr_addr(buffer_write_addr[i]),
+                .wr_data(dram_resp_data),
+                .rd_addr(compute_addr),
+                .rd_data(buffer_rdata[i])
+            );
+        end
+    endgenerate
+    
+    // 计算接口
+    assign compute_data = buffer_rdata[buffer_sel];
+    assign compute_ready = buffer_ready[buffer_sel];
+    
+    // 缓冲切换逻辑
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            buffer_sel <= 0;
+        end else if (/* 当前buffer计算完成 && 另一个buffer预取完成 */) begin
+            buffer_sel <= ~buffer_sel;
+        end
+    end
+endmodule
+            </div>
+
+            <h4>5.3.3 软件控制预取</h4>
+            <div class="code-block">
+// 预取指令格式
+typedef struct {
+    uint32_t opcode : 8;      // PREFETCH指令码
+    uint32_t buffer_id : 4;   // 目标缓冲区ID
+    uint32_t pattern : 4;     // 访问模式（线性/2D/3D）
+    uint32_t priority : 2;    // 预取优先级
+    uint32_t reserved : 14;
+} prefetch_inst_t;
+
+// 预取描述符
+typedef struct {
+    uint32_t src_addr;        // 源地址（DRAM）
+    uint32_t dst_addr;        // 目标地址（SRAM）
+    uint16_t dim0_size;       // 第一维大小
+    uint16_t dim0_stride;     // 第一维步长
+    uint16_t dim1_size;       // 第二维大小
+    uint16_t dim1_stride;     // 第二维步长
+    uint16_t dim2_size;       // 第三维大小
+    uint16_t dim2_stride;     // 第三维步长
+} prefetch_desc_t;
+
+// 软件预取示例（卷积层）
+void conv_layer_with_prefetch(
+    float* input,     // [N, H, W, C_in]
+    float* weights,   // [K, K, C_in, C_out]
+    float* output,    // [N, H_out, W_out, C_out]
+    conv_params_t params
+) {
+    // 设置权重预取（权重复用率高，优先预取）
+    prefetch_desc_t weight_pf = {
+        .src_addr = (uint32_t)weights,
+        .dst_addr = WEIGHT_BUFFER_BASE,
+        .dim0_size = params.kernel_size,
+        .dim0_stride = params.kernel_size * params.c_in * sizeof(float),
+        .dim1_size = params.kernel_size,
+        .dim1_stride = params.c_in * sizeof(float),
+        .dim2_size = params.c_in,
+        .dim2_stride = sizeof(float)
+    };
+    
+    // 发起权重预取
+    issue_prefetch(WEIGHT_PREFETCH_ENGINE, &weight_pf);
+    
+    // 双缓冲处理输入特征图
+    for (int tile_y = 0; tile_y < params.h_out; tile_y += TILE_SIZE) {
+        // 预取下一个tile的输入数据
+        if (tile_y + TILE_SIZE < params.h_out) {
+            prefetch_desc_t input_pf = {
+                .src_addr = (uint32_t)&input[tile_y + TILE_SIZE][0][0],
+                .dst_addr = INPUT_BUFFER_B,
+                .dim0_size = TILE_SIZE + params.kernel_size - 1,
+                .dim0_stride = params.w * params.c_in * sizeof(float),
+                .dim1_size = params.w,
+                .dim1_stride = params.c_in * sizeof(float),
+                .dim2_size = params.c_in,
+                .dim2_stride = sizeof(float)
+            };
+            issue_prefetch(INPUT_PREFETCH_ENGINE, &input_pf);
+        }
+        
+        // 等待当前tile数据就绪
+        wait_prefetch_complete(current_buffer);
+        
+        // 执行计算
+        compute_conv_tile(current_buffer, WEIGHT_BUFFER_BASE, 
+                         OUTPUT_BUFFER + tile_y * params.w_out * params.c_out);
+        
+        // 切换缓冲区
+        current_buffer = (current_buffer == INPUT_BUFFER_A) ? 
+                        INPUT_BUFFER_B : INPUT_BUFFER_A;
+    }
+}
+            </div>
+
+            <h3>5.4 缓存一致性</h3>
+            
+            <p>在多核NPU系统中，缓存一致性确保不同核心看到的数据是一致的，这对正确性至关重要。</p>
+
+            <h4>5.4.1 NPU缓存一致性挑战</h4>
+            <div class="code-block">
+NPU缓存一致性的特点：
+
+1. 软件管理为主
+   - 神经网络计算流程确定
+   - 编译器可以精确分析数据依赖
+   - 显式同步点插入
+
+2. 简化的硬件支持
+   - 基本的Cache刷新/失效指令
+   - DMA与Cache的协同
+   - 全局同步屏障
+
+3. 常见场景
+   - 多核协同计算大矩阵乘法
+   - Pipeline并行中的数据传递
+   - 模型参数的广播更新
+            </div>
+
+            <h4>5.4.2 软件管理的缓存一致性</h4>
+            <div class="code-block">
+// 缓存控制单元
+module CacheController #(
+    parameter CACHE_SIZE = 32768,   // 32KB
+    parameter LINE_SIZE = 64,       // 64B cache line
+    parameter NUM_WAYS = 4
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 处理器接口
+    input wire [31:0] cpu_addr,
+    input wire cpu_req,
+    input wire cpu_wr,
+    input wire [255:0] cpu_wdata,
+    output wire [255:0] cpu_rdata,
+    output wire cpu_ready,
+    
+    // 缓存控制指令
+    input wire cache_flush,         // 写回所有脏数据
+    input wire cache_invalidate,    // 失效所有缓存行
+    input wire [31:0] inv_addr,     // 特定地址失效
+    input wire inv_addr_valid,
+    
+    // 内存接口
+    output reg mem_req,
+    output reg [31:0] mem_addr,
+    output reg mem_wr,
+    output reg [255:0] mem_wdata,
+    input wire [255:0] mem_rdata,
+    input wire mem_ready
+);
+
+    // Cache标签和数据存储
+    reg [19:0] tag_array [NUM_WAYS-1:0][CACHE_SIZE/LINE_SIZE/NUM_WAYS-1:0];
+    reg valid_array [NUM_WAYS-1:0][CACHE_SIZE/LINE_SIZE/NUM_WAYS-1:0];
+    reg dirty_array [NUM_WAYS-1:0][CACHE_SIZE/LINE_SIZE/NUM_WAYS-1:0];
+    reg [255:0] data_array [NUM_WAYS-1:0][CACHE_SIZE/LINE_SIZE/NUM_WAYS-1:0];
+    
+    // 地址解析
+    wire [19:0] tag = cpu_addr[31:12];
+    wire [7:0] index = cpu_addr[11:6];
+    wire [5:0] offset = cpu_addr[5:0];
+    
+    // 缓存刷新状态机
+    reg [2:0] flush_state;
+    reg [7:0] flush_index;
+    reg [1:0] flush_way;
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            flush_state <= 0;
+            flush_index <= 0;
+            flush_way <= 0;
+        end else if (cache_flush && flush_state == 0) begin
+            flush_state <= 1;
+            flush_index <= 0;
+            flush_way <= 0;
+        end else if (flush_state != 0) begin
+            case (flush_state)
+                1: begin // 检查脏位
+                    if (dirty_array[flush_way][flush_index]) begin
+                        // 发起写回请求
+                        mem_req <= 1'b1;
+                        mem_wr <= 1'b1;
+                        mem_addr <= {tag_array[flush_way][flush_index], 
+                                   flush_index, 6'b0};
+                        mem_wdata <= data_array[flush_way][flush_index];
+                        flush_state <= 2;
+                    end else begin
+                        // 继续下一个
+                        if (flush_way == NUM_WAYS-1) begin
+                            flush_way <= 0;
+                            if (flush_index == (CACHE_SIZE/LINE_SIZE/NUM_WAYS-1))
+                                flush_state <= 0; // 完成
+                            else
+                                flush_index <= flush_index + 1;
+                        end else begin
+                            flush_way <= flush_way + 1;
+                        end
+                    end
+                end
+                
+                2: begin // 等待写回完成
+                    if (mem_ready) begin
+                        mem_req <= 1'b0;
+                        dirty_array[flush_way][flush_index] <= 1'b0;
+                        flush_state <= 1;
+                        // 继续下一个
+                        if (flush_way == NUM_WAYS-1) begin
+                            flush_way <= 0;
+                            if (flush_index == (CACHE_SIZE/LINE_SIZE/NUM_WAYS-1))
+                                flush_state <= 0;
+                            else
+                                flush_index <= flush_index + 1;
+                        end else begin
+                            flush_way <= flush_way + 1;
+                        end
+                    end
+                end
+            endcase
+        end
+    end
+    
+    // 缓存失效逻辑
+    always @(posedge clk) begin
+        if (cache_invalidate) begin
+            // 全部失效
+            integer i, j;
+            for (i = 0; i < NUM_WAYS; i = i + 1) begin
+                for (j = 0; j < CACHE_SIZE/LINE_SIZE/NUM_WAYS; j = j + 1) begin
+                    valid_array[i][j] <= 1'b0;
+                end
+            end
+        end else if (inv_addr_valid) begin
+            // 特定地址失效
+            wire [7:0] inv_index = inv_addr[11:6];
+            wire [19:0] inv_tag = inv_addr[31:12];
+            
+            integer k;
+            for (k = 0; k < NUM_WAYS; k = k + 1) begin
+                if (valid_array[k][inv_index] && 
+                    tag_array[k][inv_index] == inv_tag) begin
+                    valid_array[k][inv_index] <= 1'b0;
+                end
+            end
+        end
+    end
+endmodule
+
+// 多核同步屏障
+module GlobalSyncBarrier #(
+    parameter NUM_CORES = 16
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 每个核心的同步请求
+    input wire [NUM_CORES-1:0] sync_req,
+    output reg [NUM_CORES-1:0] sync_ack,
+    
+    // 同步ID（支持多个屏障）
+    input wire [3:0] sync_id [NUM_CORES-1:0],
+    
+    // 缓存控制输出
+    output reg cache_flush_all,
+    output reg cache_inv_all
+);
+
+    // 同步状态跟踪
+    reg [NUM_CORES-1:0] sync_pending [15:0]; // 16个同步ID
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            sync_ack <= 0;
+            cache_flush_all <= 0;
+            cache_inv_all <= 0;
+        end else begin
+            // 收集同步请求
+            integer i, j;
+            for (i = 0; i < NUM_CORES; i = i + 1) begin
+                if (sync_req[i] && !sync_ack[i]) begin
+                    sync_pending[sync_id[i]][i] <= 1'b1;
+                end
+            end
+            
+            // 检查是否所有核心都到达屏障
+            for (j = 0; j < 16; j = j + 1) begin
+                if (sync_pending[j] == {NUM_CORES{1'b1}}) begin
+                    // 触发全局缓存刷新
+                    cache_flush_all <= 1'b1;
+                    cache_inv_all <= 1'b1;
+                    
+                    // 释放所有等待的核心
+                    for (i = 0; i < NUM_CORES; i = i + 1) begin
+                        if (sync_pending[j][i]) begin
+                            sync_ack[i] <= 1'b1;
+                            sync_pending[j][i] <= 1'b0;
+                        end
+                    end
+                end
+            end
+            
+            // 清除控制信号
+            if (cache_flush_all) cache_flush_all <= 1'b0;
+            if (cache_inv_all) cache_inv_all <= 1'b0;
+            
+            // 清除应答信号
+            sync_ack <= sync_ack & ~sync_req;
+        end
+    end
+endmodule
+            </div>
+
+            <h4>5.4.3 DMA与缓存协同</h4>
+            <div class="code-block">
+// DMA与缓存协同示例
+// 确保DMA传输的数据一致性
+
+// 场景1：DMA写入内存前，刷新相关缓存
+void dma_write_with_cache_sync(
+    void* src_sram_addr,
+    void* dst_dram_addr,
+    size_t size
+) {
+    // 1. 刷新可能缓存了目标地址的所有缓存行
+    cache_flush_range(dst_dram_addr, size);
+    
+    // 2. 等待刷新完成
+    wait_cache_flush_complete();
+    
+    // 3. 启动DMA传输
+    dma_desc_t desc = {
+        .src = src_sram_addr,
+        .dst = dst_dram_addr,
+        .len = size,
+        .flags = DMA_FLAG_WRITE_BACK
+    };
+    dma_start_transfer(&desc);
+    
+    // 4. 等待DMA完成
+    dma_wait_complete();
+    
+    // 5. 失效相关缓存，确保后续读取获得最新数据
+    cache_invalidate_range(dst_dram_addr, size);
+}
+
+// 场景2：DMA读取内存前，确保数据已写回
+void dma_read_with_cache_sync(
+    void* src_dram_addr,
+    void* dst_sram_addr,
+    size_t size
+) {
+    // 1. 刷新源地址范围的所有脏数据
+    cache_flush_range(src_dram_addr, size);
+    
+    // 2. 等待刷新完成
+    wait_cache_flush_complete();
+    
+    // 3. 启动DMA传输
+    dma_desc_t desc = {
+        .src = src_dram_addr,
+        .dst = dst_sram_addr,
+        .len = size,
+        .flags = DMA_FLAG_READ
+    };
+    dma_start_transfer(&desc);
+}
+
+// 硬件实现：DMA控制器与缓存的接口
+module DMA_CacheInterface (
+    input wire clk,
+    input wire rst_n,
+    
+    // DMA请求
+    input wire dma_start,
+    input wire [31:0] dma_src_addr,
+    input wire [31:0] dma_dst_addr,
+    input wire [15:0] dma_length,
+    input wire dma_direction, // 0: read, 1: write
+    
+    // 缓存控制接口
+    output reg cache_flush_req,
+    output reg [31:0] cache_flush_addr,
+    output reg [15:0] cache_flush_len,
+    input wire cache_flush_done,
+    
+    output reg cache_inv_req,
+    output reg [31:0] cache_inv_addr,
+    output reg [15:0] cache_inv_len,
+    input wire cache_inv_done,
+    
+    // DMA引擎接口
+    output reg dma_go,
+    input wire dma_done
+);
+
+    reg [2:0] state;
+    localparam IDLE = 0, FLUSH = 1, WAIT_FLUSH = 2, 
+               DMA_TRANS = 3, INVALIDATE = 4;
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state <= IDLE;
+        end else begin
+            case (state)
+                IDLE: begin
+                    if (dma_start) begin
+                        if (dma_direction) begin
+                            // DMA写：先刷新目标地址
+                            cache_flush_req <= 1'b1;
+                            cache_flush_addr <= dma_dst_addr;
+                            cache_flush_len <= dma_length;
+                            state <= WAIT_FLUSH;
+                        end else begin
+                            // DMA读：先刷新源地址
+                            cache_flush_req <= 1'b1;
+                            cache_flush_addr <= dma_src_addr;
+                            cache_flush_len <= dma_length;
+                            state <= WAIT_FLUSH;
+                        end
+                    end
+                end
+                
+                WAIT_FLUSH: begin
+                    cache_flush_req <= 1'b0;
+                    if (cache_flush_done) begin
+                        dma_go <= 1'b1;
+                        state <= DMA_TRANS;
+                    end
+                end
+                
+                DMA_TRANS: begin
+                    dma_go <= 1'b0;
+                    if (dma_done) begin
+                        if (dma_direction) begin
+                            // DMA写完成后，失效目标缓存
+                            cache_inv_req <= 1'b1;
+                            cache_inv_addr <= dma_dst_addr;
+                            cache_inv_len <= dma_length;
+                            state <= INVALIDATE;
+                        end else begin
+                            state <= IDLE;
+                        end
+                    end
+                end
+                
+                INVALIDATE: begin
+                    cache_inv_req <= 1'b0;
+                    if (cache_inv_done) begin
+                        state <= IDLE;
+                    end
+                end
+            endcase
+        end
+    end
+endmodule
+            </div>
+
+            <h3>5.5 DMA设计</h3>
+            
+            <p>DMA（直接内存访问）控制器是NPU中的数据搬运引擎，负责在片外DRAM和片上SRAM之间高效传输数据。</p>
+
+            <h4>5.5.1 NPU DMA特性</h4>
+            <div class="code-block">
+NPU DMA的特殊需求：
+
+1. 多维寻址能力
+   - 支持2D/3D/4D张量传输
+   - 灵活的步长（stride）和填充（padding）
+   - 数据重排（如NHWC→NCHW）
+
+2. 高带宽利用率
+   - 多通道并行传输
+   - 突发传输优化
+   - 带宽聚合
+
+3. 与计算的协同
+   - 描述符链接
+   - 事件触发机制
+   - 双缓冲/多缓冲支持
+            </div>
+
+            <h4>5.5.2 多维DMA引擎</h4>
+            <div class="code-block">
+// 支持多维张量传输的DMA引擎
+module TensorDMA #(
+    parameter ADDR_WIDTH = 32,
+    parameter DATA_WIDTH = 256,
+    parameter MAX_DIM = 4,
+    parameter DESC_DEPTH = 16
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 描述符编程接口
+    input wire desc_valid,
+    input wire [ADDR_WIDTH-1:0] src_base_addr,
+    input wire [ADDR_WIDTH-1:0] dst_base_addr,
+    input wire [15:0] dim_size [MAX_DIM-1:0],    // 各维度大小
+    input wire [15:0] src_stride [MAX_DIM-1:0],  // 源步长
+    input wire [15:0] dst_stride [MAX_DIM-1:0],  // 目标步长
+    input wire [2:0] active_dims,                 // 活跃维度数
+    output wire desc_ready,
+    
+    // 内存接口
+    output reg mem_rd_req,
+    output reg [ADDR_WIDTH-1:0] mem_rd_addr,
+    output reg [7:0] mem_rd_len,
+    input wire mem_rd_valid,
+    input wire [DATA_WIDTH-1:0] mem_rd_data,
+    
+    output reg mem_wr_req,
+    output reg [ADDR_WIDTH-1:0] mem_wr_addr,
+    output reg [DATA_WIDTH-1:0] mem_wr_data,
+    output reg [7:0] mem_wr_len,
+    input wire mem_wr_ready,
+    
+    // 状态输出
+    output reg dma_busy,
+    output reg dma_done
+);
+
+    // 描述符FIFO
+    reg [ADDR_WIDTH-1:0] desc_src_base [DESC_DEPTH-1:0];
+    reg [ADDR_WIDTH-1:0] desc_dst_base [DESC_DEPTH-1:0];
+    reg [15:0] desc_dim_size [DESC_DEPTH-1:0][MAX_DIM-1:0];
+    reg [15:0] desc_src_stride [DESC_DEPTH-1:0][MAX_DIM-1:0];
+    reg [15:0] desc_dst_stride [DESC_DEPTH-1:0][MAX_DIM-1:0];
+    reg [2:0] desc_active_dims [DESC_DEPTH-1:0];
+    reg [3:0] desc_head, desc_tail;
+    reg [4:0] desc_count;
+    
+    // 地址生成器状态
+    reg [15:0] dim_counter [MAX_DIM-1:0];
+    reg [ADDR_WIDTH-1:0] current_src_addr;
+    reg [ADDR_WIDTH-1:0] current_dst_addr;
+    reg [2:0] state;
+    
+    // 描述符入队
+    assign desc_ready = (desc_count < DESC_DEPTH);
+    
+    always @(posedge clk) begin
+        if (desc_valid && desc_ready) begin
+            desc_src_base[desc_tail] <= src_base_addr;
+            desc_dst_base[desc_tail] <= dst_base_addr;
+            desc_active_dims[desc_tail] <= active_dims;
+            
+            integer i;
+            for (i = 0; i < MAX_DIM; i = i + 1) begin
+                desc_dim_size[desc_tail][i] <= dim_size[i];
+                desc_src_stride[desc_tail][i] <= src_stride[i];
+                desc_dst_stride[desc_tail][i] <= dst_stride[i];
+            end
+            
+            desc_tail <= desc_tail + 1;
+            desc_count <= desc_count + 1;
+        end
+    end
+    
+    // 多维地址生成状态机
+    localparam IDLE = 0, CALC_ADDR = 1, ISSUE_READ = 2, 
+               WAIT_DATA = 3, ISSUE_WRITE = 4, UPDATE_DIM = 5;
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state <= IDLE;
+            dma_busy <= 0;
+            desc_head <= 0;
+            desc_count <= 0;
+        end else begin
+            case (state)
+                IDLE: begin
+                    if (desc_count > 0) begin
+                        dma_busy <= 1;
+                        // 初始化维度计数器
+                        integer j;
+                        for (j = 0; j < MAX_DIM; j = j + 1) begin
+                            dim_counter[j] <= 0;
+                        end
+                        current_src_addr <= desc_src_base[desc_head];
+                        current_dst_addr <= desc_dst_base[desc_head];
+                        state <= CALC_ADDR;
+                    end
+                end
+                
+                CALC_ADDR: begin
+                    // 计算当前传输的地址
+                    mem_rd_addr <= current_src_addr;
+                    mem_rd_len <= 1; // 简化：每次传输一个元素
+                    state <= ISSUE_READ;
+                end
+                
+                ISSUE_READ: begin
+                    mem_rd_req <= 1'b1;
+                    state <= WAIT_DATA;
+                end
+                
+                WAIT_DATA: begin
+                    mem_rd_req <= 1'b0;
+                    if (mem_rd_valid) begin
+                        mem_wr_data <= mem_rd_data;
+                        mem_wr_addr <= current_dst_addr;
+                        mem_wr_len <= 1;
+                        state <= ISSUE_WRITE;
+                    end
+                end
+                
+                ISSUE_WRITE: begin
+                    if (mem_wr_ready) begin
+                        mem_wr_req <= 1'b1;
+                        state <= UPDATE_DIM;
+                    end
+                end
+                
+                UPDATE_DIM: begin
+                    mem_wr_req <= 1'b0;
+                    // 更新多维计数器和地址
+                    reg done;
+                    done = 1'b1;
+                    
+                    integer k;
+                    for (k = 0; k < MAX_DIM; k = k + 1) begin
+                        if (k < desc_active_dims[desc_head]) begin
+                            if (dim_counter[k] < desc_dim_size[desc_head][k] - 1) begin
+                                dim_counter[k] <= dim_counter[k] + 1;
+                                current_src_addr <= current_src_addr + 
+                                    desc_src_stride[desc_head][k];
+                                current_dst_addr <= current_dst_addr + 
+                                    desc_dst_stride[desc_head][k];
+                                done = 1'b0;
+                                break;
+                            end else begin
+                                dim_counter[k] <= 0;
+                                // 回退到该维度的起始位置
+                                current_src_addr <= current_src_addr - 
+                                    (desc_dim_size[desc_head][k] - 1) * 
+                                    desc_src_stride[desc_head][k];
+                                current_dst_addr <= current_dst_addr - 
+                                    (desc_dim_size[desc_head][k] - 1) * 
+                                    desc_dst_stride[desc_head][k];
+                            end
+                        end
+                    end
+                    
+                    if (done) begin
+                        // 当前描述符完成
+                        desc_head <= desc_head + 1;
+                        desc_count <= desc_count - 1;
+                        dma_done <= 1'b1;
+                        state <= IDLE;
+                    end else begin
+                        state <= CALC_ADDR;
+                    end
+                end
+            endcase
+        end
+    end
+endmodule
+
+// 数据布局转换DMA
+module LayoutTransformDMA #(
+    parameter DATA_WIDTH = 8,
+    parameter MAX_CHANNEL = 1024,
+    parameter MAX_HEIGHT = 1024,
+    parameter MAX_WIDTH = 1024
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 配置接口
+    input wire start,
+    input wire [1:0] transform_type, // 0: NHWC->NCHW, 1: NCHW->NHWC
+    input wire [9:0] height,
+    input wire [9:0] width,
+    input wire [9:0] channels,
+    input wire [31:0] src_addr,
+    input wire [31:0] dst_addr,
+    
+    // 内存接口
+    output reg [31:0] rd_addr,
+    output reg rd_req,
+    input wire [DATA_WIDTH-1:0] rd_data,
+    input wire rd_valid,
+    
+    output reg [31:0] wr_addr,
+    output reg [DATA_WIDTH-1:0] wr_data,
+    output reg wr_req,
+    input wire wr_ready,
+    
+    // 状态
+    output reg busy,
+    output reg done
+);
+
+    // 坐标计数器
+    reg [9:0] h_cnt, w_cnt, c_cnt;
+    
+    // 地址计算
+    always @(*) begin
+        case (transform_type)
+            2'b00: begin // NHWC -> NCHW
+                // 源地址: base + h*W*C + w*C + c
+                rd_addr = src_addr + (h_cnt * width * channels) + 
+                         (w_cnt * channels) + c_cnt;
+                // 目标地址: base + c*H*W + h*W + w
+                wr_addr = dst_addr + (c_cnt * height * width) + 
+                         (h_cnt * width) + w_cnt;
+            end
+            2'b01: begin // NCHW -> NHWC
+                // 源地址: base + c*H*W + h*W + w
+                rd_addr = src_addr + (c_cnt * height * width) + 
+                         (h_cnt * width) + w_cnt;
+                // 目标地址: base + h*W*C + w*C + c
+                wr_addr = dst_addr + (h_cnt * width * channels) + 
+                         (w_cnt * channels) + c_cnt;
+            end
+            default: begin
+                rd_addr = 0;
+                wr_addr = 0;
+            end
+        endcase
+    end
+    
+    // 控制状态机
+    reg [2:0] state;
+    localparam IDLE = 0, READ = 1, WRITE = 2, NEXT = 3;
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state <= IDLE;
+            busy <= 0;
+            done <= 0;
+        end else begin
+            case (state)
+                IDLE: begin
+                    if (start) begin
+                        h_cnt <= 0;
+                        w_cnt <= 0;
+                        c_cnt <= 0;
+                        busy <= 1;
+                        done <= 0;
+                        state <= READ;
+                    end
+                end
+                
+                READ: begin
+                    rd_req <= 1;
+                    if (rd_valid) begin
+                        wr_data <= rd_data;
+                        rd_req <= 0;
+                        state <= WRITE;
+                    end
+                end
+                
+                WRITE: begin
+                    if (wr_ready) begin
+                        wr_req <= 1;
+                        state <= NEXT;
+                    end
+                end
+                
+                NEXT: begin
+                    wr_req <= 0;
+                    // 更新坐标
+                    if (c_cnt < channels - 1) begin
+                        c_cnt <= c_cnt + 1;
+                    end else begin
+                        c_cnt <= 0;
+                        if (w_cnt < width - 1) begin
+                            w_cnt <= w_cnt + 1;
+                        end else begin
+                            w_cnt <= 0;
+                            if (h_cnt < height - 1) begin
+                                h_cnt <= h_cnt + 1;
+                            end else begin
+                                // 完成
+                                busy <= 0;
+                                done <= 1;
+                                state <= IDLE;
+                            end
+                        end
+                    end
+                    
+                    if (state != IDLE) begin
+                        state <= READ;
+                    end
+                end
+            endcase
+        end
+    end
+endmodule
+            </div>
+
+            <h4>5.5.3 分散-聚集DMA</h4>
+            <div class="code-block">
+// 支持分散-聚集操作的DMA控制器
+module ScatterGatherDMA #(
+    parameter ADDR_WIDTH = 32,
+    parameter DATA_WIDTH = 256,
+    parameter MAX_SEGMENTS = 64
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 控制接口
+    input wire sg_start,
+    input wire sg_mode,  // 0: Gather, 1: Scatter
+    input wire [5:0] num_segments,
+    
+    // 段描述符接口
+    input wire seg_desc_wr,
+    input wire [5:0] seg_desc_addr,
+    input wire [ADDR_WIDTH-1:0] seg_src_addr,
+    input wire [ADDR_WIDTH-1:0] seg_dst_addr,
+    input wire [15:0] seg_length,
+    
+    // 内存接口
+    output reg mem_req,
+    output reg mem_wr,
+    output reg [ADDR_WIDTH-1:0] mem_addr,
+    output reg [DATA_WIDTH-1:0] mem_wdata,
+    input wire [DATA_WIDTH-1:0] mem_rdata,
+    input wire mem_ready,
+    
+    // 状态
+    output reg sg_busy,
+    output reg sg_done
+);
+
+    // 段描述符存储
+    reg [ADDR_WIDTH-1:0] segment_src [MAX_SEGMENTS-1:0];
+    reg [ADDR_WIDTH-1:0] segment_dst [MAX_SEGMENTS-1:0];
+    reg [15:0] segment_len [MAX_SEGMENTS-1:0];
+    
+    // 描述符写入
+    always @(posedge clk) begin
+        if (seg_desc_wr) begin
+            segment_src[seg_desc_addr] <= seg_src_addr;
+            segment_dst[seg_desc_addr] <= seg_dst_addr;
+            segment_len[seg_desc_addr] <= seg_length;
+        end
+    end
+    
+    // 状态机变量
+    reg [5:0] current_segment;
+    reg [15:0] segment_offset;
+    reg [ADDR_WIDTH-1:0] gather_buffer_addr;
+    reg [DATA_WIDTH-1:0] data_buffer;
+    reg [2:0] state;
+    
+    localparam IDLE = 0, FETCH_DESC = 1, READ_DATA = 2, 
+               WRITE_DATA = 3, NEXT_WORD = 4, NEXT_SEG = 5;
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state <= IDLE;
+            sg_busy <= 0;
+            sg_done <= 0;
+        end else begin
+            case (state)
+                IDLE: begin
+                    if (sg_start) begin
+                        sg_busy <= 1;
+                        sg_done <= 0;
+                        current_segment <= 0;
+                        segment_offset <= 0;
+                        if (sg_mode == 0) begin
+                            // Gather模式：初始化目标地址
+                            gather_buffer_addr <= segment_dst[0];
+                        end
+                        state <= FETCH_DESC;
+                    end
+                end
+                
+                FETCH_DESC: begin
+                    if (current_segment < num_segments) begin
+                        state <= READ_DATA;
+                    end else begin
+                        // 所有段完成
+                        sg_done <= 1;
+                        sg_busy <= 0;
+                        state <= IDLE;
+                    end
+                end
+                
+                READ_DATA: begin
+                    mem_req <= 1;
+                    mem_wr <= 0;
+                    if (sg_mode == 0) begin
+                        // Gather: 从分散的源地址读取
+                        mem_addr <= segment_src[current_segment] + segment_offset;
+                    end else begin
+                        // Scatter: 从连续的源地址读取
+                        mem_addr <= segment_src[0] + 
+                                   (current_segment * segment_len[0]) + segment_offset;
+                    end
+                    
+                    if (mem_ready) begin
+                        data_buffer <= mem_rdata;
+                        mem_req <= 0;
+                        state <= WRITE_DATA;
+                    end
+                end
+                
+                WRITE_DATA: begin
+                    mem_req <= 1;
+                    mem_wr <= 1;
+                    mem_wdata <= data_buffer;
+                    
+                    if (sg_mode == 0) begin
+                        // Gather: 写入连续的目标地址
+                        mem_addr <= gather_buffer_addr;
+                    end else begin
+                        // Scatter: 写入分散的目标地址
+                        mem_addr <= segment_dst[current_segment] + segment_offset;
+                    end
+                    
+                    if (mem_ready) begin
+                        mem_req <= 0;
+                        state <= NEXT_WORD;
+                    end
+                end
+                
+                NEXT_WORD: begin
+                    segment_offset <= segment_offset + (DATA_WIDTH / 8);
+                    if (sg_mode == 0) begin
+                        gather_buffer_addr <= gather_buffer_addr + (DATA_WIDTH / 8);
+                    end
+                    
+                    if (segment_offset >= segment_len[current_segment]) begin
+                        state <= NEXT_SEG;
+                    end else begin
+                        state <= READ_DATA;
+                    end
+                end
+                
+                NEXT_SEG: begin
+                    current_segment <= current_segment + 1;
+                    segment_offset <= 0;
+                    state <= FETCH_DESC;
+                end
+            endcase
+        end
+    end
+endmodule
+            </div>
+
+            <h3>5.6 内存压缩技术</h3>
+            
+            <p>内存压缩通过减少数据存储和传输的大小，有效提升存储容量和带宽利用率，是优化NPU性能的重要技术。</p>
+
+            <h4>5.6.1 压缩策略概述</h4>
+            <div class="code-block">
+NPU内存压缩的层次：
+
+1. 权重压缩
+   - 量化：FP32→INT8/INT4
+   - 剪枝：移除小权重
+   - 哈夫曼编码：频率编码
+   - 共享权重：权重聚类
+
+2. 激活值压缩
+   - 稀疏性压缩：ReLU后大量零值
+   - 动态范围压缩：激活值量化
+   - 差分编码：相邻值相似
+
+3. 压缩时机
+   - 离线压缩：部署前压缩权重
+   - 在线压缩：运行时压缩激活值
+   - 传输压缩：DRAM↔SRAM传输时压缩
+            </div>
+
+            <h4>5.6.2 稀疏性压缩实现</h4>
+            <div class="code-block">
+// 游程编码（RLE）压缩器
+module RLECompressor #(
+    parameter DATA_WIDTH = 8,
+    parameter MAX_RUN_LENGTH = 255
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 输入接口
+    input wire in_valid,
+    input wire [DATA_WIDTH-1:0] in_data,
+    input wire in_last,
+    output wire in_ready,
+    
+    // 输出接口
+    output reg out_valid,
+    output reg [DATA_WIDTH-1:0] out_data,
+    output reg [7:0] out_count,     // 游程长度
+    output reg out_is_zero,         // 标识是否为零游程
+    input wire out_ready
+);
+
+    // 状态机
+    reg [1:0] state;
+    localparam IDLE = 0, COLLECT = 1, OUTPUT = 2;
+    
+    // 游程计数器
+    reg [7:0] run_count;
+    reg current_is_zero;
+    reg [DATA_WIDTH-1:0] current_value;
+    
+    assign in_ready = (state != OUTPUT);
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state <= IDLE;
+            run_count <= 0;
+            out_valid <= 0;
+        end else begin
+            case (state)
+                IDLE: begin
+                    if (in_valid) begin
+                        current_value <= in_data;
+                        current_is_zero <= (in_data == 0);
+                        run_count <= 1;
+                        state <= COLLECT;
+                    end
+                end
+                
+                COLLECT: begin
+                    if (in_valid) begin
+                        if ((in_data == 0) == current_is_zero && 
+                            (!current_is_zero || in_data == current_value) &&
+                            run_count < MAX_RUN_LENGTH) begin
+                            // 继续当前游程
+                            run_count <= run_count + 1;
+                            if (!current_is_zero) 
+                                current_value <= in_data;
+                        end else begin
+                            // 游程结束，输出当前游程
+                            state <= OUTPUT;
+                        end
+                        
+                        if (in_last && state != OUTPUT) begin
+                            state <= OUTPUT;
+                        end
+                    end
+                end
+                
+                OUTPUT: begin
+                    out_valid <= 1;
+                    out_data <= current_value;
+                    out_count <= run_count;
+                    out_is_zero <= current_is_zero;
+                    
+                    if (out_ready) begin
+                        out_valid <= 0;
+                        if (in_valid) begin
+                            // 开始新的游程
+                            current_value <= in_data;
+                            current_is_zero <= (in_data == 0);
+                            run_count <= 1;
+                            state <= COLLECT;
+                        end else begin
+                            state <= IDLE;
+                        end
+                    end
+                end
+            endcase
+        end
+    end
+endmodule
+
+// RLE解压器
+module RLEDecompressor #(
+    parameter DATA_WIDTH = 8
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 输入接口
+    input wire in_valid,
+    input wire [DATA_WIDTH-1:0] in_data,
+    input wire [7:0] in_count,
+    input wire in_is_zero,
+    output wire in_ready,
+    
+    // 输出接口
+    output reg out_valid,
+    output reg [DATA_WIDTH-1:0] out_data,
+    input wire out_ready
+);
+
+    reg [7:0] counter;
+    reg [DATA_WIDTH-1:0] stored_value;
+    reg active;
+    
+    assign in_ready = !active || (counter == 1 && out_ready);
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            counter <= 0;
+            active <= 0;
+            out_valid <= 0;
+        end else begin
+            if (!active && in_valid) begin
+                // 接收新的压缩数据
+                stored_value <= in_is_zero ? 0 : in_data;
+                counter <= in_count;
+                active <= 1;
+            end
+            
+            if (active) begin
+                out_valid <= 1;
+                out_data <= stored_value;
+                
+                if (out_ready) begin
+                    counter <= counter - 1;
+                    if (counter == 1) begin
+                        active <= 0;
+                        out_valid <= 0;
+                    end
+                end
+            end
+        end
+    end
+endmodule
+
+// 位图压缩器（用于2:4稀疏）
+module BitmapCompressor #(
+    parameter DATA_WIDTH = 8,
+    parameter BLOCK_SIZE = 4
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 输入接口
+    input wire in_valid,
+    input wire [DATA_WIDTH*BLOCK_SIZE-1:0] in_data,
+    output wire in_ready,
+    
+    // 输出接口
+    output reg out_valid,
+    output reg [BLOCK_SIZE-1:0] out_bitmap,      // 非零位置的位图
+    output reg [DATA_WIDTH-1:0] out_values [1:0], // 2个非零值
+    input wire out_ready
+);
+
+    wire [DATA_WIDTH-1:0] values [BLOCK_SIZE-1:0];
+    wire [BLOCK_SIZE-1:0] is_nonzero;
+    
+    // 解包输入数据
+    genvar i;
+    generate
+        for (i = 0; i < BLOCK_SIZE; i = i + 1) begin
+            assign values[i] = in_data[i*DATA_WIDTH +: DATA_WIDTH];
+            assign is_nonzero[i] = (values[i] != 0);
+        end
+    endgenerate
+    
+    // 计算非零值数量
+    wire [2:0] nonzero_count;
+    assign nonzero_count = is_nonzero[0] + is_nonzero[1] + 
+                          is_nonzero[2] + is_nonzero[3];
+    
+    assign in_ready = !out_valid || out_ready;
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            out_valid <= 0;
+        end else begin
+            if (in_valid && in_ready) begin
+                out_valid <= 1;
+                out_bitmap <= is_nonzero;
+                
+                // 提取非零值（假设正好2个）
+                integer j, k;
+                k = 0;
+                for (j = 0; j < BLOCK_SIZE && k < 2; j = j + 1) begin
+                    if (is_nonzero[j]) begin
+                        out_values[k] <= values[j];
+                        k = k + 1;
+                    end
+                end
+            end else if (out_valid && out_ready) begin
+                out_valid <= 0;
+            end
+        end
+    end
+endmodule
+            </div>
+
+            <h4>5.6.3 压缩系统集成</h4>
+            <div class="code-block">
+// 带压缩功能的内存控制器
+module CompressedMemoryController #(
+    parameter ADDR_WIDTH = 32,
+    parameter DATA_WIDTH = 256,
+    parameter COMPRESSION_RATIO = 4  // 最大压缩比
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // CPU/DMA接口
+    input wire req_valid,
+    input wire req_write,
+    input wire [ADDR_WIDTH-1:0] req_addr,
+    input wire [DATA_WIDTH-1:0] req_wdata,
+    output reg [DATA_WIDTH-1:0] req_rdata,
+    output reg req_ready,
+    
+    // 压缩控制
+    input wire compression_enable,
+    input wire [1:0] compression_mode, // 0: None, 1: RLE, 2: Bitmap
+    
+    // DRAM接口
+    output reg dram_req,
+    output reg dram_write,
+    output reg [ADDR_WIDTH-1:0] dram_addr,
+    output reg [DATA_WIDTH-1:0] dram_wdata,
+    input wire [DATA_WIDTH-1:0] dram_rdata,
+    input wire dram_ready,
+    
+    // 统计信息
+    output reg [31:0] compressed_bytes,
+    output reg [31:0] uncompressed_bytes
+);
+
+    // 元数据表（记录压缩信息）
+    reg [15:0] metadata_table [4095:0]; // 4K entries
+    // [15:14] - 压缩类型
+    // [13:8]  - 压缩块数
+    // [7:0]   - 原始块数
+    
+    // 地址映射
+    wire [11:0] block_index = req_addr[23:12];
+    wire [15:0] metadata = metadata_table[block_index];
+    
+    // 压缩/解压缓冲区
+    reg [DATA_WIDTH-1:0] compress_buffer;
+    reg [DATA_WIDTH/2-1:0] compressed_data;
+    reg [7:0] compressed_size;
+    
+    // 状态机
+    reg [2:0] state;
+    localparam IDLE = 0, COMPRESS = 1, DECOMPRESS = 2, 
+               DRAM_ACCESS = 3, UPDATE_META = 4;
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state <= IDLE;
+            req_ready <= 0;
+            compressed_bytes <= 0;
+            uncompressed_bytes <= 0;
+        end else begin
+            case (state)
+                IDLE: begin
+                    if (req_valid) begin
+                        if (req_write && compression_enable) begin
+                            // 写入时压缩
+                            compress_buffer <= req_wdata;
+                            state <= COMPRESS;
+                        end else if (!req_write && metadata[15:14] != 2'b00) begin
+                            // 读取压缩数据需要解压
+                            state <= DRAM_ACCESS;
+                        end else begin
+                            // 直接访问DRAM
+                            dram_req <= 1;
+                            dram_write <= req_write;
+                            dram_addr <= req_addr;
+                            dram_wdata <= req_wdata;
+                            state <= DRAM_ACCESS;
+                        end
+                    end
+                end
+                
+                COMPRESS: begin
+                    // 简化的压缩逻辑
+                    case (compression_mode)
+                        2'b01: begin // RLE
+                            // 检测零值比例
+                            integer zero_count;
+                            zero_count = 0;
+                            integer i;
+                            for (i = 0; i < DATA_WIDTH/8; i = i + 1) begin
+                                if (compress_buffer[i*8 +: 8] == 0)
+                                    zero_count = zero_count + 1;
+                            end
+                            
+                            if (zero_count > DATA_WIDTH/16) begin
+                                // 值得压缩
+                                compressed_size <= DATA_WIDTH/8 - zero_count;
+                                compressed_bytes <= compressed_bytes + compressed_size;
+                                uncompressed_bytes <= uncompressed_bytes + DATA_WIDTH/8;
+                            end
+                        end
+                        
+                        2'b10: begin // Bitmap
+                            // 2:4稀疏压缩
+                            compressed_size <= DATA_WIDTH/16; // 50%压缩
+                        end
+                        
+                        default: begin
+                            compressed_size <= DATA_WIDTH/8;
+                        end
+                    endcase
+                    
+                    state <= DRAM_ACCESS;
+                end
+                
+                DRAM_ACCESS: begin
+                    if (dram_ready) begin
+                        dram_req <= 0;
+                        if (!req_write) begin
+                            req_rdata <= dram_rdata;
+                            if (metadata[15:14] != 2'b00) begin
+                                state <= DECOMPRESS;
+                            end else begin
+                                req_ready <= 1;
+                                state <= IDLE;
+                            end
+                        end else begin
+                            state <= UPDATE_META;
+                        end
+                    end
+                end
+                
+                DECOMPRESS: begin
+                    // 解压逻辑
+                    case (metadata[15:14])
+                        2'b01: begin // RLE解压
+                            // 恢复零值
+                        end
+                        2'b10: begin // Bitmap解压
+                            // 恢复稀疏数据
+                        end
+                    endcase
+                    
+                    req_ready <= 1;
+                    state <= IDLE;
+                end
+                
+                UPDATE_META: begin
+                    // 更新元数据表
+                    metadata_table[block_index] <= {
+                        compression_mode,
+                        compressed_size[7:2],
+                        8'd32  // 原始大小
+                    };
+                    
+                    req_ready <= 1;
+                    state <= IDLE;
+                end
+            endcase
+        end
+    end
+endmodule
+
+// 压缩性能监控
+module CompressionMonitor #(
+    parameter NUM_ENGINES = 4
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 各压缩引擎的统计输入
+    input wire [31:0] compressed_bytes [NUM_ENGINES-1:0],
+    input wire [31:0] uncompressed_bytes [NUM_ENGINES-1:0],
+    input wire [15:0] compression_cycles [NUM_ENGINES-1:0],
+    
+    // 性能指标输出
+    output reg [15:0] avg_compression_ratio,  // 定点数 8.8
+    output reg [31:0] total_saved_bytes,
+    output reg [15:0] avg_latency_cycles
+);
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            avg_compression_ratio <= 16'h0100; // 1.0
+            total_saved_bytes <= 0;
+            avg_latency_cycles <= 0;
+        end else begin
+            // 计算总压缩比
+            reg [63:0] total_compressed, total_uncompressed;
+            reg [31:0] total_cycles;
+            integer i;
+            
+            total_compressed = 0;
+            total_uncompressed = 0;
+            total_cycles = 0;
+            
+            for (i = 0; i < NUM_ENGINES; i = i + 1) begin
+                total_compressed = total_compressed + compressed_bytes[i];
+                total_uncompressed = total_uncompressed + uncompressed_bytes[i];
+                total_cycles = total_cycles + compression_cycles[i];
+            end
+            
+            // 计算平均压缩比
+            if (total_compressed > 0) begin
+                avg_compression_ratio <= (total_uncompressed << 8) / total_compressed;
+            end
+            
+            // 计算节省的字节数
+            total_saved_bytes <= total_uncompressed - total_compressed;
+            
+            // 计算平均延迟
+            if (total_uncompressed > 0) begin
+                avg_latency_cycles <= total_cycles / (total_uncompressed >> 10); // per KB
+            end
+        end
+    end
+endmodule
+            </div>
+
+            <h3>5.7 习题</h3>
+            
+            <div class="exercise">
+                <h4>习题1：多Bank SRAM地址映射</h4>
+                <p>设计一个8-Bank SRAM的地址映射方案，支持3×3卷积的无冲突访问。假设特征图大小为64×64×32（H×W×C），数据类型为INT8。</p>
+                <button class="toggle-answer">显示答案</button>
+                <div class="answer">
+                    <p><strong>解答：</strong></p>
+                    <p>为了支持3×3卷积的无冲突访问，需要设计特殊的地址映射函数：</p>
+                    
+                    <div class="code-block">
+// 斜对角Bank映射方案
+module Conv3x3BankMapping #(
+    parameter BANK_BITS = 3,     // 8 Banks
+    parameter HEIGHT = 64,
+    parameter WIDTH = 64,
+    parameter CHANNELS = 32
+)(
+    input wire [5:0] h,          // 高度坐标
+    input wire [5:0] w,          // 宽度坐标
+    input wire [4:0] c,          // 通道坐标
+    output wire [2:0] bank_id,
+    output wire [13:0] bank_offset
+);
+    // 斜对角映射函数
+    // bank_id = (h + w + c/4) mod 8
+    wire [8:0] sum = h + w + (c >> 2);
+    assign bank_id = sum[2:0];
+    
+    // Bank内地址计算
+    // offset = (h * WIDTH + w) * (CHANNELS/8) + (c/8)
+    wire [11:0] spatial_offset = (h << 6) + w;  // h*64 + w
+    wire [13:0] channel_offset = c >> 3;        // c/8
+    assign bank_offset = (spatial_offset << 2) + channel_offset;
+endmodule
+
+// 验证无冲突访问
+module VerifyNoConflict;
+    reg conflict_found;
+    initial begin
+        conflict_found = 0;
+        // 测试3×3窗口内的9个位置
+        for (int h_base = 0; h_base < 62; h_base++) begin
+            for (int w_base = 0; w_base < 62; w_base++) begin
+                reg [2:0] banks_used [8:0];
+                
+                // 计算3×3窗口内每个位置的bank
+                for (int dh = 0; dh < 3; dh++) begin
+                    for (int dw = 0; dw < 3; dw++) begin
+                        int h = h_base + dh;
+                        int w = w_base + dw;
+                        int idx = dh * 3 + dw;
+                        banks_used[idx] = ((h + w) & 7);
+                    end
+                end
+                
+                // 检查是否有bank冲突
+                for (int i = 0; i < 9; i++) begin
+                    for (int j = i+1; j < 9; j++) begin
+                        if (banks_used[i] == banks_used[j]) begin
+                            conflict_found = 1;
+                            $display("Conflict at window (%d,%d)", h_base, w_base);
+                        end
+                    end
+                end
+            end
+        end
+        
+        if (!conflict_found) begin
+            $display("No conflicts found!");
+        end
+    end
+endmodule
+                    </div>
+                    
+                    <p><strong>关键设计要点：</strong></p>
+                    <ol>
+                        <li>使用斜对角映射：(h+w+c/4) mod 8，确保3×3窗口内的像素分布到不同Bank</li>
+                        <li>通道维度也参与映射，避免不同通道的相同位置冲突</li>
+                        <li>每个Bank存储4个通道的数据，提高空间局部性</li>
+                        <li>Bank内地址连续存储，便于突发传输</li>
+                    </ol>
+                </div>
+            </div>
+
+            <div class="exercise">
+                <h4>习题2：双缓冲预取控制器</h4>
+                <p>实现一个支持计算和预取完全重叠的双缓冲控制器，要求计算延迟和预取延迟可以不同。</p>
+                <button class="toggle-answer">显示答案</button>
+                <div class="answer">
+                    <div class="code-block">
+module AdaptiveDoubleBuffer #(
+    parameter BUFFER_SIZE = 16384,
+    parameter DATA_WIDTH = 256
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 计算接口
+    input wire compute_start,
+    input wire [31:0] compute_cycles,  // 预期计算周期数
+    output reg compute_buffer_ready,
+    output reg compute_buffer_id,      // 当前计算使用的buffer
+    
+    // 预取接口
+    input wire [31:0] prefetch_addr,
+    input wire [15:0] prefetch_size,
+    input wire [31:0] prefetch_cycles, // 预期预取周期数
+    output reg prefetch_buffer_ready,
+    output reg prefetch_buffer_id,     // 当前预取使用的buffer
+    
+    // 性能监控
+    output reg [31:0] idle_cycles,
+    output reg [31:0] overlap_cycles
+);
+
+    // 状态跟踪
+    reg buffer_status [1:0]; // 0: 空闲, 1: 计算中, 2: 预取中, 3: 就绪
+    reg [31:0] compute_timer, prefetch_timer;
+    reg [31:0] cycle_counter;
+    
+    // 状态机
+    reg [2:0] state;
+    localparam INIT = 0, PREFETCH_0 = 1, COMPUTE_0_PREFETCH_1 = 2,
+               SWITCH = 3, COMPUTE_1_PREFETCH_0 = 4;
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state <= INIT;
+            compute_buffer_id <= 0;
+            prefetch_buffer_id <= 0;
+            buffer_status[0] <= 0;
+            buffer_status[1] <= 0;
+            idle_cycles <= 0;
+            overlap_cycles <= 0;
+            cycle_counter <= 0;
+        end else begin
+            cycle_counter <= cycle_counter + 1;
+            
+            // 更新定时器
+            if (compute_timer > 0) compute_timer <= compute_timer - 1;
+            if (prefetch_timer > 0) prefetch_timer <= prefetch_timer - 1;
+            
+            case (state)
+                INIT: begin
+                    // 初始预取到Buffer 0
+                    if (prefetch_size > 0) begin
+                        prefetch_buffer_id <= 0;
+                        prefetch_buffer_ready <= 1;
+                        prefetch_timer <= prefetch_cycles;
+                        buffer_status[0] <= 2; // 预取中
+                        state <= PREFETCH_0;
+                    end
+                end
+                
+                PREFETCH_0: begin
+                    idle_cycles <= idle_cycles + 1;
+                    if (prefetch_timer == 0) begin
+                        buffer_status[0] <= 3; // 就绪
+                        compute_buffer_ready <= 1;
+                        compute_buffer_id <= 0;
+                        state <= COMPUTE_0_PREFETCH_1;
+                    end
+                end
+                
+                COMPUTE_0_PREFETCH_1: begin
+                    overlap_cycles <= overlap_cycles + 1;
+                    
+                    // 开始在Buffer 0上计算
+                    if (compute_start && compute_timer == 0) begin
+                        compute_timer <= compute_cycles;
+                        buffer_status[0] <= 1; // 计算中
+                        compute_buffer_ready <= 0;
+                    end
+                    
+                    // 同时预取到Buffer 1
+                    if (prefetch_timer == 0 && buffer_status[1] != 2) begin
+                        prefetch_buffer_id <= 1;
+                        prefetch_buffer_ready <= 1;
+                        prefetch_timer <= prefetch_cycles;
+                        buffer_status[1] <= 2; // 预取中
+                    end
+                    
+                    // 检查是否可以切换
+                    if (compute_timer == 0 && buffer_status[0] == 1) begin
+                        buffer_status[0] <= 0; // 空闲
+                    end
+                    
+                    if (prefetch_timer == 0 && buffer_status[1] == 2) begin
+                        buffer_status[1] <= 3; // 就绪
+                    end
+                    
+                    // 两个都完成，切换buffer
+                    if (buffer_status[0] == 0 && buffer_status[1] == 3) begin
+                        state <= SWITCH;
+                    end
+                end
+                
+                SWITCH: begin
+                    // 切换计算和预取buffer
+                    compute_buffer_id <= 1;
+                    prefetch_buffer_id <= 0;
+                    compute_buffer_ready <= 1;
+                    prefetch_buffer_ready <= 1;
+                    state <= COMPUTE_1_PREFETCH_0;
+                end
+                
+                COMPUTE_1_PREFETCH_0: begin
+                    overlap_cycles <= overlap_cycles + 1;
+                    
+                    // 在Buffer 1上计算
+                    if (compute_start && compute_timer == 0) begin
+                        compute_timer <= compute_cycles;
+                        buffer_status[1] <= 1;
+                        compute_buffer_ready <= 0;
+                    end
+                    
+                    // 预取到Buffer 0
+                    if (prefetch_timer == 0 && buffer_status[0] != 2) begin
+                        prefetch_timer <= prefetch_cycles;
+                        buffer_status[0] <= 2;
+                    end
+                    
+                    // 完成检查和状态更新
+                    if (compute_timer == 0 && buffer_status[1] == 1) begin
+                        buffer_status[1] <= 0;
+                    end
+                    
+                    if (prefetch_timer == 0 && buffer_status[0] == 2) begin
+                        buffer_status[0] <= 3;
+                    end
+                    
+                    if (buffer_status[1] == 0 && buffer_status[0] == 3) begin
+                        state <= SWITCH;
+                    end
+                end
+            endcase
+        end
+    end
+    
+    // 性能分析
+    wire is_idle = (buffer_status[0] == 0 || buffer_status[0] == 3) && 
+                   (buffer_status[1] == 0 || buffer_status[1] == 3) &&
+                   (compute_timer == 0) && (prefetch_timer == 0);
+    
+    always @(posedge clk) begin
+        if (is_idle) idle_cycles <= idle_cycles + 1;
+    end
+endmodule
+                    </div>
+                    
+                    <p><strong>设计特点：</strong></p>
+                    <ol>
+                        <li>自适应时序：根据实际计算和预取时间动态调整</li>
+                        <li>完全重叠：计算和预取可以同时进行</li>
+                        <li>性能监控：统计空闲周期和重叠周期</li>
+                        <li>灵活切换：自动在两个buffer间切换</li>
+                    </ol>
+                </div>
+            </div>
+
+            <div class="exercise">
+                <h4>习题3：缓存一致性协议</h4>
+                <p>设计一个简化的缓存一致性协议，支持4个NPU核心共享数据。要求支持独占读、共享读和写操作。</p>
+                <button class="toggle-answer">显示答案</button>
+                <div class="answer">
+                    <div class="code-block">
+// 简化的MSI协议实现
+module SimpleMSIProtocol #(
+    parameter NUM_CORES = 4,
+    parameter ADDR_WIDTH = 32,
+    parameter CACHE_LINE_SIZE = 64
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 各核心的请求
+    input wire [NUM_CORES-1:0] core_req_valid,
+    input wire [1:0] core_req_type [NUM_CORES-1:0], // 0:Read, 1:Write, 2:Upgrade
+    input wire [ADDR_WIDTH-1:0] core_req_addr [NUM_CORES-1:0],
+    output reg [NUM_CORES-1:0] core_req_grant,
+    output reg [1:0] core_resp_type [NUM_CORES-1:0], // 0:Data, 1:Ack, 2:Inv
+    
+    // 目录接口
+    output reg dir_req_valid,
+    output reg [ADDR_WIDTH-1:0] dir_req_addr,
+    input wire [NUM_CORES-1:0] dir_sharers,  // 共享者位图
+    input wire dir_modified,                  // 是否被修改
+    input wire [1:0] dir_owner                // 独占所有者
+);
+
+    // 状态定义
+    localparam INVALID = 0, SHARED = 1, MODIFIED = 2;
+    
+    // 缓存行状态表
+    reg [1:0] cache_state [NUM_CORES-1:0][1023:0]; // 1K条目
+    
+    // 仲裁逻辑
+    reg [1:0] current_requester;
+    reg [2:0] protocol_state;
+    localparam IDLE = 0, CHECK_DIR = 1, SEND_INV = 2, 
+               WAIT_ACK = 3, GRANT_ACCESS = 4;
+    
+    // 失效确认计数
+    reg [NUM_CORES-1:0] inv_ack_pending;
+    
+    // 获取缓存行索引
+    function [9:0] get_index(input [ADDR_WIDTH-1:0] addr);
+        get_index = addr[15:6]; // 64B行，1K条目
+    endfunction
+    
+    // 仲裁器：轮询选择请求者
+    reg [1:0] rr_pointer;
+    always @(posedge clk) begin
+        if (protocol_state == IDLE) begin
+            reg found;
+            found = 0;
+            for (int i = 0; i < NUM_CORES && !found; i++) begin
+                int idx = (rr_pointer + i) % NUM_CORES;
+                if (core_req_valid[idx]) begin
+                    current_requester <= idx;
+                    rr_pointer <= (idx + 1) % NUM_CORES;
+                    found = 1;
+                end
+            end
+        end
+    end
+    
+    // 协议状态机
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            protocol_state <= IDLE;
+            core_req_grant <= 0;
+            inv_ack_pending <= 0;
+        end else begin
+            case (protocol_state)
+                IDLE: begin
+                    if (|core_req_valid) begin
+                        // 查询目录
+                        dir_req_valid <= 1;
+                        dir_req_addr <= core_req_addr[current_requester];
+                        protocol_state <= CHECK_DIR;
+                    end
+                end
+                
+                CHECK_DIR: begin
+                    dir_req_valid <= 0;
+                    
+                    case (core_req_type[current_requester])
+                        2'b00: begin // 读请求
+                            if (dir_modified && dir_owner != current_requester) begin
+                                // 需要从修改者获取数据
+                                core_resp_type[dir_owner] <= 2'b10; // 发送失效
+                                inv_ack_pending[dir_owner] <= 1;
+                                protocol_state <= WAIT_ACK;
+                            end else begin
+                                // 可以直接授权
+                                protocol_state <= GRANT_ACCESS;
+                            end
+                        end
+                        
+                        2'b01: begin // 写请求
+                            // 失效所有共享者
+                            for (int i = 0; i < NUM_CORES; i++) begin
+                                if (i != current_requester && 
+                                    (dir_sharers[i] || (dir_modified && dir_owner == i))) begin
+                                    core_resp_type[i] <= 2'b10; // 失效
+                                    inv_ack_pending[i] <= 1;
+                                end
+                            end
+                            
+                            if (|inv_ack_pending) begin
+                                protocol_state <= WAIT_ACK;
+                            end else begin
+                                protocol_state <= GRANT_ACCESS;
+                            end
+                        end
+                        
+                        2'b10: begin // 升级请求（S->M）
+                            // 失效其他共享者
+                            for (int i = 0; i < NUM_CORES; i++) begin
+                                if (i != current_requester && dir_sharers[i]) begin
+                                    core_resp_type[i] <= 2'b10;
+                                    inv_ack_pending[i] <= 1;
+                                end
+                            end
+                            
+                            if (|inv_ack_pending) begin
+                                protocol_state <= WAIT_ACK;
+                            end else begin
+                                protocol_state <= GRANT_ACCESS;
+                            end
+                        end
+                    endcase
+                end
+                
+                WAIT_ACK: begin
+                    // 等待所有失效确认
+                    // 简化：假设立即收到确认
+                    inv_ack_pending <= 0;
+                    protocol_state <= GRANT_ACCESS;
+                end
+                
+                GRANT_ACCESS: begin
+                    // 授权访问
+                    core_req_grant[current_requester] <= 1;
+                    
+                    // 更新本地状态
+                    wire [9:0] idx = get_index(core_req_addr[current_requester]);
+                    
+                    case (core_req_type[current_requester])
+                        2'b00: // 读
+                            cache_state[current_requester][idx] <= SHARED;
+                        2'b01, 2'b10: // 写或升级
+                            cache_state[current_requester][idx] <= MODIFIED;
+                    endcase
+                    
+                    protocol_state <= IDLE;
+                end
+            endcase
+            
+            // 清除授权信号
+            if (protocol_state != GRANT_ACCESS) begin
+                core_req_grant <= 0;
+            end
+        end
+    end
+endmodule
+                    </div>
+                    
+                    <p><strong>协议特点：</strong></p>
+                    <ol>
+                        <li><strong>三状态MSI：</strong>Invalid、Shared、Modified</li>
+                        <li><strong>目录式管理：</strong>跟踪每个缓存行的共享者</li>
+                        <li><strong>失效广播：</strong>写操作前失效所有副本</li>
+                        <li><strong>轮询仲裁：</strong>公平处理多个请求</li>
+                    </ol>
+                </div>
+            </div>
+
+            <div class="exercise">
+                <h4>习题4：张量DMA传输优化</h4>
+                <p>优化一个4D张量（N×C×H×W）的DMA传输，支持padding和stride操作。目标是最小化传输次数。</p>
+                <button class="toggle-answer">显示答案</button>
+                <div class="answer">
+                    <div class="code-block">
+module OptimizedTensorDMA #(
+    parameter ADDR_WIDTH = 32,
+    parameter DATA_WIDTH = 256,
+    parameter BURST_LEN = 16
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 张量描述
+    input wire [15:0] dim_n, dim_c, dim_h, dim_w,
+    input wire [3:0] pad_top, pad_bottom, pad_left, pad_right,
+    input wire [3:0] stride_h, stride_w,
+    input wire [ADDR_WIDTH-1:0] src_addr, dst_addr,
+    
+    // DMA接口
+    output reg dma_req,
+    output reg [ADDR_WIDTH-1:0] dma_src,
+    output reg [ADDR_WIDTH-1:0] dma_dst,
+    output reg [15:0] dma_len,
+    output reg dma_2d_mode,
+    output reg [15:0] dma_2d_stride,
+    input wire dma_done
+);
+
+    // 传输优化分析
+    reg [2:0] transfer_mode;
+    localparam LINEAR = 0, STRIPE_2D = 1, TILE_3D = 2, BLOCK_4D = 3;
+    
+    // 计算最优传输模式
+    always @(*) begin
+        // 分析数据布局
+        reg is_contiguous_w = (stride_w == 1 && pad_left == 0 && pad_right == 0);
+        reg is_contiguous_h = (stride_h == 1 && pad_top == 0 && pad_bottom == 0);
+        
+        if (is_contiguous_w && is_contiguous_h) begin
+            // 可以使用大块传输
+            if (dim_w * dim_h <= BURST_LEN * 8) begin
+                transfer_mode = STRIPE_2D; // 2D条带传输
+            end else begin
+                transfer_mode = TILE_3D;   // 3D块传输
+            end
+        end else if (is_contiguous_w) begin
+            transfer_mode = STRIPE_2D;     // 逐行传输
+        end else begin
+            transfer_mode = LINEAR;        // 逐元素传输
+        end
+    end
+    
+    // 传输状态机
+    reg [3:0] state;
+    reg [15:0] n_idx, c_idx, h_idx, w_idx;
+    reg [15:0] h_out, w_out;
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state <= 0;
+            dma_req <= 0;
+        end else begin
+            case (state)
+                0: begin // 初始化
+                    n_idx <= 0;
+                    c_idx <= 0;
+                    h_idx <= 0;
+                    w_idx <= 0;
+                    h_out <= 0;
+                    w_out <= 0;
+                    state <= 1;
+                end
+                
+                1: begin // 计算传输参数
+                    case (transfer_mode)
+                        STRIPE_2D: begin
+                            // 计算2D传输的源地址
+                            reg [31:0] src_offset;
+                            src_offset = n_idx * dim_c * dim_h * dim_w +
+                                       c_idx * dim_h * dim_w +
+                                       h_idx * dim_w;
+                            
+                            // 处理padding
+                            if (h_out < pad_top || h_out >= dim_h + pad_top) begin
+                                // Padding区域，跳过
+                                state <= 4;
+                            end else begin
+                                dma_req <= 1;
+                                dma_src <= src_addr + src_offset * (DATA_WIDTH/8);
+                                dma_dst <= dst_addr + 
+                                         (n_idx * dim_c * (dim_h + pad_top + pad_bottom) * 
+                                          (dim_w + pad_left + pad_right) +
+                                          c_idx * (dim_h + pad_top + pad_bottom) * 
+                                          (dim_w + pad_left + pad_right) +
+                                          h_out * (dim_w + pad_left + pad_right) + 
+                                          pad_left) * (DATA_WIDTH/8);
+                                
+                                dma_len <= dim_w;
+                                dma_2d_mode <= 0;
+                                state <= 2;
+                            end
+                        end
+                        
+                        TILE_3D: begin
+                            // 3D块传输，一次传输多行
+                            reg [15:0] rows_to_transfer;
+                            rows_to_transfer = (dim_h - h_idx > 16) ? 16 : (dim_h - h_idx);
+                            
+                            dma_req <= 1;
+                            dma_src <= src_addr + 
+                                     (n_idx * dim_c * dim_h * dim_w +
+                                      c_idx * dim_h * dim_w +
+                                      h_idx * dim_w) * (DATA_WIDTH/8);
+                            dma_dst <= dst_addr + 
+                                     (n_idx * dim_c * (dim_h + pad_top + pad_bottom) * 
+                                      (dim_w + pad_left + pad_right) +
+                                      c_idx * (dim_h + pad_top + pad_bottom) * 
+                                      (dim_w + pad_left + pad_right) +
+                                      (h_idx + pad_top) * (dim_w + pad_left + pad_right) + 
+                                      pad_left) * (DATA_WIDTH/8);
+                            
+                            dma_len <= dim_w * rows_to_transfer;
+                            dma_2d_mode <= 1;
+                            dma_2d_stride <= dim_w + pad_left + pad_right;
+                            state <= 2;
+                        end
+                    endcase
+                end
+                
+                2: begin // 等待DMA完成
+                    dma_req <= 0;
+                    if (dma_done) begin
+                        state <= 3;
+                    end
+                end
+                
+                3: begin // 更新索引
+                    case (transfer_mode)
+                        STRIPE_2D: begin
+                            h_idx <= h_idx + stride_h;
+                            h_out <= h_out + 1;
+                            
+                            if (h_idx >= dim_h) begin
+                                h_idx <= 0;
+                                h_out <= 0;
+                                c_idx <= c_idx + 1;
+                                
+                                if (c_idx >= dim_c) begin
+                                    c_idx <= 0;
+                                    n_idx <= n_idx + 1;
+                                    
+                                    if (n_idx >= dim_n) begin
+                                        state <= 5; // 完成
+                                    end
+                                end
+                            end
+                        end
+                        
+                        TILE_3D: begin
+                            h_idx <= h_idx + 16;
+                            
+                            if (h_idx >= dim_h) begin
+                                h_idx <= 0;
+                                c_idx <= c_idx + 1;
+                                
+                                if (c_idx >= dim_c) begin
+                                    c_idx <= 0;
+                                    n_idx <= n_idx + 1;
+                                    
+                                    if (n_idx >= dim_n) begin
+                                        state <= 5;
+                                    end
+                                end
+                            end
+                        end
+                    endcase
+                    
+                    if (state != 5) state <= 1;
+                end
+                
+                4: begin // 处理padding（填充0）
+                    // 简化：假设硬件自动填充0
+                    h_out <= h_out + 1;
+                    if (h_out >= dim_h + pad_top + pad_bottom) begin
+                        h_out <= 0;
+                        c_idx <= c_idx + 1;
+                        // ... 更新其他索引
+                    end
+                    state <= 1;
+                end
+                
+                5: begin // 完成
+                    // 传输完成
+                end
+            endcase
+        end
+    end
+endmodule
+                    </div>
+                    
+                    <p><strong>优化策略：</strong></p>
+                    <ol>
+                        <li><strong>传输模式选择：</strong>根据数据连续性选择最优传输模式</li>
+                        <li><strong>2D/3D块传输：</strong>减少DMA请求次数</li>
+                        <li><strong>Padding处理：</strong>硬件自动填充，避免传输padding数据</li>
+                        <li><strong>Stride优化：</strong>使用2D DMA模式处理stride</li>
+                    </ol>
+                </div>
+            </div>
+
+            <div class="exercise">
+                <h4>习题5：压缩算法选择</h4>
+                <p>为不同类型的神经网络数据选择合适的压缩算法。考虑权重、激活值和梯度的特点。</p>
+                <button class="toggle-answer">显示答案</button>
+                <div class="answer">
+                    <div class="code-block">
+// 自适应压缩算法选择器
+module AdaptiveCompressionSelector #(
+    parameter DATA_WIDTH = 256,
+    parameter SAMPLE_SIZE = 1024
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 数据类型
+    input wire [1:0] data_type, // 0: Weight, 1: Activation, 2: Gradient
+    input wire [2:0] layer_type, // 0: Conv, 1: FC, 2: BN, 3: Attention
+    
+    // 数据采样输入
+    input wire sample_valid,
+    input wire [DATA_WIDTH-1:0] sample_data,
+    
+    // 压缩算法选择输出
+    output reg [2:0] selected_algorithm,
+    output reg [7:0] algorithm_params,
+    output reg selection_done
+);
+
+    // 算法定义
+    localparam NONE = 0, QUANTIZE = 1, RLE = 2, 
+               SPARSE = 3, HUFFMAN = 4, DELTA = 5;
+    
+    // 统计信息
+    reg [31:0] zero_count;
+    reg [31:0] unique_values;
+    reg [31:0] max_run_length;
+    reg [31:0] value_range;
+    reg signed [31:0] min_value, max_value;
+    reg [31:0] sample_count;
+    
+    // 统计收集
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            zero_count <= 0;
+            sample_count <= 0;
+            min_value <= 32'h7FFFFFFF;
+            max_value <= 32'h80000000;
+        end else if (sample_valid && sample_count < SAMPLE_SIZE) begin
+            sample_count <= sample_count + 1;
+            
+            // 统计零值
+            for (int i = 0; i < DATA_WIDTH/32; i++) begin
+                if (sample_data[i*32 +: 32] == 0) begin
+                    zero_count <= zero_count + 1;
+                end
+                
+                // 更新最大最小值
+                signed [31:0] val = sample_data[i*32 +: 32];
+                if (val < min_value) min_value <= val;
+                if (val > max_value) max_value <= val;
+            end
+        end
+    end
+    
+    // 算法选择逻辑
+    always @(posedge clk) begin
+        if (sample_count >= SAMPLE_SIZE && !selection_done) begin
+            // 计算统计指标
+            reg [15:0] sparsity = (zero_count * 100) / (sample_count * DATA_WIDTH/32);
+            value_range = max_value - min_value;
+            
+            case (data_type)
+                2'b00: begin // 权重
+                    case (layer_type)
+                        3'b000: begin // Conv层权重
+                            if (sparsity > 60) begin
+                                selected_algorithm <= SPARSE;
+                                algorithm_params <= 8'h24; // 2:4稀疏
+                            end else begin
+                                selected_algorithm <= QUANTIZE;
+                                algorithm_params <= 8'h08; // INT8量化
+                            end
+                        end
+                        
+                        3'b001: begin // FC层权重
+                            // FC层通常稀疏性更高
+                            if (sparsity > 70) begin
+                                selected_algorithm <= SPARSE;
+                                algorithm_params <= 8'h48; // 4:8稀疏
+                            end else if (unique_values < 256) begin
+                                selected_algorithm <= HUFFMAN;
+                                algorithm_params <= 8'h00;
+                            end else begin
+                                selected_algorithm <= QUANTIZE;
+                                algorithm_params <= 8'h04; // INT4量化
+                            end
+                        end
+                        
+                        3'b011: begin // Attention层权重
+                            // Attention通常需要更高精度
+                            selected_algorithm <= QUANTIZE;
+                            algorithm_params <= 8'h10; // INT16量化
+                        end
+                    endcase
+                end
+                
+                2'b01: begin // 激活值
+                    if (layer_type == 3'b000 || layer_type == 3'b001) begin
+                        // ReLU后激活值有大量零
+                        if (sparsity > 50) begin
+                            selected_algorithm <= RLE;
+                            algorithm_params <= 8'hFF; // 最大游程255
+                        end else begin
+                            // 动态量化
+                            selected_algorithm <= QUANTIZE;
+                            algorithm_params <= 8'h88; // 动态INT8
+                        end
+                    end else if (layer_type == 3'b010) begin // BN层
+                        // BN后数据分布较均匀
+                        selected_algorithm <= DELTA;
+                        algorithm_params <= 8'h01; // 一阶差分
+                    end
+                end
+                
+                2'b10: begin // 梯度
+                    // 梯度通常很小且稀疏
+                    if (sparsity > 80) begin
+                        selected_algorithm <= SPARSE;
+                        algorithm_params <= 8'h11; // 1:1稀疏（只传非零）
+                    end else if (value_range < 65536) begin
+                        // 小范围梯度用差分编码
+                        selected_algorithm <= DELTA;
+                        algorithm_params <= 8'h02; // 二阶差分
+                    end else begin
+                        selected_algorithm <= QUANTIZE;
+                        algorithm_params <= 8'h10; // FP16量化
+                    end
+                end
+            endcase
+            
+            selection_done <= 1;
+        end
+    end
+    
+    // 压缩比预测
+    reg [15:0] predicted_ratio;
+    always @(*) begin
+        case (selected_algorithm)
+            QUANTIZE: begin
+                case (algorithm_params[3:0])
+                    4'h4: predicted_ratio = 16'h0800;  // 8x (INT4)
+                    4'h8: predicted_ratio = 16'h0400;  // 4x (INT8)
+                    default: predicted_ratio = 16'h0200; // 2x
+                endcase
+            end
+            
+            RLE: begin
+                // 基于稀疏性预测
+                if (sparsity > 75) predicted_ratio = 16'h0600; // 6x
+                else if (sparsity > 50) predicted_ratio = 16'h0300; // 3x
+                else predicted_ratio = 16'h0150; // 1.5x
+            end
+            
+            SPARSE: begin
+                // 基于稀疏模式
+                case (algorithm_params)
+                    8'h24: predicted_ratio = 16'h0200; // 2x (2:4)
+                    8'h48: predicted_ratio = 16'h0200; // 2x (4:8)
+                    8'h11: predicted_ratio = sparsity * 16'h0010; // 可变
+                endcase
+            end
+            
+            default: predicted_ratio = 16'h0100; // 1x
+        endcase
+    end
+endmodule
+                    </div>
+                    
+                    <p><strong>压缩策略总结：</strong></p>
+                    <table>
+                        <tr>
+                            <th>数据类型</th>
+                            <th>特征</th>
+                            <th>推荐算法</th>
+                            <th>预期压缩比</th>
+                        </tr>
+                        <tr>
+                            <td>Conv权重</td>
+                            <td>中等稀疏性，分布集中</td>
+                            <td>INT8量化/2:4稀疏</td>
+                            <td>2-4x</td>
+                        </tr>
+                        <tr>
+                            <td>FC权重</td>
+                            <td>高稀疏性，可剪枝</td>
+                            <td>4:8稀疏/INT4量化</td>
+                            <td>4-8x</td>
+                        </tr>
+                        <tr>
+                            <td>激活值(ReLU后)</td>
+                            <td>大量零值，正值分布</td>
+                            <td>RLE/动态量化</td>
+                            <td>3-6x</td>
+                        </tr>
+                        <tr>
+                            <td>梯度</td>
+                            <td>极稀疏，小值</td>
+                            <td>Top-K稀疏/差分编码</td>
+                            <td>10-100x</td>
+                        </tr>
+                    </table>
+                </div>
+            </div>
+
+            <div class="exercise">
+                <h4>习题6：存储带宽优化</h4>
+                <p>设计一个存储带宽监控和优化系统，动态调整各个模块的带宽分配。</p>
+                <button class="toggle-answer">显示答案</button>
+                <div class="answer">
+                    <div class="code-block">
+module BandwidthOptimizer #(
+    parameter NUM_CLIENTS = 8,
+    parameter TOTAL_BANDWIDTH = 1000, // GB/s
+    parameter MONITOR_WINDOW = 1024
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 客户端请求
+    input wire [NUM_CLIENTS-1:0] client_req,
+    input wire [31:0] client_addr [NUM_CLIENTS-1:0],
+    input wire [15:0] client_len [NUM_CLIENTS-1:0],
+    input wire [2:0] client_priority [NUM_CLIENTS-1:0],
+    
+    // 带宽分配输出
+    output reg [NUM_CLIENTS-1:0] client_grant,
+    output reg [9:0] client_bandwidth [NUM_CLIENTS-1:0], // MB/s
+    
+    // 性能监控
+    output reg [31:0] total_throughput,
+    output reg [15:0] bandwidth_efficiency // 0-100%
+);
+
+    // 带宽使用统计
+    reg [31:0] bytes_transferred [NUM_CLIENTS-1:0];
+    reg [31:0] request_count [NUM_CLIENTS-1:0];
+    reg [31:0] stall_cycles [NUM_CLIENTS-1:0];
+    reg [15:0] monitor_cycles;
+    
+    // QoS参数
+    reg [9:0] min_bandwidth [NUM_CLIENTS-1:0];
+    reg [9:0] max_bandwidth [NUM_CLIENTS-1:0];
+    reg [15:0] burst_allowance [NUM_CLIENTS-1:0];
+    
+    // 初始化QoS参数
+    initial begin
+        for (int i = 0; i < NUM_CLIENTS; i++) begin
+            min_bandwidth[i] = 50;  // 50 MB/s minimum
+            max_bandwidth[i] = 300; // 300 MB/s maximum
+            burst_allowance[i] = 100; // 100 MB burst
+        end
+    end
+    
+    // 带宽令牌桶
+    reg [15:0] tokens [NUM_CLIENTS-1:0];
+    reg [3:0] refill_counter;
+    
+    // 令牌补充
+    always @(posedge clk) begin
+        refill_counter <= refill_counter + 1;
+        if (refill_counter == 0) begin // 每16周期补充一次
+            for (int i = 0; i < NUM_CLIENTS; i++) begin
+                if (tokens[i] < client_bandwidth[i]) begin
+                    tokens[i] <= tokens[i] + (client_bandwidth[i] >> 4);
+                end
+            end
+        end
+    end
+    
+    // 动态带宽分配算法
+    reg [2:0] allocation_state;
+    reg [31:0] total_demand;
+    reg [31:0] allocated_bandwidth;
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            allocation_state <= 0;
+            monitor_cycles <= 0;
+            // 初始均分带宽
+            for (int i = 0; i < NUM_CLIENTS; i++) begin
+                client_bandwidth[i] <= TOTAL_BANDWIDTH / NUM_CLIENTS;
+            end
+        end else begin
+            monitor_cycles <= monitor_cycles + 1;
+            
+            // 收集统计信息
+            for (int i = 0; i < NUM_CLIENTS; i++) begin
+                if (client_req[i]) begin
+                    request_count[i] <= request_count[i] + 1;
+                    if (!client_grant[i]) begin
+                        stall_cycles[i] <= stall_cycles[i] + 1;
+                    end
+                end
+                
+                if (client_grant[i]) begin
+                    bytes_transferred[i] <= bytes_transferred[i] + client_len[i];
+                end
+            end
+            
+            // 周期性重新分配
+            if (monitor_cycles >= MONITOR_WINDOW) begin
+                monitor_cycles <= 0;
+                allocation_state <= 1;
+            end
+            
+            case (allocation_state)
+                1: begin // 计算需求
+                    total_demand = 0;
+                    for (int i = 0; i < NUM_CLIENTS; i++) begin
+                        // 基于历史使用计算需求
+                        reg [31:0] demand;
+                        demand = (bytes_transferred[i] * 1000) / MONITOR_WINDOW;
+                        
+                        // 考虑停顿率
+                        if (stall_cycles[i] > MONITOR_WINDOW/10) begin
+                            demand = demand * 15 / 10; // 增加50%
+                        end
+                        
+                        total_demand = total_demand + demand;
+                    end
+                    allocation_state <= 2;
+                end
+                
+                2: begin // 分配带宽
+                    allocated_bandwidth = 0;
+                    
+                    // 第一轮：保证最小带宽
+                    for (int i = 0; i < NUM_CLIENTS; i++) begin
+                        client_bandwidth[i] <= min_bandwidth[i];
+                        allocated_bandwidth = allocated_bandwidth + min_bandwidth[i];
+                    end
+                    
+                    allocation_state <= 3;
+                end
+                
+                3: begin // 分配剩余带宽
+                    reg [31:0] remaining = TOTAL_BANDWIDTH - allocated_bandwidth;
+                    
+                    // 按优先级和需求比例分配
+                    for (int i = 0; i < NUM_CLIENTS; i++) begin
+                        reg [31:0] extra;
+                        if (total_demand > 0) begin
+                            extra = (remaining * bytes_transferred[i]) / total_demand;
+                            
+                            // 优先级加权
+                            extra = extra * (client_priority[i] + 1) / 4;
+                            
+                            // 限制在最大带宽内
+                            if (client_bandwidth[i] + extra > max_bandwidth[i]) begin
+                                extra = max_bandwidth[i] - client_bandwidth[i];
+                            end
+                            
+                            client_bandwidth[i] <= client_bandwidth[i] + extra;
+                        end
+                    end
+                    
+                    // 清除统计
+                    for (int i = 0; i < NUM_CLIENTS; i++) begin
+                        bytes_transferred[i] <= 0;
+                        request_count[i] <= 0;
+                        stall_cycles[i] <= 0;
+                    end
+                    
+                    allocation_state <= 0;
+                end
+            endcase
+        end
+    end
+    
+    // 授权仲裁器
+    reg [2:0] rr_pointer;
+    always @(posedge clk) begin
+        client_grant <= 0;
+        
+        // 轮询检查有令牌的请求者
+        for (int i = 0; i < NUM_CLIENTS; i++) begin
+            int idx = (rr_pointer + i) % NUM_CLIENTS;
+            if (client_req[idx] && tokens[idx] >= client_len[idx]) begin
+                client_grant[idx] <= 1;
+                tokens[idx] <= tokens[idx] - client_len[idx];
+                rr_pointer <= (idx + 1) % NUM_CLIENTS;
+                break;
+            end
+        end
+    end
+    
+    // 性能计算
+    always @(posedge clk) begin
+        reg [31:0] total_bytes = 0;
+        reg [31:0] total_allocated = 0;
+        
+        for (int i = 0; i < NUM_CLIENTS; i++) begin
+            total_bytes = total_bytes + bytes_transferred[i];
+            total_allocated = total_allocated + client_bandwidth[i];
+        end
+        
+        total_throughput <= (total_bytes * 1000) / monitor_cycles;
+        bandwidth_efficiency <= (total_throughput * 100) / TOTAL_BANDWIDTH;
+    end
+endmodule
+                    </div>
+                    
+                    <p><strong>优化策略：</strong></p>
+                    <ol>
+                        <li><strong>动态带宽分配：</strong>基于历史使用和停顿率</li>
+                        <li><strong>QoS保证：</strong>最小/最大带宽限制</li>
+                        <li><strong>令牌桶限流：</strong>平滑突发流量</li>
+                        <li><strong>优先级支持：</strong>关键路径获得更多带宽</li>
+                        <li><strong>效率监控：</strong>实时跟踪带宽利用率</li>
+                    </ol>
+                </div>
+            </div>
+
+            <div class="exercise">
+                <h4>习题7：存储层次优化</h4>
+                <p>为CNN推理设计一个三级存储层次（L0/L1/L2），优化数据复用。</p>
+                <button class="toggle-answer">显示答案</button>
+                <div class="answer">
+                    <div class="code-block">
+// CNN优化的三级存储层次
+module CNNMemoryHierarchy #(
+    parameter PE_ARRAY_DIM = 16,
+    parameter L0_SIZE = 256,      // 每个PE 256B
+    parameter L1_SIZE = 16384,    // 每个PE组 16KB
+    parameter L2_SIZE = 2097152,  // 全局 2MB
+    parameter DATA_WIDTH = 8
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // CNN层配置
+    input wire [15:0] layer_h, layer_w, layer_c_in, layer_c_out,
+    input wire [3:0] kernel_size,
+    input wire [3:0] stride,
+    
+    // 数据流控制
+    input wire start_layer,
+    output reg layer_done,
+    
+    // 性能统计
+    output reg [31:0] l0_hits, l0_misses,
+    output reg [31:0] l1_hits, l1_misses,
+    output reg [31:0] l2_hits, l2_misses,
+    output reg [31:0] dram_accesses
+);
+
+    // 数据复用分析
+    reg [2:0] dataflow_mode;
+    localparam WEIGHT_STATIONARY = 0, OUTPUT_STATIONARY = 1, 
+               ROW_STATIONARY = 2, NO_LOCAL_REUSE = 3;
+    
+    // 复用距离计算
+    function [31:0] calc_reuse_distance(
+        input [2:0] data_type, // 0: weight, 1: input, 2: output
+        input [2:0] df_mode
+    );
+        case (df_mode)
+            WEIGHT_STATIONARY: begin
+                case (data_type)
+                    0: calc_reuse_distance = layer_h * layer_w; // 权重复用整个特征图
+                    1: calc_reuse_distance = kernel_size * kernel_size; // 输入复用卷积窗口
+                    2: calc_reuse_distance = 1; // 输出无复用
+                endcase
+            end
+            
+            OUTPUT_STATIONARY: begin
+                case (data_type)
+                    0: calc_reuse_distance = 1; // 权重无复用
+                    1: calc_reuse_distance = layer_c_out; // 输入复用所有输出通道
+                    2: calc_reuse_distance = layer_c_in * kernel_size * kernel_size; // 输出累加
+                endcase
+            end
+            
+            ROW_STATIONARY: begin
+                // 行固定：平衡三种数据的复用
+                case (data_type)
+                    0: calc_reuse_distance = layer_w / stride; // 权重复用一行
+                    1: calc_reuse_distance = kernel_size; // 输入复用卷积行
+                    2: calc_reuse_distance = kernel_size * layer_c_in / PE_ARRAY_DIM; // 部分累加
+                endcase
+            end
+        endcase
+    endfunction
+    
+    // 选择最优数据流
+    always @(*) begin
+        reg [31:0] weight_size = kernel_size * kernel_size * layer_c_in * layer_c_out;
+        reg [31:0] input_size = layer_h * layer_w * layer_c_in;
+        reg [31:0] output_size = (layer_h/stride) * (layer_w/stride) * layer_c_out;
+        
+        // 基于层参数选择数据流
+        if (kernel_size == 1) begin
+            // 1x1卷积，输出固定最优
+            dataflow_mode = OUTPUT_STATIONARY;
+        end else if (weight_size < L1_SIZE) begin
+            // 权重能放入L1，权重固定
+            dataflow_mode = WEIGHT_STATIONARY;
+        end else if (layer_c_in < 16 && layer_c_out > 256) begin
+            // 深度可分离卷积，行固定
+            dataflow_mode = ROW_STATIONARY;
+        end else begin
+            // 默认行固定
+            dataflow_mode = ROW_STATIONARY;
+        end
+    end
+    
+    // L0缓存管理（每个PE私有）
+    reg [DATA_WIDTH-1:0] l0_weight_reg [PE_ARRAY_DIM-1:0];
+    reg [DATA_WIDTH-1:0] l0_input_reg [PE_ARRAY_DIM-1:0];
+    reg [31:0] l0_partial_sum [PE_ARRAY_DIM-1:0];
+    
+    // L1缓存管理（PE组共享）
+    reg [2:0] l1_allocation_mode;
+    reg [15:0] l1_weight_lines;
+    reg [15:0] l1_input_lines; 
+    reg [15:0] l1_output_lines;
+    
+    always @(posedge clk) begin
+        if (start_layer) begin
+            // 根据数据流模式分配L1空间
+            case (dataflow_mode)
+                WEIGHT_STATIONARY: begin
+                    l1_weight_lines <= L1_SIZE * 7 / 10; // 70%给权重
+                    l1_input_lines <= L1_SIZE * 2 / 10;  // 20%给输入
+                    l1_output_lines <= L1_SIZE * 1 / 10; // 10%给输出
+                end
+                
+                OUTPUT_STATIONARY: begin
+                    l1_weight_lines <= L1_SIZE * 2 / 10; // 20%给权重
+                    l1_input_lines <= L1_SIZE * 3 / 10;  // 30%给输入
+                    l1_output_lines <= L1_SIZE * 5 / 10; // 50%给输出
+                end
+                
+                ROW_STATIONARY: begin
+                    l1_weight_lines <= L1_SIZE * 4 / 10; // 40%给权重
+                    l1_input_lines <= L1_SIZE * 4 / 10;  // 40%给输入
+                    l1_output_lines <= L1_SIZE * 2 / 10; // 20%给输出
+                end
+            endcase
+        end
+    end
+    
+    // L2缓存管理（全局共享）
+    reg [2:0] l2_partition_mode;
+    reg [20:0] l2_weight_base, l2_input_base, l2_output_base;
+    
+    // Tile大小计算
+    reg [15:0] tile_h, tile_w, tile_c;
+    
+    always @(posedge clk) begin
+        if (start_layer) begin
+            // 计算能装入L2的最大tile
+            reg [31:0] weight_per_tile, input_per_tile, output_per_tile;
+            
+            // 尝试不同的tile大小
+            for (tile_h = layer_h; tile_h > 0; tile_h = tile_h >> 1) begin
+                for (tile_w = layer_w; tile_w > 0; tile_w = tile_w >> 1) begin
+                    for (tile_c = layer_c_in; tile_c > 0; tile_c = tile_c >> 1) begin
+                        weight_per_tile = kernel_size * kernel_size * tile_c * layer_c_out;
+                        input_per_tile = (tile_h + kernel_size - 1) * 
+                                       (tile_w + kernel_size - 1) * tile_c;
+                        output_per_tile = (tile_h/stride) * (tile_w/stride) * layer_c_out;
+                        
+                        if (weight_per_tile + input_per_tile + output_per_tile <= L2_SIZE) begin
+                            // 找到合适的tile大小
+                            break;
+                        end
+                    end
+                    if (weight_per_tile + input_per_tile + output_per_tile <= L2_SIZE) break;
+                end
+                if (weight_per_tile + input_per_tile + output_per_tile <= L2_SIZE) break;
+            end
+            
+            // 设置L2分区
+            l2_weight_base = 0;
+            l2_input_base = weight_per_tile;
+            l2_output_base = weight_per_tile + input_per_tile;
+        end
+    end
+    
+    // 预取调度器
+    reg [3:0] prefetch_state;
+    reg [15:0] current_tile_h, current_tile_w, current_tile_c;
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            prefetch_state <= 0;
+            layer_done <= 0;
+        end else begin
+            case (prefetch_state)
+                0: begin // 空闲
+                    if (start_layer) begin
+                        current_tile_h <= 0;
+                        current_tile_w <= 0;
+                        current_tile_c <= 0;
+                        prefetch_state <= 1;
+                    end
+                end
+                
+                1: begin // 预取权重到L2
+                    // 预取当前tile的权重
+                    dram_accesses <= dram_accesses + 
+                        (kernel_size * kernel_size * tile_c * layer_c_out) / 64;
+                    prefetch_state <= 2;
+                end
+                
+                2: begin // 预取输入到L2
+                    // 预取当前tile的输入（考虑halo）
+                    dram_accesses <= dram_accesses + 
+                        ((tile_h + kernel_size - 1) * (tile_w + kernel_size - 1) * tile_c) / 64;
+                    prefetch_state <= 3;
+                end
+                
+                3: begin // L2到L1传输
+                    // 根据数据流模式，将数据从L2搬到L1
+                    case (dataflow_mode)
+                        WEIGHT_STATIONARY: begin
+                            // 权重常驻L1
+                            l2_hits <= l2_hits + kernel_size * kernel_size;
+                            l1_misses <= l1_misses + kernel_size * kernel_size;
+                        end
+                        
+                        OUTPUT_STATIONARY: begin
+                            // 输出块常驻L1
+                            l2_hits <= l2_hits + tile_h * tile_w / (stride * stride);
+                            l1_misses <= l1_misses + tile_h * tile_w / (stride * stride);
+                        end
+                    endcase
+                    prefetch_state <= 4;
+                end
+                
+                4: begin // L1到L0传输并计算
+                    // 模拟PE阵列计算
+                    // 统计L0/L1命中率
+                    case (dataflow_mode)
+                        WEIGHT_STATIONARY: begin
+                            l0_hits <= l0_hits + tile_h * tile_w; // 权重复用
+                            l1_hits <= l1_hits + tile_h * tile_w * kernel_size * kernel_size;
+                        end
+                        
+                        OUTPUT_STATIONARY: begin
+                            l0_hits <= l0_hits + layer_c_in * kernel_size * kernel_size; // 输出复用
+                            l1_hits <= l1_hits + layer_c_in;
+                        end
+                    endcase
+                    
+                    // 检查是否完成当前tile
+                    prefetch_state <= 5;
+                end
+                
+                5: begin // 下一个tile
+                    current_tile_w <= current_tile_w + tile_w;
+                    if (current_tile_w >= layer_w) begin
+                        current_tile_w <= 0;
+                        current_tile_h <= current_tile_h + tile_h;
+                        
+                        if (current_tile_h >= layer_h) begin
+                            current_tile_h <= 0;
+                            current_tile_c <= current_tile_c + tile_c;
+                            
+                            if (current_tile_c >= layer_c_in) begin
+                                // 层计算完成
+                                layer_done <= 1;
+                                prefetch_state <= 0;
+                            end else begin
+                                prefetch_state <= 1;
+                            end
+                        end else begin
+                            prefetch_state <= 2; // 只需预取新的输入
+                        end
+                    end else begin
+                        prefetch_state <= 2; // 只需预取新的输入
+                    end
+                end
+            endcase
+        end
+    end
+endmodule
+                    </div>
+                    
+                    <p><strong>优化要点：</strong></p>
+                    <ol>
+                        <li><strong>自适应数据流：</strong>根据层类型选择最优数据流模式</li>
+                        <li><strong>动态空间分配：</strong>L1/L2空间根据复用模式动态分配</li>
+                        <li><strong>Tile优化：</strong>计算最大可容纳的tile尺寸</li>
+                        <li><strong>预取流水：</strong>L2预取与L1计算重叠</li>
+                        <li><strong>层次化复用：</strong>L0复用最频繁数据，L1复用中等，L2缓存tile</li>
+                    </ol>
+                </div>
+            </div>
+
+            <div class="exercise">
+                <h4>习题8：综合设计题</h4>
+                <p>设计一个完整的NPU存储子系统，支持8×8 MAC阵列，目标是在7nm工艺下达到1TOPS@1GHz。要求：
+                1) 设计存储层次结构
+                2) 实现高效的数据搬运
+                3) 支持INT8/INT16混合精度
+                4) 功耗预算2W</p>
+                <button class="toggle-answer">显示答案</button>
+                <div class="answer">
+                    <div class="code-block">
+// NPU存储子系统顶层设计
+module NPUMemorySubsystem (
+    input wire clk,              // 1GHz
+    input wire rst_n,
+    
+    // 配置接口
+    input wire [1:0] precision_mode, // 0: INT8, 1: INT16, 2: Mixed
+    input wire [2:0] dataflow_mode,
+    
+    // 性能监控
+    output wire [31:0] actual_tops,
+    output wire [15:0] power_estimate_mw
+);
+
+    // ===== 1. 存储层次设计 =====
+    // L0: 64 × 256b = 2KB (寄存器文件，每个PE)
+    // L1: 8 × 8KB = 64KB (PE组本地缓存)
+    // L2: 512KB (全局缓存)
+    // 带宽需求：1TOPS × 3操作数 × 1B = 3TB/s
+    
+    // MAC阵列：8×8 = 64 MACs
+    // 峰值性能：64 MACs × 2 ops/MAC × 1GHz = 128 GOPS (INT8)
+    //           64 MACs × 2 ops/MAC × 0.5GHz = 64 GOPS (INT16)
+    
+    // ===== 2. 多级SRAM设计 =====
+    // L0 Register File (每个PE)
+    genvar i, j;
+    generate
+        for (i = 0; i < 8; i = i + 1) begin
+            for (j = 0; j < 8; j = j + 1) begin
+                L0_RegFile #(
+                    .NUM_REGS(8),
+                    .REG_WIDTH(256)
+                ) pe_rf (
+                    .clk(clk),
+                    .rd_en(pe_rf_rd_en[i][j]),
+                    .rd_addr(pe_rf_rd_addr[i][j]),
+                    .rd_data(pe_rf_rd_data[i][j]),
+                    .wr_en(pe_rf_wr_en[i][j]),
+                    .wr_addr(pe_rf_wr_addr[i][j]),
+                    .wr_data(pe_rf_wr_data[i][j])
+                );
+            end
+        end
+    endgenerate
+    
+    // L1 SRAM (PE行共享，8个8KB banks)
+    generate
+        for (i = 0; i < 8; i = i + 1) begin
+            MultiPortSRAM #(
+                .DEPTH(1024),      // 1K × 64B = 64KB
+                .WIDTH(512),       // 64B宽
+                .NUM_PORTS(8),     // 8个PE访问
+                .BANK_COUNT(4)     // 4-way banked
+            ) l1_sram (
+                .clk(clk),
+                .en(l1_en[i]),
+                .wr(l1_wr[i]),
+                .addr(l1_addr[i]),
+                .wdata(l1_wdata[i]),
+                .rdata(l1_rdata[i])
+            );
+        end
+    endgenerate
+    
+    // L2 Global Buffer (512KB, 16-way banked)
+    GlobalBuffer #(
+        .SIZE(524288),      // 512KB
+        .WIDTH(512),        // 64B接口
+        .NUM_BANKS(16),
+        .NUM_PORTS(8)       // 8个L1可同时访问
+    ) l2_buffer (
+        .clk(clk),
+        .req_valid(l2_req_valid),
+        .req_addr(l2_req_addr),
+        .req_wr(l2_req_wr),
+        .req_data(l2_req_data),
+        .resp_valid(l2_resp_valid),
+        .resp_data(l2_resp_data)
+    );
+    
+    // ===== 3. 高带宽互连网络 =====
+    // L0-L1互连：64个256b端口，聚合带宽 = 64×256b×1GHz = 2TB/s
+    // L1-L2互连：8个512b端口，聚合带宽 = 8×512b×1GHz = 512GB/s
+    
+    CrossbarNetwork #(
+        .NUM_MASTERS(64),   // 64个PE
+        .NUM_SLAVES(8),     // 8个L1
+        .DATA_WIDTH(256)
+    ) l0_l1_xbar (
+        .clk(clk),
+        .master_req(pe_to_l1_req),
+        .master_addr(pe_to_l1_addr),
+        .master_data(pe_to_l1_data),
+        .slave_ack(l1_to_pe_ack),
+        .slave_data(l1_to_pe_data)
+    );
+    
+    // ===== 4. 智能DMA引擎 =====
+    IntelligentDMA #(
+        .NUM_CHANNELS(4),
+        .ADDR_WIDTH(32),
+        .MAX_2D_SIZE(256)
+    ) dma_engine (
+        .clk(clk),
+        .rst_n(rst_n),
+        
+        // 描述符接口
+        .desc_valid(dma_desc_valid),
+        .desc_2d_mode(dma_2d_mode),
+        .desc_src_addr(dma_src_addr),
+        .desc_dst_addr(dma_dst_addr),
+        .desc_x_size(dma_x_size),
+        .desc_y_size(dma_y_size),
+        .desc_src_stride(dma_src_stride),
+        .desc_dst_stride(dma_dst_stride),
+        
+        // L2接口
+        .l2_req(dma_l2_req),
+        .l2_addr(dma_l2_addr),
+        .l2_wdata(dma_l2_wdata),
+        .l2_rdata(l2_dma_rdata),
+        
+        // DRAM接口
+        .dram_req(dma_dram_req),
+        .dram_addr(dma_dram_addr),
+        .dram_wdata(dma_dram_wdata),
+        .dram_rdata(dram_dma_rdata)
+    );
+    
+    // ===== 5. 混合精度支持 =====
+    MixedPrecisionController #(
+        .MAC_ARRAY_DIM(8)
+    ) prec_ctrl (
+        .clk(clk),
+        .precision_mode(precision_mode),
+        .weight_precision(weight_prec),
+        .activation_precision(act_prec),
+        
+        // PE配置输出
+        .pe_mode(pe_precision_mode),
+        .pe_grouping(pe_group_config)
+    );
+    
+    // ===== 6. 功耗优化控制 =====
+    PowerController #(
+        .NUM_DOMAINS(4)     // L0, L1, L2, DMA
+    ) pwr_ctrl (
+        .clk(clk),
+        .rst_n(rst_n),
+        
+        // 活动监控
+        .l0_active(|pe_rf_rd_en),
+        .l1_active(|l1_en),
+        .l2_active(|l2_req_valid),
+        .dma_active(dma_busy),
+        
+        // 功耗控制
+        .clock_gate_en(clk_gate_en),
+        .voltage_scale(vdd_scale),
+        .power_gate_en(pwr_gate_en),
+        
+        // 功耗估计
+        .power_estimate(power_estimate_mw)
+    );
+    
+    // ===== 7. 数据流协调器 =====
+    DataflowOrchestrator orch (
+        .clk(clk),
+        .rst_n(rst_n),
+        .dataflow_mode(dataflow_mode),
+        
+        // 层参数
+        .layer_params(layer_params),
+        
+        // PE控制
+        .pe_config(pe_config),
+        .pe_enable(pe_enable),
+        
+        // 存储控制
+        .l1_alloc_map(l1_allocation),
+        .l2_alloc_map(l2_allocation),
+        
+        // DMA控制
+        .dma_schedule(dma_schedule)
+    );
+    
+    // ===== 8. 性能计数器 =====
+    PerformanceCounters perf_cnt (
+        .clk(clk),
+        .rst_n(rst_n),
+        
+        // 输入事件
+        .mac_active(mac_active),
+        .l0_hit(l0_cache_hit),
+        .l1_hit(l1_cache_hit),
+        .l2_hit(l2_cache_hit),
+        .dram_access(dram_access),
+        
+        // 输出统计
+        .total_ops(total_operations),
+        .actual_tops(actual_tops),
+        .bandwidth_utilization(bw_util),
+        .cache_hit_rate(cache_hit_rate)
+    );
+    
+    // ===== 功耗分解（2W预算）=====
+    // MAC阵列：~800mW (40%)
+    // L0 (RegFile)：~200mW (10%)
+    // L1 SRAM：~400mW (20%)
+    // L2 SRAM：~300mW (15%)
+    // 互连网络：~200mW (10%)
+    // 控制逻辑：~100mW (5%)
+    
+endmodule
+
+// 关键子模块：智能预取器
+module SmartPrefetcher #(
+    parameter ADDR_WIDTH = 32,
+    parameter PATTERN_DEPTH = 8
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 访问监控
+    input wire access_valid,
+    input wire [ADDR_WIDTH-1:0] access_addr,
+    
+    // 预取输出
+    output reg prefetch_req,
+    output reg [ADDR_WIDTH-1:0] prefetch_addr,
+    output reg [7:0] prefetch_len,
+    
+    // 模式识别
+    output reg [2:0] detected_pattern // 0:Sequential, 1:Strided, 2:2D
+);
+
+    // 访问历史
+    reg [ADDR_WIDTH-1:0] addr_history [PATTERN_DEPTH-1:0];
+    reg [31:0] stride_history [PATTERN_DEPTH-2:0];
+    reg [3:0] history_ptr;
+    
+    // 模式检测
+    always @(posedge clk) begin
+        if (access_valid) begin
+            // 更新历史
+            addr_history[history_ptr] <= access_addr;
+            history_ptr <= (history_ptr + 1) % PATTERN_DEPTH;
+            
+            // 计算步长
+            if (history_ptr > 0) begin
+                stride_history[history_ptr-1] <= 
+                    access_addr - addr_history[history_ptr-1];
+            end
+            
+            // 检测模式
+            if (history_ptr >= 3) begin
+                if (stride_history[history_ptr-1] == stride_history[history_ptr-2] &&
+                    stride_history[history_ptr-2] == stride_history[history_ptr-3]) begin
+                    // 固定步长模式
+                    detected_pattern <= 1;
+                    prefetch_req <= 1;
+                    prefetch_addr <= access_addr + stride_history[history_ptr-1];
+                    prefetch_len <= 8; // 预取8个元素
+                end
+            end
+        end
+    end
+endmodule
+                    </div>
+                    
+                    <p><strong>设计总结：</strong></p>
+                    <table>
+                        <tr>
+                            <th>组件</th>
+                            <th>规格</th>
+                            <th>带宽</th>
+                            <th>功耗</th>
+                        </tr>
+                        <tr>
+                            <td>MAC阵列</td>
+                            <td>8×8 INT8/INT16</td>
+                            <td>-</td>
+                            <td>800mW</td>
+                        </tr>
+                        <tr>
+                            <td>L0 RegFile</td>
+                            <td>64×2KB</td>
+                            <td>2TB/s</td>
+                            <td>200mW</td>
+                        </tr>
+                        <tr>
+                            <td>L1 SRAM</td>
+                            <td>8×8KB</td>
+                            <td>512GB/s</td>
+                            <td>400mW</td>
+                        </tr>
+                        <tr>
+                            <td>L2 Buffer</td>
+                            <td>512KB</td>
+                            <td>128GB/s</td>
+                            <td>300mW</td>
+                        </tr>
+                        <tr>
+                            <td>NoC+DMA</td>
+                            <td>-</td>
+                            <td>-</td>
+                            <td>300mW</td>
+                        </tr>
+                        <tr>
+                            <td><strong>总计</strong></td>
+                            <td>-</td>
+                            <td>-</td>
+                            <td><strong>2000mW</strong></td>
+                        </tr>
+                    </table>
+                    
+                    <p><strong>关键设计决策：</strong></p>
+                    <ol>
+                        <li><strong>存储层次：</strong>三级结构平衡容量、带宽和功耗</li>
+                        <li><strong>Banking策略：</strong>L1/L2多体设计减少冲突</li>
+                        <li><strong>预取机制：</strong>模式识别的智能预取</li>
+                        <li><strong>功耗优化：</strong>细粒度时钟门控和电源门控</li>
+                        <li><strong>混合精度：</strong>动态配置支持INT8/INT16</li>
+                    </ol>
+                </div>
+            </div>
+        </section>
         
     </div>
 
