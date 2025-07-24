@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neural Processing Unit (NPU) 设计教程</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f5f5f5;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
+            color: white;
+            padding: 40px 0;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        nav {
+            background: #34495e;
+            padding: 15px 0;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        nav ul {
+            list-style: none;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        nav li {
+            margin: 5px 15px;
+        }
+
+        nav a {
+            color: white;
+            text-decoration: none;
+            padding: 5px 10px;
+            border-radius: 4px;
+            transition: background 0.3s;
+        }
+
+        nav a:hover {
+            background: #2c3e50;
+        }
+
+        .chapter {
+            background: white;
+            margin: 20px 0;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .chapter h2 {
+            color: #2c3e50;
+            font-size: 2em;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 3px solid #3498db;
+        }
+
+        .chapter h3 {
+            color: #34495e;
+            font-size: 1.5em;
+            margin: 25px 0 15px 0;
+        }
+
+        .chapter h4 {
+            color: #7f8c8d;
+            font-size: 1.2em;
+            margin: 20px 0 10px 0;
+        }
+
+        .code-block {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 20px;
+            border-radius: 5px;
+            margin: 15px 0;
+            overflow-x: auto;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .exercise {
+            background: #ecf0f1;
+            padding: 20px;
+            border-radius: 5px;
+            margin: 20px 0;
+            border-left: 5px solid #3498db;
+        }
+
+        .exercise h4 {
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+
+        .question {
+            margin: 15px 0;
+            padding: 15px;
+            background: white;
+            border-radius: 5px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .answer {
+            margin-top: 10px;
+            padding: 15px;
+            background: #e8f5e9;
+            border-radius: 5px;
+            display: none;
+            border-left: 4px solid #4caf50;
+        }
+
+        .answer.show {
+            display: block;
+        }
+
+        .toggle-answer {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-top: 10px;
+            transition: background 0.3s;
+        }
+
+        .toggle-answer:hover {
+            background: #2980b9;
+        }
+
+        .figure {
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        .figure img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .figure-caption {
+            color: #7f8c8d;
+            font-size: 0.9em;
+            margin-top: 10px;
+        }
+
+        .table-wrapper {
+            overflow-x: auto;
+            margin: 20px 0;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+
+        th {
+            background: #34495e;
+            color: white;
+            font-weight: bold;
+        }
+
+        tr:hover {
+            background: #f5f5f5;
+        }
+
+        .highlight {
+            background: #fff3cd;
+            padding: 2px 5px;
+            border-radius: 3px;
+        }
+
+        .info-box {
+            background: #e3f2fd;
+            border-left: 5px solid #2196f3;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+
+        .warning-box {
+            background: #fff3cd;
+            border-left: 5px solid #ff9800;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+            
+            header h1 {
+                font-size: 1.8em;
+            }
+            
+            .chapter {
+                padding: 20px;
+            }
+            
+            nav ul {
+                flex-direction: column;
+                align-items: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Neural Processing Unit (NPU) 设计教程</h1>
+        <p>从基础到高级的完整NPU芯片设计指南</p>
+    </header>
+
+    <nav>
+        <ul>
+            <li><a href="#intro">课程介绍</a></li>
+            <li><a href="#chapter1">1. NPU简介</a></li>
+            <li><a href="#chapter2">2. 神经网络基础</a></li>
+            <li><a href="#chapter3">3. NPU架构</a></li>
+            <li><a href="#chapter4">4. 计算核心</a></li>
+            <li><a href="#chapter5">5. 存储系统</a></li>
+            <li><a href="#chapter6">6. RTL设计</a></li>
+            <li><a href="#chapter7">7. 验证方法</a></li>
+            <li><a href="#chapter8">8. 物理设计</a></li>
+            <li><a href="#chapter9">9. 先进工艺</a></li>
+            <li><a href="#chapter10">10. 软硬件协同</a></li>
+            <li><a href="#chapter11">11. 性能优化</a></li>
+            <li><a href="#chapter12">12. 实战项目</a></li>
+        </ul>
+    </nav>
+
+    <div class="container">
+        <div id="intro" class="chapter">
+            <h2>课程介绍</h2>
+            <p>欢迎来到Neural Processing Unit (NPU)设计教程！本教程将带您从零开始，逐步深入了解NPU的设计原理和实现技术。</p>
+            
+            <h3>课程目标</h3>
+            <ul>
+                <li>理解NPU的基本原理和架构</li>
+                <li>掌握NPU前端设计技术（RTL设计和验证）</li>
+                <li>学习NPU后端设计流程（综合、布局布线）</li>
+                <li>了解软硬件协同设计方法</li>
+                <li>通过实战项目巩固所学知识</li>
+            </ul>
+
+            <h3>学习建议</h3>
+            <div class="info-box">
+                <p><strong>提示：</strong>本教程采用渐进式学习方式，建议按章节顺序学习。每章都包含理论讲解、代码示例和练习题，请确保完成每章的练习题后再进入下一章。</p>
+            </div>
+
+            <h3>先修知识</h3>
+            <ul>
+                <li>数字电路基础</li>
+                <li>Verilog/SystemVerilog编程基础</li>
+                <li>计算机体系结构基础</li>
+                <li>基本的深度学习概念</li>
+            </ul>
+        </div>
+
+        <div id="chapter1" class="chapter">
+            <h2>第1章：NPU简介与发展历程</h2>
+            
+            <h3>1.1 什么是NPU</h3>
+            <p>Neural Processing Unit (NPU) 是一种专门为加速人工智能和机器学习工作负载而设计的处理器。与传统的CPU和GPU不同，NPU针对神经网络计算进行了特殊优化，能够高效执行矩阵运算、卷积运算等AI相关操作。</p>
+            
+            <div class="info-box">
+                <p><strong>关键特征：</strong></p>
+                <ul>
+                    <li>专用硬件加速器，优化神经网络推理和训练</li>
+                    <li>高效的矩阵运算单元（MAC阵列）</li>
+                    <li>专门的数据流架构，减少内存访问开销</li>
+                    <li>支持低精度计算（INT8, INT4等）以提高效率</li>
+                </ul>
+            </div>
+
+            <h3>1.2 NPU vs CPU vs GPU</h3>
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>特性</th>
+                            <th>CPU</th>
+                            <th>GPU</th>
+                            <th>NPU</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>设计目标</td>
+                            <td>通用计算</td>
+                            <td>并行图形/计算</td>
+                            <td>AI/ML专用</td>
+                        </tr>
+                        <tr>
+                            <td>架构特点</td>
+                            <td>少量复杂核心</td>
+                            <td>大量简单核心</td>
+                            <td>专用MAC阵列</td>
+                        </tr>
+                        <tr>
+                            <td>内存层次</td>
+                            <td>多级缓存</td>
+                            <td>高带宽显存</td>
+                            <td>片上SRAM为主</td>
+                        </tr>
+                        <tr>
+                            <td>功耗效率</td>
+                            <td>中等</td>
+                            <td>较低</td>
+                            <td>高</td>
+                        </tr>
+                        <tr>
+                            <td>编程模型</td>
+                            <td>串行为主</td>
+                            <td>SIMD/SIMT</td>
+                            <td>数据流</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <h3>1.3 NPU的应用场景</h3>
+            <h4>边缘端应用</h4>
+            <ul>
+                <li><strong>智能手机：</strong>人脸识别、语音助手、拍照优化</li>
+                <li><strong>智能摄像头：</strong>实时物体检测、行为分析</li>
+                <li><strong>自动驾驶：</strong>感知融合、路径规划</li>
+                <li><strong>IoT设备：</strong>语音唤醒、异常检测</li>
+            </ul>
+
+            <h4>数据中心应用</h4>
+            <ul>
+                <li><strong>推理服务器：</strong>大规模AI服务部署</li>
+                <li><strong>训练加速：</strong>分布式训练加速卡</li>
+                <li><strong>推荐系统：</strong>实时推荐计算</li>
+            </ul>
+
+            <h3>1.4 主流NPU架构概览</h3>
+            
+            <h4>1.4.1 Google TPU</h4>
+            <div class="code-block">
+// TPU v1 架构特点
+- 脉动阵列（Systolic Array）：256x256 MACs
+- 片上缓存：24MB Unified Buffer
+- 主频：700MHz
+- 峰值性能：92 TOPS (INT8)
+- 内存带宽：34 GB/s
+            </div>
+
+            <h4>1.4.2 华为Ascend</h4>
+            <div class="code-block">
+// Ascend 910 架构特点
+- 达芬奇架构：Cube计算单元
+- 片上缓存：多级缓存体系
+- 峰值性能：256 TFLOPS (FP16)
+- HBM内存：32GB
+- 互联：高速片间互联
+            </div>
+
+            <h4>1.4.3 寒武纪MLU</h4>
+            <div class="code-block">
+// MLU 290 架构特点
+- MLUv02架构
+- 16个MLU Core
+- 片上缓存：48MB
+- 内存：32GB LPDDR4x
+- 峰值性能：1024 TOPS (INT4)
+            </div>
+
+            <div class="exercise">
+                <h4>练习题集 1</h4>
+                
+                <div class="question">
+                    <p><strong>题目1.1：</strong>简述NPU相比GPU在AI推理任务上的三个主要优势。</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <p><strong>答案：</strong></p>
+                        <ol>
+                            <li><strong>功耗效率更高：</strong>NPU采用专用硬件设计，去除了GPU中用于图形渲染的部分，并针对神经网络运算进行优化，在相同性能下功耗可降低50%以上。</li>
+                            <li><strong>推理延迟更低：</strong>NPU的数据流架构和片上存储设计减少了内存访问延迟，批处理大小为1时性能优势明显。</li>
+                            <li><strong>支持低精度计算：</strong>NPU原生支持INT8、INT4等低精度格式，可在保持精度的同时大幅提升吞吐量。</li>
+                        </ol>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目1.2：</strong>解释什么是脉动阵列（Systolic Array），以及它为什么适合神经网络计算？</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <p><strong>答案：</strong></p>
+                        <p>脉动阵列是一种规则的处理单元阵列，数据像心脏跳动一样有节奏地在阵列中流动。其特点包括：</p>
+                        <ul>
+                            <li><strong>数据复用：</strong>输入数据在多个PE间传递，减少内存访问</li>
+                            <li><strong>规则结构：</strong>易于实现和扩展，面积利用率高</li>
+                            <li><strong>高并行度：</strong>可同时执行大量MAC运算</li>
+                        </ul>
+                        <p>适合神经网络的原因：</p>
+                        <ol>
+                            <li>神经网络主要是矩阵乘法运算，与脉动阵列的计算模式匹配</li>
+                            <li>权重可以预加载并保持静止，提高数据复用率</li>
+                            <li>规则的计算模式便于流水线设计</li>
+                        </ol>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目1.3：</strong>某NPU的MAC阵列为16x16，主频为1GHz，每个周期每个MAC可完成2次INT8运算。计算该NPU的理论峰值性能（TOPS）。</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <p><strong>答案：</strong></p>
+                        <p>计算步骤：</p>
+                        <ol>
+                            <li>MAC单元总数 = 16 × 16 = 256</li>
+                            <li>每秒周期数 = 1GHz = 10^9 cycles/s</li>
+                            <li>每周期运算次数 = 256 × 2 = 512 ops/cycle</li>
+                            <li>峰值性能 = 10^9 × 512 = 512 × 10^9 ops/s = 512 GOPS = 0.512 TOPS</li>
+                        </ol>
+                        <p><strong>答案：0.512 TOPS</strong></p>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目1.4：</strong>设计一个简单的4x4脉动阵列，用Verilog描述其中一个PE（Processing Element）的基本结构。PE需要支持乘累加操作。</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <div class="code-block">
+module PE #(
+    parameter DATA_WIDTH = 8,
+    parameter ACC_WIDTH = 32
+)(
+    input wire clk,
+    input wire rst_n,
+    input wire en,
+    
+    // 数据输入
+    input wire [DATA_WIDTH-1:0] data_in,    // 从左边PE传入
+    input wire [DATA_WIDTH-1:0] weight_in,  // 从上边PE传入
+    
+    // 数据输出
+    output reg [DATA_WIDTH-1:0] data_out,   // 传给右边PE
+    output reg [DATA_WIDTH-1:0] weight_out, // 传给下边PE
+    
+    // 部分和
+    input wire [ACC_WIDTH-1:0] psum_in,     // 从上边PE传入
+    output reg [ACC_WIDTH-1:0] psum_out     // 传给下边PE
+);
+
+    // 内部寄存器
+    reg [DATA_WIDTH-1:0] weight_reg;
+    wire [2*DATA_WIDTH-1:0] mult_result;
+    wire [ACC_WIDTH-1:0] acc_result;
+    
+    // 乘法器
+    assign mult_result = data_in * weight_reg;
+    
+    // 加法器
+    assign acc_result = psum_in + {{(ACC_WIDTH-2*DATA_WIDTH){mult_result[2*DATA_WIDTH-1]}}, mult_result};
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            data_out <= 0;
+            weight_out <= 0;
+            psum_out <= 0;
+            weight_reg <= 0;
+        end else if (en) begin
+            // 数据向右传递
+            data_out <= data_in;
+            
+            // 权重向下传递并保存
+            weight_out <= weight_in;
+            weight_reg <= weight_in;
+            
+            // 累加结果向下传递
+            psum_out <= acc_result;
+        end
+    end
+endmodule
+                        </div>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目1.5：</strong>分析边缘端NPU和云端NPU在设计上的主要差异，至少列举4个方面。</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <p><strong>答案：</strong></p>
+                        <table>
+                            <tr>
+                                <th>设计方面</th>
+                                <th>边缘端NPU</th>
+                                <th>云端NPU</th>
+                            </tr>
+                            <tr>
+                                <td>功耗预算</td>
+                                <td>通常&lt;5W，需要极致的功耗优化</td>
+                                <td>可达100W以上，更关注性能</td>
+                            </tr>
+                            <tr>
+                                <td>内存系统</td>
+                                <td>小容量片上SRAM，有限的外部带宽</td>
+                                <td>大容量HBM/GDDR，高带宽</td>
+                            </tr>
+                            <tr>
+                                <td>计算精度</td>
+                                <td>主要INT8/INT4，追求高压缩比</td>
+                                <td>FP16/FP32/INT8混合精度</td>
+                            </tr>
+                            <tr>
+                                <td>芯片面积</td>
+                                <td>&lt;50mm²，成本敏感</td>
+                                <td>可达800mm²，性能优先</td>
+                            </tr>
+                            <tr>
+                                <td>应用场景</td>
+                                <td>推理为主，实时性要求高</td>
+                                <td>训练和推理，吞吐量优先</td>
+                            </tr>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目1.6：</strong>计算题：某手机NPU需要实时处理1080p@30fps的视频流进行物体检测。假设每帧需要100M次MAC运算，计算所需的最小算力（GOPS）。如果NPU效率为70%，实际需要多少GOPS的峰值性能？</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <p><strong>答案：</strong></p>
+                        <p>计算步骤：</p>
+                        <ol>
+                            <li>每秒帧数：30 fps</li>
+                            <li>每帧运算量：100M = 10^8 ops</li>
+                            <li>每秒运算量：30 × 10^8 = 3 × 10^9 ops = 3 GOPS</li>
+                            <li>考虑70%效率，实际需要：3 ÷ 0.7 ≈ 4.29 GOPS</li>
+                        </ol>
+                        <p><strong>答案：最小算力需求为3 GOPS，考虑效率后需要4.29 GOPS的峰值性能。</strong></p>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目1.7：</strong>编程题：用Python实现一个简单的脉动阵列模拟器，计算两个4x4矩阵的乘法。要求展示数据在阵列中的流动过程。</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <div class="code-block">
+import numpy as np
+
+class SystolicArray:
+    def __init__(self, size=4):
+        self.size = size
+        self.array = [[{'a': 0, 'b': 0, 'c': 0} for _ in range(size)] for _ in range(size)]
+        self.cycle = 0
+        
+    def reset(self):
+        """重置脉动阵列"""
+        self.array = [[{'a': 0, 'b': 0, 'c': 0} for _ in range(size)] for _ in range(size)]
+        self.cycle = 0
+    
+    def step(self, a_inputs, b_inputs):
+        """执行一个时钟周期"""
+        # 创建新的阵列状态
+        new_array = [[{'a': 0, 'b': 0, 'c': 0} for _ in range(self.size)] for _ in range(self.size)]
+        
+        # 更新每个PE
+        for i in range(self.size):
+            for j in range(self.size):
+                # 获取输入
+                if j == 0:
+                    a_in = a_inputs[i] if i < len(a_inputs) else 0
+                else:
+                    a_in = self.array[i][j-1]['a']
+                    
+                if i == 0:
+                    b_in = b_inputs[j] if j < len(b_inputs) else 0
+                else:
+                    b_in = self.array[i-1][j]['b']
+                
+                # 计算MAC
+                new_array[i][j]['c'] = self.array[i][j]['c'] + a_in * b_in
+                
+                # 传递数据
+                new_array[i][j]['a'] = a_in
+                new_array[i][j]['b'] = b_in
+        
+        self.array = new_array
+        self.cycle += 1
+        
+    def get_result(self):
+        """获取计算结果"""
+        result = np.zeros((self.size, self.size))
+        for i in range(self.size):
+            for j in range(self.size):
+                result[i][j] = self.array[i][j]['c']
+        return result
+    
+    def print_state(self):
+        """打印当前状态"""
+        print(f"\n周期 {self.cycle}:")
+        for i in range(self.size):
+            for j in range(self.size):
+                pe = self.array[i][j]
+                print(f"({pe['a']},{pe['b']},{pe['c']:3})", end=" ")
+            print()
+
+# 使用示例
+def matrix_multiply_systolic(A, B):
+    """使用脉动阵列计算矩阵乘法"""
+    size = len(A)
+    sa = SystolicArray(size)
+    
+    # 准备输入数据（需要错开时序）
+    a_streams = []
+    b_streams = []
+    
+    for i in range(size):
+        # A矩阵的行需要错开输入
+        a_stream = [0] * i + list(A[i]) + [0] * (size - 1)
+        a_streams.append(a_stream)
+        
+        # B矩阵的列需要错开输入
+        b_stream = [0] * i + [B[j][i] for j in range(size)] + [0] * (size - 1)
+        b_streams.append(b_stream)
+    
+    # 执行计算
+    max_cycles = 3 * size - 2  # 完成计算需要的周期数
+    
+    for cycle in range(max_cycles):
+        # 准备这个周期的输入
+        a_inputs = []
+        b_inputs = []
+        
+        for i in range(size):
+            if cycle < len(a_streams[i]):
+                a_inputs.append(a_streams[i][cycle])
+            else:
+                a_inputs.append(0)
+                
+            if cycle < len(b_streams[i]):
+                b_inputs.append(b_streams[i][cycle])
+            else:
+                b_inputs.append(0)
+        
+        sa.step(a_inputs[:size], b_inputs[:size])
+        sa.print_state()
+    
+    return sa.get_result()
+
+# 测试
+if __name__ == "__main__":
+    A = np.array([[1, 2, 3, 4],
+                  [5, 6, 7, 8],
+                  [9, 10, 11, 12],
+                  [13, 14, 15, 16]])
+    
+    B = np.array([[1, 0, 0, 0],
+                  [0, 1, 0, 0],
+                  [0, 0, 1, 0],
+                  [0, 0, 0, 1]])
+    
+    print("矩阵A:")
+    print(A)
+    print("\n矩阵B:")
+    print(B)
+    
+    result = matrix_multiply_systolic(A, B)
+    print("\n脉动阵列计算结果:")
+    print(result)
+    
+    print("\nNumPy验证结果:")
+    print(np.matmul(A, B))
+                        </div>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目1.8：</strong>分析题：为什么大多数NPU采用INT8而不是FP32进行推理？从硬件实现角度分析其优势。</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <p><strong>答案：</strong></p>
+                        <p>NPU采用INT8进行推理的硬件优势：</p>
+                        <ol>
+                            <li><strong>硬件面积：</strong>
+                                <ul>
+                                    <li>INT8乘法器面积约为FP32的1/8</li>
+                                    <li>INT8加法器面积约为FP32的1/4</li>
+                                    <li>相同面积可集成4-8倍的计算单元</li>
+                                </ul>
+                            </li>
+                            <li><strong>功耗效率：</strong>
+                                <ul>
+                                    <li>INT8运算功耗约为FP32的1/4</li>
+                                    <li>数据位宽减少，总线功耗降低75%</li>
+                                </ul>
+                            </li>
+                            <li><strong>内存带宽：</strong>
+                                <ul>
+                                    <li>数据量减少4倍，缓解内存瓶颈</li>
+                                    <li>片上缓存可存储更多数据</li>
+                                </ul>
+                            </li>
+                            <li><strong>时序优化：</strong>
+                                <ul>
+                                    <li>INT8运算延迟更低，便于提高主频</li>
+                                    <li>流水线级数减少，控制逻辑简化</li>
+                                </ul>
+                            </li>
+                        </ol>
+                        <p><strong>实际应用中通过量化感知训练，INT8精度损失通常小于1%，是性能功耗比的最佳选择。</strong></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+    </div>
+
+    <script>
+        // JavaScript for collapsible answers
+        function toggleAnswer(button) {
+            const answer = button.nextElementSibling;
+            if (answer.classList.contains('show')) {
+                answer.classList.remove('show');
+                button.textContent = '显示答案';
+            } else {
+                answer.classList.add('show');
+                button.textContent = '隐藏答案';
+            }
+        }
+
+        // Add event listeners to all toggle buttons
+        document.addEventListener('DOMContentLoaded', function() {
+            const toggleButtons = document.querySelectorAll('.toggle-answer');
+            toggleButtons.forEach(button => {
+                button.addEventListener('click', function() {
+                    toggleAnswer(this);
+                });
+            });
+        });
+
+        // Smooth scrolling for navigation links
+        document.querySelectorAll('nav a').forEach(anchor => {
+            anchor.addEventListener('click', function(e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    target.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start'
+                    });
+                }
+            });
+        });
+    </script>
+</body>
+</html>
