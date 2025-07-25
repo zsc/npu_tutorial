@@ -118,9 +118,10 @@
 3. **第三阶段**：添加交互功能和美化界面
 
 ## 当前进度
-- 已完成章节：第1-10章基础内容和习题
-- 待完成章节：第11章（性能优化技术）、第12章（NPU设计实战）
+- 已完成章节：第1-12章全部内容和习题
+- Transformer相关内容：已添加到第2、3、4章
 - HTML界面：已实现响应式设计、折叠答案、代码高亮、平滑滚动等功能
+- 项目状态：NPU设计教程已完整实现，包含理论讲解、RTL代码示例和丰富的练习题
 
 # important-instruction-reminders
 Do what has been asked; nothing more, nothing less.
