@@ -13162,6 +13162,839 @@ endmodule
                 </div>
             </div>
         </section>
+
+        <div id="chapter8" class="chapter">
+            <h2>第8章：物理设计</h2>
+            
+            <p>物理设计是将RTL设计转化为可制造芯片版图的关键步骤。对于NPU这样的高性能、高密度芯片，物理设计面临着功耗、性能、面积等多方面的挑战。本章将详细介绍NPU物理设计的完整流程、关键技术和优化方法。</p>
+
+            <h3>8.1 物理设计流程概述</h3>
+            
+            <p>NPU的物理设计流程涵盖从逻辑综合到版图验证的完整过程。每个阶段都需要在性能、功耗、面积之间进行精细的权衡，以满足设计目标。</p>
+
+            <h4>8.1.1 设计输入与约束</h4>
+            <div class="info-box">
+                <p><strong>NPU物理设计的输入：</strong></p>
+                <ul>
+                    <li>RTL代码和网表</li>
+                    <li>工艺库文件（.lib, .lef）</li>
+                    <li>设计约束（SDC）</li>
+                    <li>功耗意图（UPF/CPF）</li>
+                    <li>物理约束（DEF）</li>
+                </ul>
+            </div>
+
+            <div class="code-block">
+# 典型的NPU设计约束示例 (SDC)
+# 时钟定义
+create_clock -name sys_clk -period 1.0 [get_ports clk]
+create_clock -name noc_clk -period 0.8 [get_ports noc_clk]
+
+# 时钟不确定性
+set_clock_uncertainty -setup 0.05 [get_clocks sys_clk]
+set_clock_uncertainty -hold 0.03 [get_clocks sys_clk]
+
+# 输入/输出延迟
+set_input_delay -clock sys_clk -max 0.2 [all_inputs]
+set_output_delay -clock sys_clk -max 0.15 [all_outputs]
+
+# 多周期路径（针对MAC阵列）
+set_multicycle_path -setup 2 -from [get_pins mac_array/*/mult_reg*] \
+                    -to [get_pins mac_array/*/acc_reg*]
+
+# 伪路径（跨时钟域）
+set_false_path -from [get_clocks sys_clk] -to [get_clocks noc_clk]
+
+# 最大过渡时间和电容
+set_max_transition 0.1 [current_design]
+set_max_capacitance 0.05 [all_outputs]
+            </div>
+
+            <h4>8.1.2 物理设计主要步骤</h4>
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>设计阶段</th>
+                            <th>主要任务</th>
+                            <th>关键指标</th>
+                            <th>NPU特殊考虑</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Floorplan</td>
+                            <td>芯片布局规划</td>
+                            <td>利用率、引脚分配</td>
+                            <td>MAC阵列规则布局</td>
+                        </tr>
+                        <tr>
+                            <td>Power Planning</td>
+                            <td>电源网络设计</td>
+                            <td>IR Drop、EM</td>
+                            <td>高功耗密度区域</td>
+                        </tr>
+                        <tr>
+                            <td>Placement</td>
+                            <td>标准单元布局</td>
+                            <td>拥塞度、时序</td>
+                            <td>数据通路对齐</td>
+                        </tr>
+                        <tr>
+                            <td>CTS</td>
+                            <td>时钟树综合</td>
+                            <td>Skew、功耗</td>
+                            <td>多时钟域处理</td>
+                        </tr>
+                        <tr>
+                            <td>Routing</td>
+                            <td>信号线布线</td>
+                            <td>DRC、时序收敛</td>
+                            <td>高密度互连</td>
+                        </tr>
+                        <tr>
+                            <td>Sign-off</td>
+                            <td>最终验证</td>
+                            <td>时序、功耗、DRC</td>
+                            <td>全芯片验证</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <h3>8.2 布局规划（Floorplan）</h3>
+            
+            <p>布局规划是物理设计的第一步，决定了芯片的整体架构和性能上限。对于NPU，合理的布局规划对于实现高性能和低功耗至关重要。</p>
+
+            <h4>8.2.1 NPU典型布局架构</h4>
+            <div class="code-block">
+// NPU芯片典型布局
++----------------------------------------------------------+
+|                      IO Ring / Pad                       |
+|  +--------------------------------------------------+    |
+|  |          Global Control & Configuration          |    |
+|  +--------------------------------------------------+    |
+|  |                                                  |    |
+|  |   +----------+  +----------+  +----------+      |    |
+|  |   | MAC      |  | MAC      |  | MAC      | ... |    |
+|  |   | Cluster  |  | Cluster  |  | Cluster  |     |    |
+|  |   | 0        |  | 1        |  | 2        |     |    |
+|  |   +----------+  +----------+  +----------+      |    |
+|  |                                                  |    |
+|  |   +---------------------------------------+      |    |
+|  |   |          Global SRAM Buffer          |      |    |
+|  |   +---------------------------------------+      |    |
+|  |                                                  |    |
+|  |   +----------+  +----------+  +----------+      |    |
+|  |   | NoC      |  | DMA      |  | Memory   |     |    |
+|  |   | Router   |  | Engine   |  | Control  |     |    |
+|  |   +----------+  +----------+  +----------+      |    |
+|  |                                                  |    |
+|  +--------------------------------------------------+    |
+|                      IO Ring / Pad                       |
++----------------------------------------------------------+
+            </div>
+
+            <h4>8.2.2 布局优化策略</h4>
+            <div class="warning-box">
+                <p><strong>NPU布局的关键挑战：</strong></p>
+                <ul>
+                    <li>MAC阵列的规则性布局要求</li>
+                    <li>高带宽数据通路的布线资源</li>
+                    <li>功耗密度的均匀分布</li>
+                    <li>时钟域的物理隔离</li>
+                </ul>
+            </div>
+
+            <div class="code-block">
+# Floorplan TCL脚本示例
+# 设置芯片尺寸和利用率
+create_floorplan -die_size {0 0 5000 5000} \
+                 -core_offset {100 100 100 100} \
+                 -utilization 0.7
+
+# 创建电压域
+create_voltage_area -name CORE_PD -coordinate {500 500 4500 4500}
+create_voltage_area -name AON_PD -coordinate {100 100 500 4900}
+
+# 放置硬宏（Hard Macro）
+# MAC集群规则排列
+set mac_width 800
+set mac_height 600
+set mac_spacing 50
+
+for {set i 0} {$i < 8} {incr i} {
+    for {set j 0} {$j < 8} {incr j} {
+        set x_loc [expr 600 + $i * ($mac_width + $mac_spacing)]
+        set y_loc [expr 600 + $j * ($mac_height + $mac_spacing)]
+        create_macro_placement -inst_name mac_cluster_${i}_${j} \
+                             -coordinate [list $x_loc $y_loc] \
+                             -orientation N
+    }
+}
+
+# 放置SRAM
+create_macro_placement -inst_name global_buffer_sram \
+                      -coordinate {1500 3500} \
+                      -orientation N
+
+# 创建placement blockage
+create_placement_blockage -name mac_blockage \
+                         -type hard \
+                         -coordinate {600 600 4400 3400}
+
+# 设置Halo
+create_keepout_margin -type hard -outer {20 20 20 20} \
+                     [get_cells -hier -filter "is_hard_macro==true"]
+            </div>
+
+            <h3>8.3 电源规划与实现</h3>
+            
+            <p>NPU的高功耗密度对电源网络设计提出了严苛要求。良好的电源规划不仅影响芯片的功能正确性，还直接决定了性能和可靠性。</p>
+
+            <h4>8.3.1 电源网格设计</h4>
+            <div class="code-block">
+# 电源网格规划脚本
+# 定义电源网络
+create_net -power VDD
+create_net -ground VSS
+
+# 创建电源环（Power Ring）
+create_power_ring -nets {VDD VSS} \
+                  -layers {M9 M10} \
+                  -widths {20 20} \
+                  -spacings {5 5} \
+                  -core_offset 10
+
+# 创建电源条带（Power Stripe）
+# 垂直条带 - M9
+create_power_stripes -nets {VDD VSS} \
+                     -layer M9 \
+                     -direction vertical \
+                     -width 10 \
+                     -spacing 5 \
+                     -pitch 100 \
+                     -start_x 100 \
+                     -stop_x 4900
+
+# 水平条带 - M10  
+create_power_stripes -nets {VDD VSS} \
+                     -layer M10 \
+                     -direction horizontal \
+                     -width 10 \
+                     -spacing 5 \
+                     -pitch 100 \
+                     -start_y 100 \
+                     -stop_y 4900
+
+# MAC阵列区域加密电源网格
+create_power_stripes -nets {VDD VSS} \
+                     -layer M9 \
+                     -direction vertical \
+                     -width 5 \
+                     -spacing 2.5 \
+                     -pitch 25 \
+                     -region {600 600 4400 3400}
+            </div>
+
+            <h4>8.3.2 IR Drop分析与优化</h4>
+            <div class="info-box">
+                <p><strong>IR Drop优化技术：</strong></p>
+                <ol>
+                    <li><strong>电源网格加密：</strong>在高功耗区域增加电源条带密度</li>
+                    <li><strong>Via阵列优化：</strong>增加层间连接via数量，降低电阻</li>
+                    <li><strong>去耦电容插入：</strong>在空白区域填充去耦电容</li>
+                    <li><strong>电源门控优化：</strong>合理规划电源开关位置</li>
+                </ol>
+            </div>
+
+            <h3>8.4 布局优化（Placement）</h3>
+            
+            <p>布局阶段将标准单元和宏单元放置在芯片上的合适位置。NPU的布局优化需要特别关注数据通路的规则性和时序关键路径。</p>
+
+            <h4>8.4.1 分层布局策略</h4>
+            <div class="code-block">
+# 布局优化脚本
+# 设置布局选项
+set_placement_options -congestion_effort high \
+                     -timing_driven true \
+                     -global_route_based true
+
+# 数据通路规则化布局
+# 创建相对布局约束
+create_relative_placement -name mac_datapath \
+                         -pattern {
+                             {mult_stage_0 mult_stage_1 mult_stage_2}
+                             {add_stage_0  add_stage_1  add_stage_2}
+                             {acc_stage_0  acc_stage_1  acc_stage_2}
+                         } \
+                         -x_pitch 50 \
+                         -y_pitch 40
+
+# 关键路径优化
+set_critical_path_groups -from [get_pins mac_array/*/data_in*] \
+                        -to [get_pins mac_array/*/data_out*]
+
+# 执行布局
+place_design -concurrent_optimization \
+            -incremental \
+            -density_gradient
+
+# 布局后优化
+optimize_placement -critical_path \
+                  -congestion \
+                  -setup_target_slack 0.05
+            </div>
+
+            <h4>8.4.2 拥塞分析与缓解</h4>
+            <div class="warning-box">
+                <p><strong>NPU布局常见拥塞问题：</strong></p>
+                <ul>
+                    <li>MAC阵列间的密集互连</li>
+                    <li>控制信号的扇出过大</li>
+                    <li>数据总线的布线资源竞争</li>
+                    <li>时钟网络与信号线的冲突</li>
+                </ul>
+            </div>
+
+            <h3>8.5 时钟树综合（CTS）</h3>
+            
+            <p>时钟树综合是确保时序收敛的关键步骤。NPU通常包含多个时钟域，需要精心设计时钟树结构以最小化时钟偏斜和功耗。</p>
+
+            <h4>8.5.1 时钟树规划</h4>
+            <div class="code-block">
+# CTS配置脚本
+# 定义时钟树约束
+create_clock_tree_spec -name clk_spec \
+                      -period 1.0 \
+                      -root_pin clk \
+                      -leaf_pins [get_pins -hier */clk] \
+                      -buffers {CKBUF_X16 CKBUF_X32} \
+                      -inverters {CKINV_X16 CKINV_X32}
+
+# 设置时钟树目标
+set_clock_tree_options -target_skew 0.02 \
+                      -target_latency 0.3 \
+                      -max_transition 0.08 \
+                      -max_capacitance 0.1
+
+# 多时钟域处理
+foreach clk [get_clocks] {
+    set_clock_tree_options -clock $clk \
+                          -routing_rule clk_routing_rule \
+                          -use_inverters true \
+                          -buffer_sizing true
+}
+
+# 时钟门控感知CTS
+set_clock_gating_options -max_fanout 32 \
+                        -min_bitwidth 8
+
+# 执行CTS
+clock_tree_synthesis -propagate_all_clocks \
+                    -timing_driven \
+                    -balance_groups
+            </div>
+
+            <h4>8.5.2 时钟域交叉（CDC）处理</h4>
+            <div class="code-block">
+// CDC同步器设计
+module cdc_sync #(
+    parameter WIDTH = 1,
+    parameter SYNC_STAGES = 2
+)(
+    input wire src_clk,
+    input wire dst_clk,
+    input wire src_rst_n,
+    input wire dst_rst_n,
+    input wire [WIDTH-1:0] src_data,
+    output reg [WIDTH-1:0] dst_data
+);
+    
+    // 多级同步器
+    reg [WIDTH-1:0] sync_regs[SYNC_STAGES-1:0];
+    
+    // 目标时钟域同步
+    always @(posedge dst_clk or negedge dst_rst_n) begin
+        if (!dst_rst_n) begin
+            for (int i = 0; i < SYNC_STAGES; i++) begin
+                sync_regs[i] <= '0;
+            end
+            dst_data <= '0;
+        end else begin
+            sync_regs[0] <= src_data;
+            for (int i = 1; i < SYNC_STAGES; i++) begin
+                sync_regs[i] <= sync_regs[i-1];
+            end
+            dst_data <= sync_regs[SYNC_STAGES-1];
+        end
+    end
+    
+    // 时序约束
+    // synthesis attribute ASYNC_REG of sync_regs is TRUE
+    
+endmodule
+            </div>
+
+            <h3>8.6 布线与优化（Routing）</h3>
+            
+            <p>布线阶段完成所有信号的物理连接。NPU的高密度和高性能要求使得布线变得极具挑战性，需要采用先进的布线策略和优化技术。</p>
+
+            <h4>8.6.1 全局布线策略</h4>
+            <div class="code-block">
+# 布线配置脚本
+# 设置布线规则
+define_routing_rule high_speed_rule \
+                   -widths {M1:0.1 M2:0.1 M3:0.15 M4:0.15 M5:0.2 M6:0.2} \
+                   -spacings {M1:0.1 M2:0.1 M3:0.15 M4:0.15 M5:0.2 M6:0.2} \
+                   -vias {VIA12_FAT VIA23_FAT VIA34_FAT}
+
+# 关键信号布线约束
+set_net_routing_rule [get_nets -of [get_pins mac_array/*/clk]] \
+                     high_speed_rule
+
+# 设置布线选项
+set_route_options -groute_timing_driven true \
+                  -groute_incremental true \
+                  -track_assign_timing_driven true \
+                  -droute_ECO_mode true
+
+# 屏蔽层设置（针对噪声敏感信号）
+create_shield -nets {clk rst_n} \
+              -with_net VSS \
+              -side_spacing 0.2
+
+# 执行全局布线
+route_global -congestion_map_only false \
+            -timing_driven true \
+            -effort_level high
+
+# 详细布线
+route_detail -incremental true \
+            -timing_driven true \
+            -si_driven true
+            </div>
+
+            <h4>8.6.2 信号完整性优化</h4>
+            <div class="info-box">
+                <p><strong>SI优化技术：</strong></p>
+                <ol>
+                    <li><strong>串扰避免：</strong>增加关键信号间距</li>
+                    <li><strong>屏蔽插入：</strong>在敏感信号两侧添加地线屏蔽</li>
+                    <li><strong>驱动优化：</strong>调整驱动强度减少噪声</li>
+                    <li><strong>时序修复：</strong>考虑SI影响的时序优化</li>
+                </ol>
+            </div>
+
+            <h3>8.7 物理验证与签收</h3>
+            
+            <p>物理验证确保设计满足所有制造规则和性能要求。这是流片前的最后关卡，必须严格把关。</p>
+
+            <h4>8.7.1 DRC/LVS检查</h4>
+            <div class="code-block">
+# DRC检查脚本
+# 加载规则文件
+load_tech_file ./tech/drc_rules.tf
+
+# 运行DRC
+run_drc -cell TOP \
+        -report drc_report.txt \
+        -error_view drc_errors
+
+# 常见DRC违例类型
+# 1. 最小宽度违例 (Min Width)
+# 2. 最小间距违例 (Min Spacing)  
+# 3. 最小面积违例 (Min Area)
+# 4. Via覆盖违例 (Via Enclosure)
+# 5. 密度违例 (Density)
+
+# LVS检查
+run_lvs -schematic ../netlist/npu_top.v \
+        -layout ./npu_top.gds \
+        -report lvs_report.txt \
+        -extract_rc true
+            </div>
+
+            <h4>8.7.2 时序签收</h4>
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>检查项目</th>
+                            <th>目标值</th>
+                            <th>检查方法</th>
+                            <th>修复策略</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Setup时序</td>
+                            <td>slack > 0</td>
+                            <td>STA分析</td>
+                            <td>插入buffer、调整尺寸</td>
+                        </tr>
+                        <tr>
+                            <td>Hold时序</td>
+                            <td>slack > 0</td>
+                            <td>STA分析</td>
+                            <td>插入delay buffer</td>
+                        </tr>
+                        <tr>
+                            <td>转换时间</td>
+                            <td>< 100ps</td>
+                            <td>Transition检查</td>
+                            <td>调整驱动强度</td>
+                        </tr>
+                        <tr>
+                            <td>时钟偏斜</td>
+                            <td>< 20ps</td>
+                            <td>时钟报告</td>
+                            <td>CTS重新平衡</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <h3>8.8 低功耗物理设计</h3>
+            
+            <p>NPU的功耗优化贯穿整个物理设计流程。从架构级到晶体管级，每个层次都有相应的优化技术。</p>
+
+            <h4>8.8.1 多阈值电压优化</h4>
+            <div class="code-block">
+# 多Vt优化脚本
+# 定义Vt类型
+set_attribute [get_libs */LVT] default_threshold_voltage_group LVT
+set_attribute [get_libs */RVT] default_threshold_voltage_group RVT  
+set_attribute [get_libs */HVT] default_threshold_voltage_group HVT
+
+# 设置优化策略
+set_power_optimization_options -leakage_power true \
+                              -dynamic_power true \
+                              -total_power true
+
+# Vt分配策略
+# 关键路径使用LVT
+set_threshold_voltage_group [get_cells -of [all_critical_paths]] LVT
+
+# 非关键路径使用HVT
+set_threshold_voltage_group [get_cells -of [all_non_critical_paths]] HVT
+
+# 执行功耗优化
+optimize_power -multi_vt \
+               -size_only false \
+               -preserve_paths [all_critical_paths]
+            </div>
+
+            <h4>8.8.2 电源门控实现</h4>
+            <div class="code-block">
+// 电源门控控制器
+module power_gating_controller (
+    input wire clk,
+    input wire rst_n,
+    input wire sleep_req,
+    output reg sleep_ack,
+    output reg isolate_n,
+    output reg pwr_switch_n,
+    output reg reset_n
+);
+
+    // 状态机定义
+    typedef enum logic [2:0] {
+        ACTIVE,
+        ISOLATE,
+        POWER_DOWN,
+        SLEEP,
+        POWER_UP,
+        RESET,
+        WAKE_UP
+    } state_t;
+    
+    state_t current_state, next_state;
+    
+    // 状态转换
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            current_state <= ACTIVE;
+        end else begin
+            current_state <= next_state;
+        end
+    end
+    
+    // 状态机逻辑
+    always_comb begin
+        next_state = current_state;
+        
+        case (current_state)
+            ACTIVE: begin
+                if (sleep_req) next_state = ISOLATE;
+            end
+            
+            ISOLATE: begin
+                next_state = POWER_DOWN;
+            end
+            
+            POWER_DOWN: begin
+                next_state = SLEEP;
+            end
+            
+            SLEEP: begin
+                if (!sleep_req) next_state = POWER_UP;
+            end
+            
+            POWER_UP: begin
+                next_state = RESET;
+            end
+            
+            RESET: begin
+                next_state = WAKE_UP;
+            end
+            
+            WAKE_UP: begin
+                next_state = ACTIVE;
+            end
+        endcase
+    end
+    
+    // 输出控制
+    always_comb begin
+        isolate_n = 1'b1;
+        pwr_switch_n = 1'b0;
+        reset_n = 1'b1;
+        sleep_ack = 1'b0;
+        
+        case (current_state)
+            ISOLATE: begin
+                isolate_n = 1'b0;  // 激活隔离
+            end
+            
+            POWER_DOWN, SLEEP: begin
+                isolate_n = 1'b0;
+                pwr_switch_n = 1'b1;  // 关闭电源
+                sleep_ack = 1'b1;
+            end
+            
+            POWER_UP: begin
+                isolate_n = 1'b0;
+                pwr_switch_n = 1'b0;  // 打开电源
+            end
+            
+            RESET: begin
+                isolate_n = 1'b0;
+                reset_n = 1'b0;  // 复位
+            end
+        endcase
+    end
+
+endmodule
+            </div>
+
+            <div class="exercise">
+                <h4>练习题集 8</h4>
+                
+                <div class="question">
+                    <p><strong>题目8.1：</strong>某NPU芯片采用7nm工艺，芯片面积100mm²，功耗50W。计算功耗密度，并分析可能的散热挑战。</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <p><strong>答案：</strong></p>
+                        <p>功耗密度计算：</p>
+                        <ul>
+                            <li>功耗密度 = 50W / 100mm² = 0.5 W/mm²</li>
+                            <li>这是非常高的功耗密度，接近现代处理器的极限</li>
+                        </ul>
+                        <p>散热挑战：</p>
+                        <ol>
+                            <li><strong>热点问题：</strong>MAC阵列区域可能出现局部热点，温度可能超过100°C</li>
+                            <li><strong>封装要求：</strong>需要高性能封装，如flip-chip + 热界面材料</li>
+                            <li><strong>散热方案：</strong>可能需要主动散热（风扇）或液冷</li>
+                            <li><strong>可靠性影响：</strong>高温会加速电迁移，影响芯片寿命</li>
+                        </ol>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目8.2：</strong>设计一个简单的电源网格，为16×16的MAC阵列供电。每个MAC单元功耗100mW，电源电压0.8V。计算所需的电源线宽度。</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <p><strong>答案：</strong></p>
+                        <p>计算步骤：</p>
+                        <ol>
+                            <li>总功耗：16 × 16 × 100mW = 25.6W</li>
+                            <li>总电流：I = P/V = 25.6W / 0.8V = 32A</li>
+                            <li>假设金属层电流密度限制：2mA/μm</li>
+                            <li>所需总宽度：32A / 2mA/μm = 16,000μm = 16mm</li>
+                            <li>使用多条电源线分布：假设使用32条电源线</li>
+                            <li>每条宽度：16mm / 32 = 500μm</li>
+                        </ol>
+                        <p><strong>设计建议：</strong>使用网格状电源分布，垂直和水平各16条500μm宽的电源线。</p>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目8.3：</strong>某NPU设计中，关键路径延迟为900ps，其中逻辑延迟400ps，互连延迟500ps。如何优化以达到1GHz的目标频率？</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <p><strong>答案：</strong></p>
+                        <p>当前时序裕量：1000ps - 900ps = 100ps（已满足1GHz）</p>
+                        <p>但裕量太小，建议优化：</p>
+                        <ol>
+                            <li><strong>逻辑优化（减少100ps）：</strong>
+                                <ul>
+                                    <li>使用低Vt单元替换关键路径</li>
+                                    <li>逻辑重构，减少级数</li>
+                                    <li>使用复合门减少延迟</li>
+                                </ul>
+                            </li>
+                            <li><strong>互连优化（减少150ps）：</strong>
+                                <ul>
+                                    <li>增加驱动buffer尺寸</li>
+                                    <li>使用更高金属层（低电阻）</li>
+                                    <li>插入中继器（repeater）</li>
+                                    <li>减少线长（布局优化）</li>
+                                </ul>
+                            </li>
+                            <li><strong>目标：</strong>总延迟650ps，时序裕量350ps（35%）</li>
+                        </ol>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目8.4：</strong>编写一个简单的时钟门控单元（Clock Gating Cell），并说明其在NPU中的应用。</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <div class="code-block">
+module clock_gating_cell (
+    input wire clk,
+    input wire enable,
+    input wire test_enable,  // DFT信号
+    output wire gclk
+);
+    
+    reg enable_latch;
+    
+    // Latch防止毛刺
+    always @(clk or enable or test_enable) begin
+        if (!clk) begin
+            enable_latch <= enable | test_enable;
+        end
+    end
+    
+    // AND门输出门控时钟
+    assign gclk = clk & enable_latch;
+    
+    // 综合指令
+    // synthesis attribute clock_gating_cell of clock_gating_cell is true
+    
+endmodule
+
+// NPU中的应用示例
+module mac_unit_with_cg (
+    input wire clk,
+    input wire rst_n,
+    input wire enable,      // 计算使能
+    input wire [7:0] a,
+    input wire [7:0] b,
+    output reg [15:0] result
+);
+    
+    wire gclk;
+    
+    // 实例化时钟门控
+    clock_gating_cell cg_inst (
+        .clk(clk),
+        .enable(enable),
+        .test_enable(1'b0),
+        .gclk(gclk)
+    );
+    
+    // 使用门控时钟
+    always @(posedge gclk or negedge rst_n) begin
+        if (!rst_n) begin
+            result <= 16'd0;
+        end else begin
+            result <= a * b;
+        end
+    end
+    
+endmodule
+                        </div>
+                        <p><strong>NPU应用场景：</strong></p>
+                        <ul>
+                            <li>MAC阵列的动态关断：当某些MAC单元空闲时关闭时钟</li>
+                            <li>层级时钟门控：整个计算簇的时钟控制</li>
+                            <li>功耗节省：可节省20-40%的动态功耗</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目8.5：</strong>分析并设计一个NPU芯片的IO规划，需要支持：DDR4接口（128位）、PCIe Gen4 x16、千兆以太网、JTAG调试。</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <p><strong>答案：</strong></p>
+                        <p><strong>IO需求分析：</strong></p>
+                        <table>
+                            <tr>
+                                <th>接口</th>
+                                <th>信号数量</th>
+                                <th>IO类型</th>
+                                <th>位置建议</th>
+                            </tr>
+                            <tr>
+                                <td>DDR4-3200</td>
+                                <td>~280 pins</td>
+                                <td>SSTL</td>
+                                <td>芯片一侧（最短走线）</td>
+                            </tr>
+                            <tr>
+                                <td>PCIe Gen4 x16</td>
+                                <td>~164 pins</td>
+                                <td>差分对</td>
+                                <td>靠近边缘（易于走线）</td>
+                            </tr>
+                            <tr>
+                                <td>千兆以太网</td>
+                                <td>~16 pins</td>
+                                <td>LVDS</td>
+                                <td>任意角落</td>
+                            </tr>
+                            <tr>
+                                <td>JTAG</td>
+                                <td>5 pins</td>
+                                <td>LVCMOS</td>
+                                <td>便于访问的位置</td>
+                            </tr>
+                            <tr>
+                                <td>电源/地</td>
+                                <td>~200 pins</td>
+                                <td>Power</td>
+                                <td>均匀分布</td>
+                            </tr>
+                        </table>
+                        
+                        <p><strong>IO规划方案：</strong></p>
+                        <div class="code-block">
+芯片IO布局（俯视图）：
+        North (DDR4接口)
+     +-------------------+
+     |  D D D ... D D D  |
+     |D                 P|  East
+West |D    NPU Core     C| (PCIe)
+     |R                 I|
+     |4                 e|
+     |  G G J J J E E E  |
+     +-------------------+
+        South (GPIO/JTAG/Ethernet)
+
+布局原则：
+1. DDR4放北侧：最短距离到内存控制器
+2. PCIe放东侧：便于板级走线到插槽
+3. 低速IO放南侧：JTAG方便调试访问
+4. 电源均匀分布四周：降低IR drop
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
         
     </div>
 
