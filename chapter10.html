@@ -1139,7 +1139,452 @@ public:
                 </ul>
             </div>
 
-            <h3>10.5 量化与精度优化</h3>
+            <h3>10.5 自动化编译优化：Triton与TVM</h3>
+            
+            <p>随着AI硬件的多样化和模型的复杂化，手工优化算子变得越来越困难。Triton和TVM代表了两种不同的自动化编译优化方法，它们通过不同的技术路径帮助开发者实现高效的AI计算。</p>
+
+            <h4>10.5.1 OpenAI Triton：基于Python的GPU编程</h4>
+            <div class="info-box">
+                <p><strong>Triton的核心理念：</strong></p>
+                <ul>
+                    <li><strong>高层抽象：</strong>使用Python编写，自动处理底层复杂性</li>
+                    <li><strong>块级编程：</strong>以tensor block为基本单位，而非单个线程</li>
+                    <li><strong>自动优化：</strong>编译器自动处理内存合并、向量化、线程调度</li>
+                    <li><strong>性能便携性：</strong>同一份代码在不同GPU上都能获得优秀性能</li>
+                </ul>
+            </div>
+            
+            <div class="code-block">
+# Triton编程示例：Fused Attention实现
+import triton
+import triton.language as tl
+
+@triton.jit
+def fused_attention_kernel(
+    Q, K, V, Out,
+    stride_qm, stride_qk,
+    stride_km, stride_kk,
+    stride_vm, stride_vk,
+    stride_om, stride_ok,
+    N, BLOCK_SIZE: tl.constexpr
+):
+    # 程序块索引
+    pid = tl.program_id(0)
+    
+    # 计算起始位置
+    start_m = pid * BLOCK_SIZE
+    
+    # 加载Q块
+    offs_m = start_m + tl.arange(0, BLOCK_SIZE)
+    offs_k = tl.arange(0, BLOCK_SIZE)
+    
+    q = tl.load(Q + offs_m[:, None] * stride_qm + offs_k[None, :] * stride_qk)
+    
+    # 初始化累加器
+    acc = tl.zeros([BLOCK_SIZE, BLOCK_SIZE], dtype=tl.float32)
+    
+    # 分块计算QK^T
+    for start_n in range(0, N, BLOCK_SIZE):
+        # 加载K块
+        k = tl.load(K + (start_n + offs_k[:, None]) * stride_km + offs_k[None, :] * stride_kk)
+        
+        # 计算注意力分数
+        qk = tl.dot(q, tl.trans(k))
+        qk = qk * (1.0 / tl.sqrt(float(BLOCK_SIZE)))
+        
+        # Softmax（数值稳定版本）
+        qk_max = tl.max(qk, axis=1, keep_dims=True)
+        qk = tl.exp(qk - qk_max)
+        qk_sum = tl.sum(qk, axis=1, keep_dims=True)
+        qk = qk / qk_sum
+        
+        # 加载V并累加
+        v = tl.load(V + (start_n + offs_k[:, None]) * stride_vm + offs_k[None, :] * stride_vk)
+        acc += tl.dot(qk, v)
+    
+    # 存储结果
+    tl.store(Out + offs_m[:, None] * stride_om + offs_k[None, :] * stride_ok, acc)
+
+# Triton编译器优化流程
+class TritonCompiler:
+    def compile(self, kernel_ast):
+        # 1. 高层AST分析
+        analyzed = self.analyze_memory_access(kernel_ast)
+        
+        # 2. 内存合并（Memory Coalescing）
+        # 自动检测连续内存访问模式
+        coalesced = self.coalesce_memory_access(analyzed)
+        
+        # 3. 向量化（Vectorization）  
+        # 将标量操作转换为向量指令
+        vectorized = self.vectorize_operations(coalesced)
+        
+        # 4. 共享内存分配
+        # 自动决定哪些数据放入shared memory
+        shared_allocated = self.allocate_shared_memory(vectorized)
+        
+        # 5. 线程调度优化
+        # 最大化occupancy和隐藏延迟
+        scheduled = self.optimize_thread_schedule(shared_allocated)
+        
+        # 6. 生成PTX/SASS代码
+        return self.generate_gpu_code(scheduled)
+
+# Triton的自动调优机制
+@triton.autotune(
+    configs=[
+        triton.Config({'BLOCK_SIZE': 16}, num_warps=2),
+        triton.Config({'BLOCK_SIZE': 32}, num_warps=4),
+        triton.Config({'BLOCK_SIZE': 64}, num_warps=8),
+        triton.Config({'BLOCK_SIZE': 128}, num_warps=8),
+    ],
+    key=['M', 'N', 'K'],  # 基于输入大小选择配置
+)
+@triton.jit
+def matmul_kernel(A, B, C, M, N, K, BLOCK_SIZE: tl.constexpr):
+    # Triton会自动测试不同配置，选择最佳参数
+    pass
+            </div>
+            
+            <div class="warning-box">
+                <p><strong>Triton的优势与局限：</strong></p>
+                <ul>
+                    <li><strong>优势：</strong>
+                        <ul>
+                            <li>编程模型简单，接近Python/NumPy</li>
+                            <li>自动处理GPU编程的复杂细节</li>
+                            <li>性能接近手写CUDA</li>
+                            <li>代码可读性强，易于维护</li>
+                        </ul>
+                    </li>
+                    <li><strong>局限：</strong>
+                        <ul>
+                            <li>目前主要支持NVIDIA GPU</li>
+                            <li>不适合不规则计算模式</li>
+                            <li>编译时间较长</li>
+                            <li>调试困难</li>
+                        </ul>
+                    </li>
+                </ul>
+            </div>
+
+            <h4>10.5.2 Apache TVM：基于搜索的编译器优化</h4>
+            <div class="info-box">
+                <p><strong>TVM的核心特性：</strong></p>
+                <ul>
+                    <li><strong>跨平台：</strong>支持CPU、GPU、NPU等多种硬件</li>
+                    <li><strong>自动搜索：</strong>使用机器学习方法搜索最优配置</li>
+                    <li><strong>张量表达式：</strong>基于声明式的计算描述</li>
+                    <li><strong>模块化设计：</strong>可扩展的编译器架构</li>
+                </ul>
+            </div>
+            
+            <div class="code-block">
+# TVM编程示例：优化矩阵乘法
+import tvm
+from tvm import te, auto_scheduler, topi
+import numpy as np
+
+# 1. 定义计算（张量表达式）
+def matmul_tvm(M, N, K, dtype="float32"):
+    # 定义占位符
+    A = te.placeholder((M, K), name="A", dtype=dtype)
+    B = te.placeholder((K, N), name="B", dtype=dtype)
+    
+    # 定义约简轴
+    k = te.reduce_axis((0, K), name="k")
+    
+    # 定义计算
+    C = te.compute(
+        (M, N),
+        lambda i, j: te.sum(A[i, k] * B[k, j], axis=k),
+        name="C"
+    )
+    
+    return [A, B, C]
+
+# 2. 手动优化策略示例
+def manual_schedule_matmul(A, B, C):
+    s = te.create_schedule(C.op)
+    
+    # 获取计算维度
+    i, j = C.op.axis
+    k = C.op.reduce_axis[0]
+    
+    # 分块（Tiling）
+    TILE_SIZE = 32
+    io, ii = s[C].split(i, TILE_SIZE)
+    jo, ji = s[C].split(j, TILE_SIZE)
+    ko, ki = s[C].split(k, TILE_SIZE)
+    
+    # 重排序循环
+    s[C].reorder(io, jo, ko, ii, ji, ki)
+    
+    # 向量化
+    s[C].vectorize(ji)
+    
+    # 并行化
+    s[C].parallel(io)
+    
+    # 缓存优化
+    AA = s.cache_read(A, "shared", [C])
+    BB = s.cache_read(B, "shared", [C])
+    CC = s.cache_write(C, "local")
+    
+    return s
+
+# 3. TVM自动调优（AutoScheduler）
+@auto_scheduler.register_workload
+def matmul_auto(M, N, K, dtype="float32"):
+    return matmul_tvm(M, N, K, dtype)
+
+# 自动搜索最优配置
+def auto_tune_matmul(M, N, K, target="cuda"):
+    # 定义任务
+    task = auto_scheduler.SearchTask(
+        func=matmul_auto,
+        args=(M, N, K, "float32"),
+        target=target
+    )
+    
+    # 配置调优器
+    tune_option = auto_scheduler.TuningOptions(
+        num_measure_trials=1000,  # 测试次数
+        measure_callbacks=[auto_scheduler.RecordToFile("matmul.json")],
+        verbose=2,
+    )
+    
+    # 运行自动调优
+    task.tune(tune_option)
+    
+    # 加载最佳配置
+    sch, args = task.apply_best("matmul.json")
+    
+    return sch, args
+
+# 4. TVM的多层优化策略
+class TVMOptimizationPipeline:
+    def __init__(self, target):
+        self.target = target
+        
+    def optimize(self, compute_dag):
+        # 高层图优化
+        optimized_graph = self.graph_level_optimization(compute_dag)
+        
+        # 算子级优化
+        scheduled_ops = self.operator_level_optimization(optimized_graph)
+        
+        # 硬件特定优化
+        target_specific = self.hardware_specific_optimization(scheduled_ops)
+        
+        # 代码生成
+        return self.code_generation(target_specific)
+    
+    def graph_level_optimization(self, graph):
+        # 算子融合
+        graph = self.fuse_operators(graph)
+        
+        # 布局转换
+        graph = self.optimize_layout(graph)
+        
+        # 常量折叠
+        graph = self.constant_folding(graph)
+        
+        return graph
+    
+    def operator_level_optimization(self, graph):
+        schedules = {}
+        
+        for op in graph.operators:
+            if self.target == "cuda":
+                schedule = self.optimize_for_gpu(op)
+            elif self.target == "llvm":
+                schedule = self.optimize_for_cpu(op)
+            elif "npu" in self.target:
+                schedule = self.optimize_for_npu(op)
+            
+            schedules[op] = schedule
+        
+        return schedules
+    
+    def optimize_for_gpu(self, op):
+        # GPU特定优化
+        schedule = te.create_schedule(op)
+        
+        # 线程块和线程绑定
+        block_x = te.thread_axis("blockIdx.x")
+        thread_x = te.thread_axis("threadIdx.x")
+        
+        # 共享内存使用
+        # ...
+        
+        return schedule
+    
+    def optimize_for_npu(self, op):
+        # NPU特定优化
+        schedule = te.create_schedule(op)
+        
+        # 利用NPU的特殊指令
+        if hasattr(op, 'is_depthwise_conv'):
+            schedule = self.use_depthwise_instructions(schedule)
+        
+        # 利用NPU的内存层次
+        schedule = self.optimize_memory_hierarchy(schedule)
+        
+        return schedule
+
+# 5. 基于机器学习的性能模型
+class MLBasedTuner:
+    def __init__(self):
+        # 使用XGBoost构建性能预测模型
+        self.performance_model = XGBoostModel()
+        self.feature_extractor = FeatureExtractor()
+        
+    def extract_features(self, schedule):
+        """从调度中提取特征"""
+        features = {
+            'tile_size': schedule.tile_size,
+            'unroll_factor': schedule.unroll_factor,
+            'vectorize_width': schedule.vectorize_width,
+            'parallel_degree': schedule.parallel_degree,
+            'memory_access_pattern': self.analyze_memory_pattern(schedule),
+            'compute_intensity': self.compute_intensity(schedule),
+        }
+        return self.feature_extractor.encode(features)
+    
+    def predict_performance(self, schedule):
+        """预测给定调度的性能"""
+        features = self.extract_features(schedule)
+        return self.performance_model.predict(features)
+    
+    def search_optimal_schedule(self, search_space, budget=1000):
+        """使用贝叶斯优化搜索最优调度"""
+        # 初始采样
+        initial_samples = self.random_sample(search_space, n=50)
+        
+        for i in range(budget):
+            # 选择下一个试验点
+            next_point = self.acquisition_function(search_space)
+            
+            # 实际测试性能
+            actual_perf = self.measure_performance(next_point)
+            
+            # 更新模型
+            self.performance_model.update(next_point, actual_perf)
+            
+        return self.get_best_schedule()
+            </div>
+            
+            <h4>10.5.3 Triton vs TVM：比较与选择</h4>
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>特性</th>
+                            <th>Triton</th>
+                            <th>TVM</th>
+                            <th>适用场景</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>编程模型</td>
+                            <td>Python-like，命令式</td>
+                            <td>张量表达式，声明式</td>
+                            <td>Triton更直观，TVM更灵活</td>
+                        </tr>
+                        <tr>
+                            <td>优化方法</td>
+                            <td>编译器自动优化</td>
+                            <td>基于搜索的自动调优</td>
+                            <td>Triton快速，TVM更精细</td>
+                        </tr>
+                        <tr>
+                            <td>硬件支持</td>
+                            <td>主要NVIDIA GPU</td>
+                            <td>CPU/GPU/NPU/FPGA</td>
+                            <td>TVM更通用</td>
+                        </tr>
+                        <tr>
+                            <td>性能</td>
+                            <td>接近手写CUDA</td>
+                            <td>取决于调优质量</td>
+                            <td>都能达到高性能</td>
+                        </tr>
+                        <tr>
+                            <td>开发效率</td>
+                            <td>高，代码简洁</td>
+                            <td>中，需要调优时间</td>
+                            <td>Triton更适合快速原型</td>
+                        </tr>
+                        <tr>
+                            <td>可扩展性</td>
+                            <td>有限</td>
+                            <td>高度可扩展</td>
+                            <td>TVM适合大规模部署</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <div class="warning-box">
+                <p><strong>选择建议：</strong></p>
+                <ul>
+                    <li><strong>使用Triton：</strong>
+                        <ul>
+                            <li>主要在NVIDIA GPU上工作</li>
+                            <li>需要快速开发自定义算子</li>
+                            <li>团队熟悉Python但不熟悉CUDA</li>
+                            <li>主要处理规则的张量计算</li>
+                        </ul>
+                    </li>
+                    <li><strong>使用TVM：</strong>
+                        <ul>
+                            <li>需要跨平台部署</li>
+                            <li>目标硬件是NPU或特殊AI加速器</li>
+                            <li>愿意投入时间进行性能调优</li>
+                            <li>需要精细控制优化过程</li>
+                        </ul>
+                    </li>
+                </ul>
+            </div>
+            
+            <h4>10.5.4 自动化编译优化的未来趋势</h4>
+            <div class="info-box">
+                <p><strong>发展方向：</strong></p>
+                <ol>
+                    <li><strong>更智能的自动调优：</strong>
+                        <ul>
+                            <li>强化学习指导的搜索策略</li>
+                            <li>跨模型的经验迁移</li>
+                            <li>在线学习和自适应</li>
+                        </ul>
+                    </li>
+                    <li><strong>统一的中间表示：</strong>
+                        <ul>
+                            <li>MLIR作为通用基础设施</li>
+                            <li>更好的前端框架集成</li>
+                            <li>模块化和可组合的优化pass</li>
+                        </ul>
+                    </li>
+                    <li><strong>特定领域优化：</strong>
+                        <ul>
+                            <li>针对Transformer的专门优化</li>
+                            <li>稀疏计算的自动优化</li>
+                            <li>动态图的高效编译</li>
+                        </ul>
+                    </li>
+                    <li><strong>硬件感知的共同设计：</strong>
+                        <ul>
+                            <li>编译器与硬件设计的紧密结合</li>
+                            <li>可编程的硬件特性</li>
+                            <li>软硬件协同优化</li>
+                        </ul>
+                    </li>
+                </ol>
+            </div>
+
+            <h3>10.6 量化与精度优化</h3>
             
             <p>量化是将浮点模型转换为低精度定点模型的过程，对于NPU的性能和功耗优化至关重要。现代NPU通常支持INT8甚至INT4计算，相比FP32可以提供4-8倍的性能提升。</p>
 

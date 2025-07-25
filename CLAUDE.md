@@ -123,6 +123,50 @@
 - HTML界面：已实现响应式设计、折叠答案、代码高亮、平滑滚动等功能
 - 项目状态：NPU设计教程已完整实现，包含理论讲解、RTL代码示例和丰富的练习题
 
+## 文件结构说明
+
+本教程已重构为多文件结构，便于导航和维护。
+
+### 文件列表
+
+- `index.html` - 主导航页面，包含所有章节的概览和链接
+- `chapter1.html` - 第1章：NPU简介与发展历程
+- `chapter2.html` - 第2章：神经网络计算基础
+- `chapter3.html` - 第3章：NPU系统架构
+- `chapter4.html` - 第4章：计算核心设计
+- `chapter5.html` - 第5章：存储系统设计
+- `chapter6.html` - 第6章：RTL设计实现
+- `chapter7.html` - 第7章：验证与测试
+- `chapter8.html` - 第8章：物理设计
+- `chapter9.html` - 第9章：先进工艺与封装技术
+- `chapter10.html` - 第10章：软件栈与编译优化
+- `chapter11.html` - 第11章：性能优化技术
+- `chapter12.html` - 第12章：NPU设计实战
+- `npu_tutorial.html` - 原始单文件版本（保留作为备份）
+
+### 使用方法
+
+1. 打开 `index.html` 开始浏览教程
+2. 每个章节页面都有：
+   - 顶部导航栏，可以快速跳转到任意章节
+   - 底部翻页导航，方便顺序阅读
+   - 响应式设计，支持手机和平板设备
+
+### 技术特性
+
+- **模块化结构**：每章独立文件，易于维护和更新
+- **统一导航**：所有页面共享相同的导航结构
+- **响应式设计**：自适应各种屏幕尺寸
+- **语法高亮**：自动检测并高亮Verilog、Python等代码
+- **交互式答案**：练习题答案默认隐藏，点击显示
+- **进度指示**：当前章节在导航栏中高亮显示
+
+### 技术栈
+
+- 纯HTML/CSS/JavaScript实现
+- 无需服务器，可直接在浏览器中打开
+- 无外部依赖，离线可用
+
 # important-instruction-reminders
 Do what has been asked; nothing more, nothing less.
 NEVER create files unless they're absolutely necessary for achieving your goal.
