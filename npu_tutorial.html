@@ -111,6 +111,79 @@
             line-height: 1.5;
             white-space: pre-wrap;
             word-wrap: break-word;
+            position: relative;
+        }
+        
+        /* Language label */
+        .code-block::before {
+            content: attr(data-language);
+            position: absolute;
+            top: 5px;
+            right: 10px;
+            font-size: 12px;
+            color: #95a5a6;
+            text-transform: uppercase;
+        }
+        
+        /* Syntax highlighting for different languages */
+        /* Verilog/SystemVerilog */
+        .code-block.verilog .keyword,
+        .code-block.systemverilog .keyword {
+            color: #e74c3c;
+            font-weight: bold;
+        }
+        
+        .code-block.verilog .type,
+        .code-block.systemverilog .type {
+            color: #3498db;
+        }
+        
+        .code-block.verilog .comment,
+        .code-block.systemverilog .comment,
+        .code-block.python .comment,
+        .code-block.c .comment,
+        .code-block.cpp .comment {
+            color: #95a5a6;
+            font-style: italic;
+        }
+        
+        .code-block.verilog .number,
+        .code-block.systemverilog .number,
+        .code-block.python .number,
+        .code-block.c .number,
+        .code-block.cpp .number {
+            color: #e67e22;
+        }
+        
+        /* Python */
+        .code-block.python .keyword {
+            color: #e74c3c;
+            font-weight: bold;
+        }
+        
+        .code-block.python .function {
+            color: #3498db;
+        }
+        
+        .code-block.python .string {
+            color: #2ecc71;
+        }
+        
+        /* C/C++ */
+        .code-block.c .keyword,
+        .code-block.cpp .keyword {
+            color: #e74c3c;
+            font-weight: bold;
+        }
+        
+        .code-block.c .type,
+        .code-block.cpp .type {
+            color: #3498db;
+        }
+        
+        /* General string highlighting */
+        .code-block .string {
+            color: #2ecc71;
         }
 
         .exercise {
@@ -249,6 +322,101 @@
             }
         }
     </style>
+    <script>
+        // Simple syntax highlighting
+        function highlightSyntax() {
+            const codeBlocks = document.querySelectorAll('.code-block');
+            
+            codeBlocks.forEach(block => {
+                const content = block.textContent;
+                let language = 'text';
+                let highlighted = content;
+                
+                // Auto-detect language based on content
+                if (content.includes('module ') || content.includes('always @') || content.includes('wire ') || content.includes('reg ') || content.includes('endmodule') || content.includes('assign ')) {
+                    language = 'verilog';
+                    highlighted = highlightVerilog(content);
+                } else if (content.includes('import ') || content.includes('def ') || content.includes('class ') || content.includes('numpy') || content.includes('torch') || content.includes('self.') || content.includes('__init__')) {
+                    language = 'python';
+                    highlighted = highlightPython(content);
+                } else if (content.includes('#include') || content.includes('int main') || content.includes('void ') || content.includes('float ') || content.includes('double ') || content.includes('struct ')) {
+                    language = 'c';
+                    highlighted = highlightC(content);
+                } else if (content.match(/^\s*\/\//)) {
+                    // Comment-based detection
+                    if (content.includes('实现') || content.includes('硬件') || content.includes('时钟')) {
+                        language = 'verilog';
+                        highlighted = highlightVerilog(content);
+                    } else if (content.includes('Step') || content.includes('Load') || content.includes('Forward')) {
+                        language = 'python';
+                        highlighted = highlightPython(content);
+                    }
+                }
+                
+                block.innerHTML = highlighted;
+                block.classList.add(language);
+                block.setAttribute('data-language', language);
+            });
+        }
+        
+        function highlightVerilog(code) {
+            // Verilog keywords
+            const keywords = /\b(module|endmodule|input|output|wire|reg|always|assign|begin|end|if|else|for|while|parameter|localparam|posedge|negedge|case|endcase|default|function|endfunction|task|endtask|initial|forever|repeat)\b/g;
+            const types = /\b(bit|logic|byte|shortint|int|longint|integer|time|real|shortreal|chandle|string|event|signed|unsigned)\b/g;
+            const numbers = /\b(\d+'[hbdo][\da-fA-F_]+|\d+)\b/g;
+            const comments = /(\/\/.*$|\/\*[\s\S]*?\*\/)/gm;
+            const strings = /("[^"]*")/g;
+            
+            code = code.replace(comments, '<span class="comment">$1</span>');
+            code = code.replace(strings, '<span class="string">$1</span>');
+            code = code.replace(keywords, '<span class="keyword">$1</span>');
+            code = code.replace(types, '<span class="type">$1</span>');
+            code = code.replace(numbers, '<span class="number">$1</span>');
+            
+            return code;
+        }
+        
+        function highlightPython(code) {
+            // Python keywords
+            const keywords = /\b(and|as|assert|break|class|continue|def|del|elif|else|except|False|finally|for|from|global|if|import|in|is|lambda|None|nonlocal|not|or|pass|raise|return|True|try|while|with|yield|async|await)\b/g;
+            const builtins = /\b(abs|all|any|ascii|bin|bool|breakpoint|bytearray|bytes|callable|chr|classmethod|compile|complex|delattr|dict|dir|divmod|enumerate|eval|exec|filter|float|format|frozenset|getattr|globals|hasattr|hash|help|hex|id|input|int|isinstance|issubclass|iter|len|list|locals|map|max|memoryview|min|next|object|oct|open|ord|pow|print|property|range|repr|reversed|round|set|setattr|slice|sorted|staticmethod|str|sum|super|tuple|type|vars|zip)\b/g;
+            const numbers = /\b(\d+\.?\d*)\b/g;
+            const comments = /(#.*$)/gm;
+            const strings = /("[^"]*"|'[^']*')/g;
+            
+            code = code.replace(comments, '<span class="comment">$1</span>');
+            code = code.replace(strings, '<span class="string">$1</span>');
+            code = code.replace(keywords, '<span class="keyword">$1</span>');
+            code = code.replace(builtins, '<span class="function">$1</span>');
+            code = code.replace(numbers, '<span class="number">$1</span>');
+            
+            return code;
+        }
+        
+        function highlightC(code) {
+            // C/C++ keywords
+            const keywords = /\b(auto|break|case|char|const|continue|default|do|double|else|enum|extern|float|for|goto|if|int|long|register|return|short|signed|sizeof|static|struct|switch|typedef|union|unsigned|void|volatile|while|class|namespace|template|public|private|protected|virtual|override|new|delete|try|catch|throw)\b/g;
+            const types = /\b(bool|true|false|NULL|nullptr)\b/g;
+            const numbers = /\b(\d+\.?\d*[fFlLuU]?)\b/g;
+            const comments = /(\/\/.*$|\/\*[\s\S]*?\*\/)/gm;
+            const strings = /("[^"]*")/g;
+            const preprocessor = /(#\s*\w+.*$)/gm;
+            
+            code = code.replace(comments, '<span class="comment">$1</span>');
+            code = code.replace(strings, '<span class="string">$1</span>');
+            code = code.replace(preprocessor, '<span class="keyword">$1</span>');
+            code = code.replace(keywords, '<span class="keyword">$1</span>');
+            code = code.replace(types, '<span class="type">$1</span>');
+            code = code.replace(numbers, '<span class="number">$1</span>');
+            
+            return code;
+        }
+        
+        // Run syntax highlighting when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            highlightSyntax();
+        });
+    </script>
 </head>
 <body>
     <header>
