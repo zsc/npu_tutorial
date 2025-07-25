@@ -791,6 +791,122 @@ create_power_stripes -nets {VDD VSS} \
                 </ol>
             </div>
 
+            <h4>8.3.3 电源网络详细设计</h4>
+            <div class="info-box">
+                <p><strong>NPU电源网络设计要点：</strong></p>
+                <ul>
+                    <li><strong>分层PDN架构：</strong>
+                        <ul>
+                            <li>顶层网格（M9-M10）：主要电流分配，宽度20-50μm</li>
+                            <li>中层网格（M6-M8）：区域电源分配，宽度10-20μm</li>
+                            <li>底层网格（M1-M5）：标准单元供电，宽度0.5-5μm</li>
+                        </ul>
+                    </li>
+                    <li><strong>MAC阵列专用电源设计：</strong>
+                        <ul>
+                            <li>采用交错式电源/地线布局，减少电感效应</li>
+                            <li>在MAC单元上方预留专用电源轨道</li>
+                            <li>使用多层via阵列连接，降低接触电阻</li>
+                        </ul>
+                    </li>
+                    <li><strong>去耦电容策略：</strong>
+                        <ul>
+                            <li>片上去耦电容：0.1-10nF，响应ps级瞬态</li>
+                            <li>封装去耦电容：10nF-1μF，响应ns级瞬态</li>
+                            <li>板级去耦电容：1μF-100μF，提供稳定电源</li>
+                        </ul>
+                    </li>
+                </ul>
+            </div>
+
+            <div class="code-block">
+# 高级电源网络设计脚本
+# 针对高功耗NPU的分层PDN设计
+
+# 1. 定义电源域
+create_power_domain PD_CORE -elements {mac_array/*}
+create_power_domain PD_MEM -elements {sram_banks/*}
+create_power_domain PD_IO -elements {io_cells/*}
+
+# 2. 设置电流需求（基于功耗分析）
+set_power_budget -domain PD_CORE -static 5.0 -dynamic 20.0
+set_power_budget -domain PD_MEM -static 2.0 -dynamic 8.0
+set_power_budget -domain PD_IO -static 0.5 -dynamic 2.0
+
+# 3. 创建分层电源网格
+# 顶层粗网格（载流主干）
+create_power_plan -layer {M9 M10} \
+                  -width 30 \
+                  -pitch 200 \
+                  -offset 50
+
+# 中层网格（区域分配）
+create_power_plan -layer {M7 M8} \
+                  -width 15 \
+                  -pitch 100 \
+                  -offset 25
+
+# 底层细网格（单元供电）
+create_power_plan -layer {M1 M2} \
+                  -width 2 \
+                  -pitch 20 \
+                  -follow_pin_pitch true
+
+# 4. Via阵列优化
+set_via_option -cut_spacing minimum \
+               -array_mode maximum \
+               -via_array_size {4 4}
+
+# 5. 特殊区域加强
+# MAC阵列区域电源加密
+create_power_mesh -region [get_attribute [get_cells mac_array] bbox] \
+                  -layer M7 \
+                  -width 10 \
+                  -pitch 50 \
+                  -direction vertical
+            </div>
+
+            <h4>8.3.4 地网络设计</h4>
+            <div class="warning-box">
+                <p><strong>地网络设计的关键考虑：</strong></p>
+                <ul>
+                    <li><strong>共地噪声问题：</strong>数字地和模拟地的隔离</li>
+                    <li><strong>地弹效应：</strong>大电流切换时的地电位波动</li>
+                    <li><strong>EMI/EMC：</strong>电磁干扰和兼容性</li>
+                    <li><strong>衬底噪声：</strong>通过衬底耦合的噪声传播</li>
+                </ul>
+            </div>
+
+            <div class="code-block">
+// 地网络隔离设计示例
+module ground_isolation_example (
+    // 数字部分
+    input wire DVDD,
+    input wire DVSS,
+    // 模拟部分
+    input wire AVDD,
+    input wire AVSS,
+    // 衬底偏置
+    input wire SUB_BIAS
+);
+
+    // 保护环设计
+    // 1. N阱保护环隔离P型衬底噪声
+    // 2. P+保护环收集衬底噪声电流
+    // 3. Deep N-well提供额外隔离
+    
+    // 地连接策略
+    // - 星型连接：所有地在单点汇合
+    // - 分区供电：数字/模拟/IO独立供电
+    // - 铁氧体磁珠：高频隔离
+
+endmodule
+
+// 布局指导
+// synthesis attribute keep_hierarchy of ground_isolation_example is true
+// synthesis attribute dont_touch of ground_isolation_example is true
+            </div>
+
             <h3>8.4 布局优化（Placement）</h3>
             
             <p>布局阶段将标准单元和宏单元放置在芯片上的合适位置。NPU的布局优化需要特别关注数据通路的规则性和时序关键路径。</p>
@@ -974,7 +1090,261 @@ route_detail -incremental true \
                 </ol>
             </div>
 
-            <h3>8.7 物理验证与签收</h3>
+            <h3>8.7 热设计与管理</h3>
+            
+            <p>随着工艺节点的缩小和功耗密度的增加，热设计已成为NPU物理设计中的关键挑战。有效的热管理不仅影响性能，还直接关系到芯片的可靠性和寿命。</p>
+
+            <h4>8.7.1 热设计基础</h4>
+            <div class="info-box">
+                <p><strong>热阻网络模型：</strong></p>
+                <ul>
+                    <li><strong>结到外壳热阻（Rjc）：</strong>芯片到封装的热阻，典型值0.2-0.5°C/W</li>
+                    <li><strong>外壳到散热器热阻（Rcs）：</strong>TIM材料性能决定，典型值0.1-0.3°C/W</li>
+                    <li><strong>散热器到环境热阻（Rsa）：</strong>散热器效率，典型值0.5-2°C/W</li>
+                    <li><strong>总热阻：</strong>Rja = Rjc + Rcs + Rsa</li>
+                </ul>
+                <p><strong>温度计算：</strong>Tj = Ta + P × Rja</p>
+                <p>其中：Tj=结温，Ta=环境温度，P=功耗</p>
+            </div>
+
+            <div class="code-block">
+# 热分析与优化脚本
+# 使用RedHawk或Voltus进行热仿真
+
+# 1. 导入功耗数据
+read_power_data -format vcd -file npu_power.vcd
+read_temperature_map -ambient 25
+
+# 2. 定义封装模型
+set_package_model -type FCBGA \
+                  -size {40 40} \
+                  -balls 2500 \
+                  -thermal_balls 400
+
+# 3. 设置材料属性
+set_material_property -layer M1 -thermal_conductivity 2.4
+set_material_property -layer M10 -thermal_conductivity 3.8
+set_material_property -substrate -thermal_conductivity 140
+
+# 4. 热点分析
+run_thermal_analysis -mode steady_state \
+                     -power_mode maximum \
+                     -report thermal_map.rpt
+
+# 5. 识别热点区域
+identify_hotspots -threshold 95 \
+                  -margin 100um \
+                  -report hotspot_list.rpt
+
+# 6. 热驱动优化
+optimize_placement -thermal_aware true \
+                   -target_temp 85 \
+                   -spread_heat_sources true
+            </div>
+
+            <h4>8.7.2 热点缓解技术</h4>
+            <div class="warning-box">
+                <p><strong>NPU热设计挑战：</strong></p>
+                <ul>
+                    <li>MAC阵列区域功耗密度可达1-2 W/mm²</li>
+                    <li>局部热点温度可能比平均温度高20-30°C</li>
+                    <li>温度梯度导致时序偏差和可靠性问题</li>
+                    <li>热循环导致的机械应力</li>
+                </ul>
+            </div>
+
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>热管理技术</th>
+                            <th>实现方法</th>
+                            <th>效果</th>
+                            <th>成本影响</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>功耗密度均匀化</td>
+                            <td>分散高功耗单元布局</td>
+                            <td>降低峰值温度10-15°C</td>
+                            <td>低（设计阶段）</td>
+                        </tr>
+                        <tr>
+                            <td>热通孔（Thermal Via）</td>
+                            <td>增加垂直热传导路径</td>
+                            <td>改善热传导20-30%</td>
+                            <td>中（面积开销）</td>
+                        </tr>
+                        <tr>
+                            <td>金属填充优化</td>
+                            <td>智能dummy metal填充</td>
+                            <td>提升横向热传导</td>
+                            <td>低</td>
+                        </tr>
+                        <tr>
+                            <td>动态热管理（DTM）</td>
+                            <td>温度感知的DVFS</td>
+                            <td>防止过热，性能降级</td>
+                            <td>中（控制复杂度）</td>
+                        </tr>
+                        <tr>
+                            <td>先进封装</td>
+                            <td>2.5D/3D封装，液冷</td>
+                            <td>大幅改善散热</td>
+                            <td>高</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <h4>8.7.3 温度感知设计</h4>
+            <div class="code-block">
+// 片上温度传感器设计
+module thermal_sensor (
+    input wire clk,
+    input wire rst_n,
+    input wire enable,
+    output reg [9:0] temperature,  // 10-bit温度值
+    output reg temp_valid,
+    output reg over_temp_alert
+);
+
+    // 温度传感器类型：
+    // 1. 环形振荡器型：频率随温度变化
+    // 2. BJT型：利用PN结的温度特性
+    // 3. 电阻型：利用电阻温度系数
+    
+    // 环形振荡器实现
+    wire ring_osc_out;
+    reg [15:0] freq_counter;
+    reg [15:0] ref_counter;
+    
+    // 温度-频率查找表（简化）
+    reg [9:0] temp_lut [0:255];
+    
+    // 校准参数
+    parameter TEMP_OFFSET = 10'd25;  // 25°C基准
+    parameter TEMP_GAIN = 10'd2;     // 2°C/MHz
+    
+    // 频率计数
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            freq_counter <= 16'd0;
+            ref_counter <= 16'd0;
+        end else if (enable) begin
+            if (ref_counter == 16'hFFFF) begin
+                // 计算温度
+                temperature <= temp_lut[freq_counter[15:8]];
+                temp_valid <= 1'b1;
+                freq_counter <= 16'd0;
+                ref_counter <= 16'd0;
+            end else begin
+                freq_counter <= freq_counter + ring_osc_out;
+                ref_counter <= ref_counter + 1'b1;
+                temp_valid <= 1'b0;
+            end
+        end
+    end
+    
+    // 过温检测
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            over_temp_alert <= 1'b0;
+        end else begin
+            over_temp_alert <= (temperature > 10'd95); // 95°C警报
+        end
+    end
+
+endmodule
+
+// 温度管理控制器
+module thermal_management_unit (
+    input wire clk,
+    input wire rst_n,
+    input wire [9:0] temp_sensors [0:15],  // 16个温度传感器
+    output reg [1:0] dvfs_level,          // 动态电压频率调节
+    output reg [15:0] throttle_enable     // 各模块限流使能
+);
+
+    // 温度阈值
+    parameter TEMP_NORMAL = 10'd70;
+    parameter TEMP_THROTTLE = 10'd85;
+    parameter TEMP_CRITICAL = 10'd95;
+    
+    // 找出最高温度
+    reg [9:0] max_temp;
+    integer i;
+    
+    always @(*) begin
+        max_temp = temp_sensors[0];
+        for (i = 1; i < 16; i = i + 1) begin
+            if (temp_sensors[i] > max_temp)
+                max_temp = temp_sensors[i];
+        end
+    end
+    
+    // 热管理策略
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            dvfs_level <= 2'b11;      // 最高性能
+            throttle_enable <= 16'h0000;
+        end else begin
+            if (max_temp < TEMP_NORMAL) begin
+                dvfs_level <= 2'b11;  // 100%性能
+                throttle_enable <= 16'h0000;
+            end else if (max_temp < TEMP_THROTTLE) begin
+                dvfs_level <= 2'b10;  // 75%性能
+                throttle_enable <= 16'h00FF;  // 限制部分模块
+            end else if (max_temp < TEMP_CRITICAL) begin
+                dvfs_level <= 2'b01;  // 50%性能
+                throttle_enable <= 16'hFFFF;  // 全面限流
+            end else begin
+                dvfs_level <= 2'b00;  // 紧急停机
+                throttle_enable <= 16'hFFFF;
+            end
+        end
+    end
+
+endmodule
+            </div>
+
+            <h4>8.7.4 封装级热设计</h4>
+            <div class="info-box">
+                <p><strong>先进封装热解决方案：</strong></p>
+                <ul>
+                    <li><strong>倒装芯片（Flip-Chip）：</strong>
+                        <ul>
+                            <li>直接将芯片热点连接到基板</li>
+                            <li>使用underfill材料增强热传导</li>
+                            <li>典型热阻：0.2-0.3°C/W</li>
+                        </ul>
+                    </li>
+                    <li><strong>热界面材料（TIM）：</strong>
+                        <ul>
+                            <li>TIM1：芯片到散热盖，使用焊料或导热胶</li>
+                            <li>TIM2：散热盖到散热器，使用导热硅脂</li>
+                            <li>新型材料：石墨烯、碳纳米管复合材料</li>
+                        </ul>
+                    </li>
+                    <li><strong>均热板（Vapor Chamber）：</strong>
+                        <ul>
+                            <li>利用相变传热，热传导率>1000 W/m·K</li>
+                            <li>有效扩散热点，降低温度梯度</li>
+                            <li>适用于>100W的高功耗芯片</li>
+                        </ul>
+                    </li>
+                    <li><strong>微通道液冷：</strong>
+                        <ul>
+                            <li>直接在芯片背面刻蚀微通道</li>
+                            <li>冷却液直接带走热量</li>
+                            <li>可处理>300W/cm²的热流密度</li>
+                        </ul>
+                    </li>
+                </ul>
+            </div>
+
+            <h3>8.8 物理验证与签收</h3>
             
             <p>物理验证确保设计满足所有制造规则和性能要求。这是流片前的最后关卡，必须严格把关。</p>
 
@@ -1054,11 +1424,11 @@ run_em_ir_analysis -tool voltus \
                 </table>
             </div>
 
-            <h3>8.8 低功耗物理设计</h3>
+            <h3>8.9 低功耗物理设计</h3>
             
             <p>NPU的功耗优化贯穿整个物理设计流程。从架构级到晶体管级，每个层次都有相应的优化技术。</p>
 
-            <h4>8.8.1 多阈值电压优化</h4>
+            <h4>8.9.1 多阈值电压优化</h4>
             <div class="code-block">
 # 多Vt优化脚本
 # 定义Vt类型
@@ -1084,7 +1454,7 @@ optimize_power -multi_vt \
                -preserve_paths [all_critical_paths]
             </div>
 
-            <h4>8.8.2 电源门控实现</h4>
+            <h4>8.9.2 电源门控实现</h4>
             
             <p>电源门控通过切断空闲模块的电源来降低漏电功耗。关键组件包括：</p>
             <ul>
@@ -1197,11 +1567,11 @@ module power_gating_controller (
 endmodule
             </div>
 
-            <h3>8.9 设计可测试性（DFT）</h3>
+            <h3>8.10 设计可测试性（DFT）</h3>
             
             <p>DFT是物理设计中至关重要的一环。没有良好的DFT设计，芯片即使制造出来也无法有效测试，无法实现量产。</p>
 
-            <h4>8.9.1 扫描链设计</h4>
+            <h4>8.10.1 扫描链设计</h4>
             <div class="code-block">
 # 扫描链插入脚本
 # 设置扫描链配置
@@ -1223,7 +1593,7 @@ place_scan_chains -reorder \
 balance_scan_chains -max_length 500
             </div>
 
-            <h4>8.9.2 内建自测试（BIST）</h4>
+            <h4>8.10.2 内建自测试（BIST）</h4>
             <div class="info-box">
                 <p><strong>NPU中的BIST应用：</strong></p>
                 <ul>
@@ -1283,7 +1653,7 @@ module mbist_controller (
 endmodule
             </div>
 
-            <h4>8.9.3 先进工艺节点的挑战</h4>
+            <h4>8.10.3 先进工艺节点的挑战</h4>
             
             <p>7nm及以下工艺给物理设计带来了新的挑战：</p>
             
@@ -1297,7 +1667,7 @@ endmodule
                 </ul>
             </div>
             
-            <h4>8.9.4 封装协同设计</h4>
+            <h4>8.10.4 封装协同设计</h4>
             
             <p>对于高性能NPU，芯片设计必须与封装设计紧密配合：</p>
             
