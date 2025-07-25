@@ -579,23 +579,180 @@
             <p>要深入理解NPU的价值，必须将其与CPU和GPU进行比较。这三种处理器代表了不同的设计理念和优化方向，各有其适用场景。通过对比分析，我们可以更好地理解NPU在AI计算领域的独特优势。</p>
             
             <h4>CPU：通用计算的王者</h4>
-            <p>CPU（Central Processing Unit）是计算机系统的核心，其设计目标是提供最大的灵活性和通用性。现代CPU采用了复杂的乱序执行、分支预测、多级缓存等技术，能够高效处理各种类型的计算任务。然而，这种通用性是以牺牲专用性能为代价的。在神经网络计算中，CPU的劣势明显：</p>
+            <p>CPU（Central Processing Unit）是计算机系统的核心，其设计目标是提供最大的灵活性和通用性。现代CPU采用了复杂的乱序执行、分支预测、多级缓存等技术，能够高效处理各种类型的计算任务。然而，这种通用性是以牺牲专用性能为代价的。</p>
+            
+            <div class="code-block">
+// CPU架构特征分析
+架构特征          典型值           AI计算影响
+------------------------------------------------------
+核心数量          8-64核          并行度受限
+SIMD宽度          256-512位       单指令处理8-16个FP32
+时钟频率          2-5GHz          高频但利用率低
+功耗              65-280W         能效比差
+晶体管用途分布：
+- 控制逻辑       ~30%            开销大
+- 缓存           ~50%            对AI不够优化
+- 计算单元       ~20%            实际计算资源少
+
+// 典型CPU执行神经网络的性能
+Intel Xeon (28核): ~100 GFLOPS (FP32)
+功耗效率: ~0.4 GFLOPS/W
+            </div>
+            
+            <p>在神经网络计算中，CPU的劣势明显：</p>
             <ul>
-                <li>有限的并行能力：即使是最先进的服务器CPU，核心数也仅有几十个</li>
-                <li>复杂的控制逻辑：大量晶体管用于指令解码、乱序执行等，真正用于计算的比例较低</li>
-                <li>缓存层次不匹配：CPU的缓存设计针对随机访问优化，而神经网络计算具有规律的访问模式</li>
+                <li><strong>有限的并行能力：</strong>即使是最先进的服务器CPU，核心数也仅有几十个，远不足以应对动辄百万级的矩阵运算</li>
+                <li><strong>复杂的控制逻辑：</strong>大量晶体管用于指令解码、乱序执行、分支预测等，真正用于计算的比例仅约20%</li>
+                <li><strong>缓存层次不匹配：</strong>CPU的缓存设计针对随机访问和代码/数据局部性优化，而神经网络计算具有流式的、可预测的访问模式</li>
+                <li><strong>向量化限制：</strong>虽然支持AVX-512等SIMD指令，但宽度有限，且编程复杂</li>
             </ul>
             
             <h4>GPU：并行计算的先驱</h4>
-            <p>GPU（Graphics Processing Unit）最初为图形渲染设计，后来演化为通用并行计算平台。GPU拥有数千个简单的计算核心，非常适合数据并行任务。在深度学习早期，GPU成为了训练神经网络的主力。但GPU也有其局限性：</p>
+            <p>GPU（Graphics Processing Unit）最初为图形渲染设计，后来演化为通用并行计算平台。GPU拥有数千个简单的计算核心，非常适合数据并行任务。在深度学习早期，GPU成为了训练神经网络的主力。</p>
+            
+            <div class="code-block">
+// GPU架构特征分析（以NVIDIA A100为例）
+架构特征          典型值           设计理念
+------------------------------------------------------
+SM数量            108个           大规模并行
+CUDA核心          6912个          简单但数量多
+Tensor Core       432个           专门矩阵运算
+时钟频率          1.4GHz          相对较低
+内存带宽          1.6TB/s (HBM2)  高带宽设计
+功耗              400W            功耗密度高
+
+// GPU执行神经网络的性能
+NVIDIA A100: 
+- FP32: 19.5 TFLOPS
+- FP16 (Tensor Core): 312 TFLOPS
+- INT8 (Tensor Core): 624 TOPS
+功耗效率: ~1.5 TFLOPS/W (INT8)
+            </div>
+            
+            <p>GPU在AI计算中的优势与局限：</p>
+            <p><strong>优势：</strong></p>
             <ul>
-                <li>功耗问题：高端GPU功耗动辄300W以上，在边缘设备上难以应用</li>
-                <li>内存带宽瓶颈：虽然配备了HBM等高带宽内存，但仍难以满足大规模模型的需求</li>
-                <li>编程复杂：需要深入理解CUDA等并行编程模型，开发门槛高</li>
+                <li><strong>大规模并行：</strong>数千个核心可同时工作，适合数据并行的神经网络计算</li>
+                <li><strong>成熟生态：</strong>CUDA、cuDNN等软件栈完善，框架支持好</li>
+                <li><strong>通用性：</strong>除了AI，还能处理其他并行计算任务</li>
+            </ul>
+            <p><strong>局限性：</strong></p>
+            <ul>
+                <li><strong>功耗问题：</strong>高端GPU功耗动辄400W以上，数据中心需要专门的散热设计</li>
+                <li><strong>内存层次复杂：</strong>寄存器、共享内存、L1/L2缓存、全局内存的层次需要手动管理</li>
+                <li><strong>编程复杂：</strong>需要深入理解线程块、线程束（Warp）、内存合并等概念</li>
+                <li><strong>架构开销：</strong>为保持通用性，仍有相当部分晶体管用于图形渲染等非AI功能</li>
             </ul>
             
             <h4>NPU：AI计算的专家</h4>
             <p>NPU代表了一种全新的设计思路：针对特定应用领域进行极致优化。通过深入分析神经网络的计算特征，NPU在架构层面实现了多项创新，在AI推理任务上展现出显著优势。</p>
+            
+            <div class="code-block">
+// NPU架构特征分析（典型设计）
+架构特征          典型值           优化重点
+------------------------------------------------------
+MAC阵列           256×256         专为矩阵运算设计
+数据位宽          INT8/INT16      量化优化
+片上缓存          10-100MB        减少外存访问
+数据流架构        脉动阵列         数据复用最大化
+功耗              10-75W          边缘到云端可扩展
+
+// 典型NPU性能指标
+Google TPU v4i: 
+- INT8: 275 TOPS
+- 功耗: 75W
+- 能效: 3.7 TOPS/W
+
+华为Ascend 310:
+- INT8: 22 TOPS
+- 功耗: 8W
+- 能效: 2.8 TOPS/W
+            </div>
+            
+            <p><strong>NPU的核心优势：</strong></p>
+            <ul>
+                <li><strong>专用架构：</strong>晶体管主要用于MAC运算，控制逻辑简单，计算密度极高</li>
+                <li><strong>数据流优化：</strong>脉动阵列等架构最大化数据复用，减少内存访问</li>
+                <li><strong>低精度计算：</strong>原生支持INT8/INT4等量化计算，大幅提升性能和能效</li>
+                <li><strong>确定性延迟：</strong>没有缓存失效、分支预测失败等问题，延迟可预测</li>
+                <li><strong>领域专用指令：</strong>提供矩阵乘法、卷积等高级指令，一条指令完成复杂运算</li>
+            </ul>
+            
+            <div class="table-wrapper">
+                <table>
+                    <caption>CPU vs GPU vs NPU 详细对比</caption>
+                    <thead>
+                        <tr>
+                            <th>特性</th>
+                            <th>CPU</th>
+                            <th>GPU</th>
+                            <th>NPU</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>设计理念</td>
+                            <td>通用计算，灵活性优先</td>
+                            <td>并行计算，吞吐量优先</td>
+                            <td>AI专用，能效优先</td>
+                        </tr>
+                        <tr>
+                            <td>架构特点</td>
+                            <td>复杂核心，深度流水线</td>
+                            <td>简单核心，大规模并行</td>
+                            <td>MAC阵列，数据流架构</td>
+                        </tr>
+                        <tr>
+                            <td>计算单元</td>
+                            <td>8-64个复杂核心</td>
+                            <td>数千个CUDA核心</td>
+                            <td>数万个MAC单元</td>
+                        </tr>
+                        <tr>
+                            <td>内存系统</td>
+                            <td>多级缓存，优化局部性</td>
+                            <td>高带宽显存，复杂层次</td>
+                            <td>大片上缓存，简单层次</td>
+                        </tr>
+                        <tr>
+                            <td>数据类型</td>
+                            <td>FP64/FP32为主</td>
+                            <td>FP32/FP16/INT8</td>
+                            <td>INT8/INT4为主</td>
+                        </tr>
+                        <tr>
+                            <td>功耗范围</td>
+                            <td>65-280W</td>
+                            <td>75-400W</td>
+                            <td>1-75W</td>
+                        </tr>
+                        <tr>
+                            <td>AI推理性能</td>
+                            <td>~0.1 TOPS</td>
+                            <td>~600 TOPS</td>
+                            <td>~300 TOPS</td>
+                        </tr>
+                        <tr>
+                            <td>能效(TOPS/W)</td>
+                            <td>~0.001</td>
+                            <td>~1.5</td>
+                            <td>~4.0</td>
+                        </tr>
+                        <tr>
+                            <td>编程模型</td>
+                            <td>C/C++，串行为主</td>
+                            <td>CUDA/OpenCL，并行</td>
+                            <td>图编译器，自动优化</td>
+                        </tr>
+                        <tr>
+                            <td>适用场景</td>
+                            <td>控制密集，串行任务</td>
+                            <td>图形渲染，科学计算</td>
+                            <td>AI推理，边缘计算</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
             
             <div class="table-wrapper">
                 <table>
@@ -1275,6 +1432,292 @@ if __name__ == "__main__":
                         <p><strong>实际应用中通过量化感知训练，INT8精度损失通常小于1%，是性能功耗比的最佳选择。</strong></p>
                     </div>
                 </div>
+            </div>
+            
+            <div class="exercise">
+                <h4>练习题集 1</h4>
+                <p>本章的练习题旨在加深你对NPU基本概念、架构特点和发展趋势的理解。通过这些练习，你将更好地掌握NPU与CPU/GPU的本质区别，以及不同NPU架构的设计权衡。</p>
+                
+                <div class="question">
+                    <p><strong>题目1.1：</strong>计算并比较在执行一个1024×1024的矩阵乘法时，CPU、GPU和NPU的理论性能差异。假设：</p>
+                    <ul>
+                        <li>CPU：Intel Xeon，32核，AVX-512（每核每周期16个FP32 MAC），主频3GHz</li>
+                        <li>GPU：NVIDIA V100，5120个CUDA核心，主频1.5GHz，每核每周期1个FP32 MAC</li>
+                        <li>NPU：256×256 MAC阵列，主频1GHz，INT8运算</li>
+                    </ul>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <p><strong>答案：</strong></p>
+                        <p><strong>1. CPU性能计算：</strong></p>
+                        <ul>
+                            <li>每周期MAC数：32核 × 16 MAC/核 = 512 MAC</li>
+                            <li>每秒MAC数：512 × 3GHz = 1.536 TFLOPS</li>
+                            <li>矩阵乘法需要：1024³ = 1,073,741,824 次MAC</li>
+                            <li>理论时间：1,073,741,824 / (1.536×10¹²) = 0.698ms</li>
+                        </ul>
+                        
+                        <p><strong>2. GPU性能计算：</strong></p>
+                        <ul>
+                            <li>每周期MAC数：5120核 × 1 MAC/核 = 5120 MAC</li>
+                            <li>每秒MAC数：5120 × 1.5GHz = 7.68 TFLOPS</li>
+                            <li>理论时间：1,073,741,824 / (7.68×10¹²) = 0.140ms</li>
+                        </ul>
+                        
+                        <p><strong>3. NPU性能计算：</strong></p>
+                        <ul>
+                            <li>每周期MAC数：256 × 256 = 65,536 MAC</li>
+                            <li>每秒MAC数：65,536 × 1GHz = 65.536 TOPS（INT8）</li>
+                            <li>理论时间：1,073,741,824 / (65.536×10¹²) = 0.016ms</li>
+                        </ul>
+                        
+                        <p><strong>性能对比：</strong></p>
+                        <table>
+                            <tr>
+                                <th>处理器</th>
+                                <th>理论时间</th>
+                                <th>相对性能</th>
+                                <th>能效考虑</th>
+                            </tr>
+                            <tr>
+                                <td>CPU</td>
+                                <td>0.698ms</td>
+                                <td>1×</td>
+                                <td>~150W</td>
+                            </tr>
+                            <tr>
+                                <td>GPU</td>
+                                <td>0.140ms</td>
+                                <td>5×</td>
+                                <td>~300W</td>
+                            </tr>
+                            <tr>
+                                <td>NPU</td>
+                                <td>0.016ms</td>
+                                <td>43.6×</td>
+                                <td>~50W</td>
+                            </tr>
+                        </table>
+                        
+                        <p><strong>关键洞察：</strong>NPU通过专用架构和低精度计算，在矩阵运算上实现了数量级的性能和能效提升。</p>
+                    </div>
+                </div>
+                
+                <div class="question">
+                    <p><strong>题目1.2：</strong>分析Google TPU v1的脉动阵列架构。如果要计算一个矩阵乘法 C[4×4] = A[4×3] × B[3×4]，描述数据在4×4脉动阵列中的流动过程。</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <p><strong>答案：</strong></p>
+                        <p>脉动阵列的核心思想是让数据像心脏搏动一样有节奏地在处理单元间流动。对于矩阵乘法，采用输出固定（Output Stationary）模式：</p>
+                        
+                        <div class="code-block">
+// 脉动阵列布局（每个PE计算一个输出元素）
+PE[0][0] → PE[0][1] → PE[0][2] → PE[0][3]
+   ↓          ↓          ↓          ↓
+PE[1][0] → PE[1][1] → PE[1][2] → PE[1][3]
+   ↓          ↓          ↓          ↓
+PE[2][0] → PE[2][1] → PE[2][2] → PE[2][3]
+   ↓          ↓          ↓          ↓
+PE[3][0] → PE[3][1] → PE[3][2] → PE[3][3]
+
+// PE[i][j]负责计算C[i][j] = Σ A[i][k] × B[k][j]
+                        </div>
+                        
+                        <p><strong>数据流动时序：</strong></p>
+                        <ul>
+                            <li><strong>时刻0：</strong>A[0][0]进入PE[0][0]，B[0][0]进入PE[0][0]</li>
+                            <li><strong>时刻1：</strong>
+                                <ul>
+                                    <li>A[0][0]→PE[0][1]，A[1][0]→PE[1][0]</li>
+                                    <li>B[0][0]→PE[1][0]，B[0][1]→PE[0][1]</li>
+                                    <li>A[0][1]和B[1][0]进入边界PE</li>
+                                </ul>
+                            </li>
+                            <li><strong>时刻2-5：</strong>数据继续按对角线方向流动</li>
+                            <li><strong>时刻6：</strong>所有PE完成计算，C矩阵就绪</li>
+                        </ul>
+                        
+                        <p><strong>关键特性：</strong></p>
+                        <ul>
+                            <li>每个数据只从内存读取一次</li>
+                            <li>数据在PE间传递，最大化复用</li>
+                            <li>所有PE同时工作，利用率接近100%</li>
+                            <li>延迟确定：M+N+K-2个周期</li>
+                        </ul>
+                    </div>
+                </div>
+                
+                <div class="question">
+                    <p><strong>题目1.3：</strong>某边缘设备需要运行一个轻量级CNN模型，推理延迟要求<10ms，功耗预算<5W。请分析应该选择哪种处理器，并说明理由。</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <p><strong>答案：</strong></p>
+                        <p>对于边缘AI推理场景，NPU是最佳选择。具体分析如下：</p>
+                        
+                        <p><strong>1. 排除CPU：</strong></p>
+                        <ul>
+                            <li>移动CPU（如ARM Cortex-A78）AI性能约10 GOPS</li>
+                            <li>运行轻量CNN（如MobileNet）需要约300 MOPS</li>
+                            <li>推理时间：30ms+，无法满足延迟要求</li>
+                        </ul>
+                        
+                        <p><strong>2. 排除GPU：</strong></p>
+                        <ul>
+                            <li>移动GPU功耗通常>10W（如移动版RTX）</li>
+                            <li>即使是集成GPU，全速运行也会超过5W预算</li>
+                            <li>且GPU在低功耗模式下性能急剧下降</li>
+                        </ul>
+                        
+                        <p><strong>3. NPU方案：</strong></p>
+                        <ul>
+                            <li>选择：高通Hexagon DSP或华为NPU</li>
+                            <li>性能：2-4 TOPS @ INT8</li>
+                            <li>功耗：1-3W</li>
+                            <li>推理延迟：3-5ms（MobileNet v2）</li>
+                        </ul>
+                        
+                        <p><strong>优化建议：</strong></p>
+                        <ul>
+                            <li>模型量化到INT8，性能提升4倍</li>
+                            <li>使用深度可分离卷积减少计算量</li>
+                            <li>启用NPU的动态功耗管理</li>
+                            <li>批处理大小设为1，优化延迟</li>
+                        </ul>
+                    </div>
+                </div>
+                
+                <div class="question">
+                    <p><strong>题目1.4：</strong>比较分析Systolic Array（脉动阵列）和Dataflow Architecture（数据流架构）两种NPU设计范式的优缺点。</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <p><strong>答案：</strong></p>
+                        
+                        <div class="table-wrapper">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>特性</th>
+                                        <th>脉动阵列</th>
+                                        <th>数据流架构</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td>基本原理</td>
+                                        <td>数据在PE阵列中有节奏地流动</td>
+                                        <td>计算由数据可用性驱动</td>
+                                    </tr>
+                                    <tr>
+                                        <td>控制复杂度</td>
+                                        <td>简单，全局同步</td>
+                                        <td>复杂，分布式控制</td>
+                                    </tr>
+                                    <tr>
+                                        <td>数据复用</td>
+                                        <td>高，系统性复用</td>
+                                        <td>灵活，按需复用</td>
+                                    </tr>
+                                    <tr>
+                                        <td>硬件利用率</td>
+                                        <td>规则运算接近100%</td>
+                                        <td>取决于数据依赖</td>
+                                    </tr>
+                                    <tr>
+                                        <td>灵活性</td>
+                                        <td>低，固定数据流模式</td>
+                                        <td>高，支持不规则计算</td>
+                                    </tr>
+                                    <tr>
+                                        <td>功耗特性</td>
+                                        <td>稳定，易预测</td>
+                                        <td>动态，细粒度控制</td>
+                                    </tr>
+                                    <tr>
+                                        <td>适用场景</td>
+                                        <td>密集矩阵运算</td>
+                                        <td>稀疏/不规则运算</td>
+                                    </tr>
+                                    <tr>
+                                        <td>典型代表</td>
+                                        <td>Google TPU</td>
+                                        <td>Graphcore IPU</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        
+                        <p><strong>设计选择建议：</strong></p>
+                        <ul>
+                            <li><strong>选择脉动阵列：</strong>当工作负载以密集矩阵运算为主，如CNN推理</li>
+                            <li><strong>选择数据流架构：</strong>当需要支持动态图、稀疏网络或新型算子</li>
+                            <li><strong>混合架构：</strong>结合两者优点，如华为达芬奇架构</li>
+                        </ul>
+                    </div>
+                </div>
+                
+                <div class="question">
+                    <p><strong>题目1.5：</strong>设计一个简化的NPU指令集架构（ISA），需要支持矩阵乘法、卷积、激活函数和数据搬运。列出关键指令并说明设计理由。</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <p><strong>答案：</strong></p>
+                        <p>NPU ISA设计原则：高层抽象、以张量为操作单位、隐藏硬件细节。</p>
+                        
+                        <div class="code-block">
+// NPU指令集架构设计
+// 指令格式：[OPCODE(8)] [DEST(8)] [SRC1(8)] [SRC2(8)] [PARAMS(32)]
+
+// 1. 计算指令
+TMUL    dest, src1, src2, [M, K, N]      // 张量矩阵乘法
+TCONV   dest, input, weight, [params]     // 张量卷积
+TPOOL   dest, src, [type, kernel, stride] // 池化操作
+TACT    dest, src, [function_id]          // 激活函数
+
+// 2. 数据传输指令  
+TLOAD   dest, [mem_addr, shape, layout]   // 从内存加载张量
+TSTORE  src, [mem_addr, shape, layout]    // 存储张量到内存
+TMOVE   dest, src                          // 片上张量搬移
+TCAST   dest, src, [from_type, to_type]   // 数据类型转换
+
+// 3. 控制指令
+TSYNC                                      // 同步屏障
+TLOOP   count, [body_addr]                // 张量操作循环
+TJUMP   condition, [target_addr]          // 条件跳转
+
+// 4. 配置指令
+TCONF   [param_type, value]               // 配置硬件参数
+TQUANT  [scale, zero_point]               // 配置量化参数
+                        </div>
+                        
+                        <p><strong>设计理由：</strong></p>
+                        <ol>
+                            <li><strong>张量级操作：</strong>一条指令完成整个张量运算，减少指令数量</li>
+                            <li><strong>参数化设计：</strong>通过参数字段支持不同大小和配置</li>
+                            <li><strong>内存抽象：</strong>自动处理数据布局转换和对齐</li>
+                            <li><strong>硬件加速：</strong>每条指令映射到专门的硬件单元</li>
+                            <li><strong>简化编程：</strong>编译器容易生成，硬件容易解码</li>
+                        </ol>
+                        
+                        <p><strong>示例程序：</strong></p>
+                        <div class="code-block">
+// 执行一个卷积层
+TLOAD   T0, [input_addr, (1,224,224,3), NHWC]    // 加载输入
+TLOAD   T1, [weight_addr, (64,3,3,3), OIHW]      // 加载权重  
+TCONV   T2, T0, T1, [stride=1, pad=1]            // 卷积运算
+TACT    T3, T2, [RELU]                            // ReLU激活
+TSTORE  T3, [output_addr, (1,224,224,64), NHWC]  // 存储结果
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="section-summary">
+                <h4>本章小结</h4>
+                <ul>
+                    <li><strong>NPU是AI时代的专用处理器，</strong>通过领域专用架构设计实现了极致的性能和能效</li>
+                    <li><strong>相比CPU和GPU，</strong>NPU在AI推理任务上有10-100倍的能效优势</li>
+                    <li><strong>脉动阵列、数据流架构、3D堆叠</strong>等创新技术推动了NPU的快速发展</li>
+                    <li><strong>主流NPU产品</strong>包括Google TPU、华为Ascend、寒武纪MLU等，各有特色</li>
+                    <li><strong>NPU的未来</strong>将向着更高能效、更大规模、更智能化的方向发展</li>
+                </ul>
             </div>
         </div>
 
