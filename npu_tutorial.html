@@ -13995,6 +13995,1366 @@ West |D    NPU Core     C| (PCIe)
                 </div>
             </div>
         </section>
+
+        <div id="chapter9" class="chapter">
+            <h2>第9章：软件栈与编译优化</h2>
+            
+            <p>NPU的硬件性能再强，也需要优秀的软件栈才能充分发挥。本章深入探讨NPU软件栈的架构设计、编译优化技术，以及如何实现高效的软硬件协同。</p>
+
+            <h3>9.1 NPU软件栈架构</h3>
+            
+            <p>NPU软件栈是连接上层AI框架和底层硬件的桥梁。一个完整的软件栈需要处理模型解析、图优化、算子映射、内存管理、指令生成等复杂任务。</p>
+
+            <h4>9.1.1 软件栈分层架构</h4>
+            <div class="code-block">
+// NPU软件栈典型架构
+┌─────────────────────────────────────────┐
+│      AI Frameworks (TensorFlow/PyTorch) │
+├─────────────────────────────────────────┤
+│         Graph Representation            │
+│         (ONNX, TorchScript)            │
+├─────────────────────────────────────────┤
+│         High-Level IR (HIR)            │
+│     (Graph Optimization Pass)          │
+├─────────────────────────────────────────┤
+│         Mid-Level IR (MIR)             │
+│    (Operator Fusion, Tiling)          │
+├─────────────────────────────────────────┤
+│         Low-Level IR (LIR)             │
+│   (Memory Allocation, Scheduling)      │
+├─────────────────────────────────────────┤
+│      Code Generation Backend           │
+│    (NPU Instruction Generation)        │
+├─────────────────────────────────────────┤
+│         Runtime Library                │
+│    (Execution, Memory Management)      │
+├─────────────────────────────────────────┤
+│         NPU Hardware                   │
+└─────────────────────────────────────────┘
+            </div>
+
+            <h4>9.1.2 关键组件功能</h4>
+            <div class="info-box">
+                <p><strong>软件栈核心组件：</strong></p>
+                <ul>
+                    <li><strong>前端解析器：</strong>支持多种框架模型格式，转换为统一的内部表示</li>
+                    <li><strong>图优化器：</strong>执行算子融合、常量折叠、死代码消除等优化</li>
+                    <li><strong>量化工具：</strong>支持训练后量化和量化感知训练</li>
+                    <li><strong>内存分配器：</strong>优化片上内存使用，最小化数据搬移</li>
+                    <li><strong>指令调度器：</strong>生成高效的指令序列，最大化硬件利用率</li>
+                    <li><strong>运行时系统：</strong>管理任务执行、内存管理、多核调度</li>
+                </ul>
+            </div>
+
+            <h3>9.2 计算图优化</h3>
+            
+            <p>计算图优化是NPU编译器的核心功能，通过各种变换技术，将原始的计算图转换为更适合硬件执行的形式。</p>
+
+            <h4>9.2.1 算子融合技术</h4>
+            <div class="code-block">
+// 算子融合示例：Conv + BN + ReLU融合
+// 原始计算图
+class OriginalGraph:
+    def forward(self, x):
+        # 卷积操作
+        conv_out = self.conv2d(x)  # 需要写回内存
+        # 批归一化
+        bn_out = self.batch_norm(conv_out)  # 需要读写内存
+        # 激活函数
+        relu_out = self.relu(bn_out)  # 需要读写内存
+        return relu_out
+
+// 融合后的计算图
+class FusedGraph:
+    def forward(self, x):
+        # 融合的算子，一次内存读写完成三个操作
+        return self.conv_bn_relu_fused(x)
+
+// 融合实现（伪代码）
+def conv_bn_relu_fused(input, conv_weight, bn_params):
+    # 在NPU内部完成所有计算
+    for (oc in output_channels):
+        for (oh, ow in output_positions):
+            # 卷积计算
+            acc = 0
+            for (ic, kh, kw in kernel):
+                acc += input[ic][oh+kh][ow+kw] * conv_weight[oc][ic][kh][kw]
+            
+            # BN计算（在线融合）
+            acc = (acc - bn_mean[oc]) / sqrt(bn_var[oc] + eps)
+            acc = acc * bn_scale[oc] + bn_bias[oc]
+            
+            # ReLU计算
+            output[oc][oh][ow] = max(0, acc)
+    
+    return output
+            </div>
+
+            <h4>9.2.2 图优化策略</h4>
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>优化技术</th>
+                            <th>描述</th>
+                            <th>收益</th>
+                            <th>适用场景</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>算子融合</td>
+                            <td>将多个算子合并为一个</td>
+                            <td>减少内存访问</td>
+                            <td>连续的element-wise操作</td>
+                        </tr>
+                        <tr>
+                            <td>常量折叠</td>
+                            <td>预计算常量表达式</td>
+                            <td>减少运行时计算</td>
+                            <td>包含常量的子图</td>
+                        </tr>
+                        <tr>
+                            <td>公共子表达式消除</td>
+                            <td>复用相同计算结果</td>
+                            <td>减少重复计算</td>
+                            <td>重复的计算模式</td>
+                        </tr>
+                        <tr>
+                            <td>死代码消除</td>
+                            <td>删除无用计算</td>
+                            <td>减少计算量</td>
+                            <td>条件分支、未使用输出</td>
+                        </tr>
+                        <tr>
+                            <td>布局转换优化</td>
+                            <td>优化数据布局</td>
+                            <td>提高访存效率</td>
+                            <td>不同算子间的数据传递</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <h3>9.3 内存优化技术</h3>
+            
+            <p>内存带宽是NPU的主要瓶颈。高效的内存管理和优化技术对于发挥NPU性能至关重要。</p>
+
+            <h4>9.3.1 内存分配策略</h4>
+            <div class="code-block">
+// 内存池管理器
+class MemoryPoolManager {
+public:
+    struct MemoryBlock {
+        size_t offset;
+        size_t size;
+        int lifetime_start;
+        int lifetime_end;
+        bool is_allocated;
+    };
+    
+    // 内存分配算法
+    size_t allocate(size_t size, int start_time, int end_time) {
+        // 1. 首先尝试复用已释放的内存块
+        for (auto& block : memory_blocks) {
+            if (!block.is_allocated && 
+                block.size >= size &&
+                (block.lifetime_end < start_time || 
+                 block.lifetime_start > end_time)) {
+                block.is_allocated = true;
+                block.lifetime_start = start_time;
+                block.lifetime_end = end_time;
+                return block.offset;
+            }
+        }
+        
+        // 2. 分配新的内存块
+        size_t offset = findFreeSpace(size);
+        memory_blocks.push_back({
+            offset, size, start_time, end_time, true
+        });
+        
+        return offset;
+    }
+    
+    // 内存碎片整理
+    void defragment() {
+        // 基于生命周期的内存压缩
+        std::sort(memory_blocks.begin(), memory_blocks.end(),
+            [](const MemoryBlock& a, const MemoryBlock& b) {
+                return a.lifetime_start < b.lifetime_start;
+            });
+        
+        // 重新排列内存布局
+        size_t current_offset = 0;
+        for (auto& block : memory_blocks) {
+            if (block.is_allocated) {
+                block.offset = current_offset;
+                current_offset += block.size;
+            }
+        }
+    }
+    
+private:
+    std::vector<MemoryBlock> memory_blocks;
+    size_t total_memory_size;
+};
+            </div>
+
+            <h4>9.3.2 数据布局优化</h4>
+            <div class="info-box">
+                <p><strong>常见数据布局格式：</strong></p>
+                <ul>
+                    <li><strong>NCHW：</strong>批次-通道-高度-宽度，适合卷积运算</li>
+                    <li><strong>NHWC：</strong>批次-高度-宽度-通道，适合深度可分离卷积</li>
+                    <li><strong>NC/HW[n]c：</strong>分块布局，适合SIMD指令</li>
+                    <li><strong>Custom Layout：</strong>NPU特定的优化布局</li>
+                </ul>
+            </div>
+
+            <div class="code-block">
+// 数据布局转换优化
+class LayoutOptimizer {
+public:
+    // 分析最优布局
+    Layout analyzeOptimalLayout(const Graph& graph) {
+        std::map<Layout, float> layout_costs;
+        
+        // 遍历所有可能的布局
+        for (auto layout : {NCHW, NHWC, NCHW16c, CUSTOM}) {
+            float cost = 0;
+            
+            // 计算每个算子的执行成本
+            for (auto& op : graph.operators) {
+                cost += getOperatorCost(op, layout);
+            }
+            
+            // 计算布局转换成本
+            for (auto& edge : graph.edges) {
+                if (requiresTranspose(edge, layout)) {
+                    cost += getTransposeCost(edge);
+                }
+            }
+            
+            layout_costs[layout] = cost;
+        }
+        
+        // 返回成本最低的布局
+        return std::min_element(layout_costs.begin(), layout_costs.end(),
+            [](const auto& a, const auto& b) {
+                return a.second < b.second;
+            })->first;
+    }
+    
+    // 插入布局转换节点
+    void insertLayoutTransforms(Graph& graph, const Layout& target_layout) {
+        for (auto& edge : graph.edges) {
+            if (edge.src_layout != target_layout || 
+                edge.dst_layout != target_layout) {
+                // 插入转换节点
+                auto transform_op = createTransformOp(
+                    edge.src_layout, target_layout
+                );
+                graph.insertOperator(transform_op, edge);
+            }
+        }
+    }
+};
+            </div>
+
+            <h3>9.4 指令生成与调度</h3>
+            
+            <p>将优化后的计算图转换为NPU可执行的指令序列，需要考虑指令级并行、数据依赖关系和硬件资源约束。</p>
+
+            <h4>9.4.1 指令调度算法</h4>
+            <div class="code-block">
+// NPU指令调度器
+class InstructionScheduler {
+public:
+    struct Instruction {
+        enum Type { LOAD, STORE, COMPUTE, SYNC };
+        Type type;
+        int cycle_start;
+        int cycle_end;
+        std::vector<int> dependencies;
+        std::vector<int> resources;  // 使用的硬件资源
+    };
+    
+    // 基于资源约束的指令调度
+    std::vector<Instruction> schedule(const std::vector<Instruction>& instructions) {
+        // 构建依赖图
+        DependencyGraph dep_graph(instructions);
+        
+        // 初始化就绪队列
+        std::priority_queue<int, std::vector<int>, ComparePriority> ready_queue;
+        std::vector<bool> scheduled(instructions.size(), false);
+        std::vector<int> finish_time(instructions.size(), 0);
+        
+        // 将无依赖的指令加入就绪队列
+        for (int i = 0; i < instructions.size(); i++) {
+            if (dep_graph.getPredecessors(i).empty()) {
+                ready_queue.push(i);
+            }
+        }
+        
+        // 资源使用表
+        ResourceTable resource_table;
+        int current_cycle = 0;
+        
+        // 调度主循环
+        while (!ready_queue.empty()) {
+            int inst_id = ready_queue.top();
+            ready_queue.pop();
+            
+            // 找到最早可以执行的时间
+            int earliest_start = current_cycle;
+            for (int pred : dep_graph.getPredecessors(inst_id)) {
+                earliest_start = std::max(earliest_start, finish_time[pred]);
+            }
+            
+            // 检查资源冲突
+            int start_cycle = resource_table.findAvailableSlot(
+                instructions[inst_id].resources, 
+                earliest_start,
+                instructions[inst_id].cycle_end - instructions[inst_id].cycle_start
+            );
+            
+            // 分配资源并调度
+            instructions[inst_id].cycle_start = start_cycle;
+            instructions[inst_id].cycle_end = start_cycle + 
+                (instructions[inst_id].cycle_end - instructions[inst_id].cycle_start);
+            
+            resource_table.allocate(instructions[inst_id]);
+            scheduled[inst_id] = true;
+            finish_time[inst_id] = instructions[inst_id].cycle_end;
+            
+            // 更新就绪队列
+            for (int succ : dep_graph.getSuccessors(inst_id)) {
+                bool ready = true;
+                for (int pred : dep_graph.getPredecessors(succ)) {
+                    if (!scheduled[pred]) {
+                        ready = false;
+                        break;
+                    }
+                }
+                if (ready) {
+                    ready_queue.push(succ);
+                }
+            }
+        }
+        
+        return instructions;
+    }
+};
+            </div>
+
+            <h4>9.4.2 指令级优化</h4>
+            <div class="warning-box">
+                <p><strong>NPU指令优化技术：</strong></p>
+                <ul>
+                    <li><strong>指令合并：</strong>将多个简单指令合并为复合指令</li>
+                    <li><strong>软件流水线：</strong>重叠不同迭代的指令执行</li>
+                    <li><strong>双缓冲：</strong>计算与数据传输并行</li>
+                    <li><strong>向量化：</strong>利用SIMD指令处理多个数据</li>
+                </ul>
+            </div>
+
+            <h3>9.5 量化与精度优化</h3>
+            
+            <p>量化是将浮点模型转换为低精度定点模型的过程，对于NPU的性能和功耗优化至关重要。</p>
+
+            <h4>9.5.1 量化方法</h4>
+            <div class="code-block">
+// 量化框架实现
+class QuantizationFramework {
+public:
+    // 对称量化
+    struct SymmetricQuantizer {
+        float scale;
+        int bit_width;
+        
+        int quantize(float value) {
+            int q_max = (1 << (bit_width - 1)) - 1;
+            int q_min = -(1 << (bit_width - 1));
+            
+            int q_value = std::round(value / scale);
+            return std::clamp(q_value, q_min, q_max);
+        }
+        
+        float dequantize(int q_value) {
+            return q_value * scale;
+        }
+        
+        // 计算量化参数
+        void calibrate(const std::vector<float>& values) {
+            float max_abs = 0;
+            for (float v : values) {
+                max_abs = std::max(max_abs, std::abs(v));
+            }
+            
+            int q_max = (1 << (bit_width - 1)) - 1;
+            scale = max_abs / q_max;
+        }
+    };
+    
+    // 非对称量化
+    struct AsymmetricQuantizer {
+        float scale;
+        int zero_point;
+        int bit_width;
+        
+        int quantize(float value) {
+            int q_max = (1 << bit_width) - 1;
+            int q_min = 0;
+            
+            int q_value = std::round(value / scale + zero_point);
+            return std::clamp(q_value, q_min, q_max);
+        }
+        
+        float dequantize(int q_value) {
+            return (q_value - zero_point) * scale;
+        }
+        
+        // 计算量化参数
+        void calibrate(const std::vector<float>& values) {
+            float min_val = *std::min_element(values.begin(), values.end());
+            float max_val = *std::max_element(values.begin(), values.end());
+            
+            int q_max = (1 << bit_width) - 1;
+            scale = (max_val - min_val) / q_max;
+            zero_point = std::round(-min_val / scale);
+        }
+    };
+    
+    // 混合精度量化
+    void mixedPrecisionQuantize(Graph& graph) {
+        // 敏感度分析
+        std::map<std::string, float> layer_sensitivity;
+        
+        for (auto& layer : graph.layers) {
+            // 计算每层对精度的敏感度
+            float sensitivity = analyzeSensitivity(layer);
+            layer_sensitivity[layer.name] = sensitivity;
+        }
+        
+        // 基于敏感度分配位宽
+        for (auto& layer : graph.layers) {
+            if (layer_sensitivity[layer.name] > 0.9) {
+                layer.quantization_bits = 16;  // 高敏感度层使用高精度
+            } else if (layer_sensitivity[layer.name] > 0.5) {
+                layer.quantization_bits = 8;
+            } else {
+                layer.quantization_bits = 4;   // 低敏感度层使用低精度
+            }
+        }
+    }
+};
+            </div>
+
+            <h4>9.5.2 量化感知训练</h4>
+            <div class="code-block">
+// 量化感知训练（QAT）实现
+class QuantizationAwareTraining {
+public:
+    // 伪量化操作
+    class FakeQuantize : public torch::nn::Module {
+    public:
+        FakeQuantize(int num_bits, bool symmetric = true) 
+            : num_bits_(num_bits), symmetric_(symmetric) {
+            if (symmetric_) {
+                q_max_ = (1 << (num_bits_ - 1)) - 1;
+                q_min_ = -(1 << (num_bits_ - 1));
+            } else {
+                q_max_ = (1 << num_bits_) - 1;
+                q_min_ = 0;
+            }
+        }
+        
+        torch::Tensor forward(torch::Tensor x) {
+            // 计算scale和zero_point
+            torch::Tensor scale, zero_point;
+            
+            if (symmetric_) {
+                auto max_val = x.abs().max();
+                scale = max_val / q_max_;
+                zero_point = torch::zeros_like(scale);
+            } else {
+                auto min_val = x.min();
+                auto max_val = x.max();
+                scale = (max_val - min_val) / (q_max_ - q_min_);
+                zero_point = torch::round(-min_val / scale);
+            }
+            
+            // 量化和反量化
+            auto x_int = torch::round(x / scale + zero_point);
+            x_int = torch::clamp(x_int, q_min_, q_max_);
+            auto x_dequant = (x_int - zero_point) * scale;
+            
+            // 直通估计器（STE）用于反向传播
+            return x + (x_dequant - x).detach();
+        }
+        
+    private:
+        int num_bits_;
+        bool symmetric_;
+        float q_max_, q_min_;
+    };
+    
+    // 量化感知的卷积层
+    class QuantizedConv2d : public torch::nn::Module {
+    public:
+        QuantizedConv2d(int in_channels, int out_channels, 
+                       int kernel_size, int weight_bits = 8, 
+                       int activation_bits = 8) {
+            conv_ = torch::nn::Conv2d(
+                torch::nn::Conv2dOptions(in_channels, out_channels, kernel_size)
+            );
+            
+            weight_quantizer_ = FakeQuantize(weight_bits, true);
+            activation_quantizer_ = FakeQuantize(activation_bits, false);
+            
+            register_module("conv", conv_);
+        }
+        
+        torch::Tensor forward(torch::Tensor x) {
+            // 量化输入激活
+            x = activation_quantizer_->forward(x);
+            
+            // 量化权重
+            auto quantized_weight = weight_quantizer_->forward(conv_->weight);
+            
+            // 执行量化卷积
+            return torch::nn::functional::conv2d(
+                x, quantized_weight, conv_->bias,
+                conv_->options.stride(),
+                conv_->options.padding()
+            );
+        }
+        
+    private:
+        torch::nn::Conv2d conv_{nullptr};
+        std::shared_ptr<FakeQuantize> weight_quantizer_;
+        std::shared_ptr<FakeQuantize> activation_quantizer_;
+    };
+};
+            </div>
+
+            <h3>9.6 运行时系统设计</h3>
+            
+            <p>运行时系统负责在NPU上执行编译后的模型，管理内存、调度任务、处理异常等。</p>
+
+            <h4>9.6.1 运行时架构</h4>
+            <div class="code-block">
+// NPU运行时系统
+class NPURuntime {
+public:
+    // 执行上下文
+    class ExecutionContext {
+    public:
+        ExecutionContext(NPUDevice* device) : device_(device) {
+            // 初始化内存池
+            memory_pool_ = std::make_unique<MemoryPool>(
+                device->getMemorySize()
+            );
+            
+            // 创建命令队列
+            cmd_queue_ = device->createCommandQueue();
+            
+            // 初始化性能计数器
+            perf_counter_ = std::make_unique<PerformanceCounter>();
+        }
+        
+        // 执行推理
+        void execute(const CompiledModel& model, 
+                    const std::vector<Tensor>& inputs,
+                    std::vector<Tensor>& outputs) {
+            // 1. 分配输入/输出内存
+            auto input_buffers = allocateBuffers(inputs);
+            auto output_buffers = allocateBuffers(model.getOutputShapes());
+            
+            // 2. 拷贝输入数据到设备
+            for (size_t i = 0; i < inputs.size(); i++) {
+                device_->copyHostToDevice(
+                    inputs[i].data(), 
+                    input_buffers[i],
+                    inputs[i].size()
+                );
+            }
+            
+            // 3. 构建执行命令
+            CommandBuffer cmd_buffer;
+            buildCommandBuffer(cmd_buffer, model, input_buffers, output_buffers);
+            
+            // 4. 提交执行
+            auto fence = cmd_queue_->submit(cmd_buffer);
+            
+            // 5. 等待完成
+            fence->wait();
+            
+            // 6. 拷贝输出数据
+            outputs.resize(output_buffers.size());
+            for (size_t i = 0; i < outputs.size(); i++) {
+                outputs[i].resize(model.getOutputShapes()[i]);
+                device_->copyDeviceToHost(
+                    output_buffers[i],
+                    outputs[i].data(),
+                    outputs[i].size()
+                );
+            }
+            
+            // 7. 更新性能统计
+            perf_counter_->update(fence->getTimingInfo());
+        }
+        
+    private:
+        NPUDevice* device_;
+        std::unique_ptr<MemoryPool> memory_pool_;
+        std::unique_ptr<CommandQueue> cmd_queue_;
+        std::unique_ptr<PerformanceCounter> perf_counter_;
+        
+        void buildCommandBuffer(CommandBuffer& cmd_buffer,
+                              const CompiledModel& model,
+                              const std::vector<DeviceBuffer>& inputs,
+                              const std::vector<DeviceBuffer>& outputs) {
+            // 遍历所有指令
+            for (const auto& inst : model.getInstructions()) {
+                switch (inst.opcode) {
+                    case OPCODE_CONV:
+                        cmd_buffer.addConvCommand(inst.params, 
+                            inputs[inst.input_idx],
+                            outputs[inst.output_idx]);
+                        break;
+                    
+                    case OPCODE_GEMM:
+                        cmd_buffer.addGemmCommand(inst.params,
+                            inputs[inst.input_idx],
+                            outputs[inst.output_idx]);
+                        break;
+                    
+                    case OPCODE_ACTIVATION:
+                        cmd_buffer.addActivationCommand(inst.params,
+                            inputs[inst.input_idx],
+                            outputs[inst.output_idx]);
+                        break;
+                    
+                    case OPCODE_SYNC:
+                        cmd_buffer.addSyncCommand();
+                        break;
+                }
+            }
+        }
+    };
+    
+    // 多核调度器
+    class MultiCoreScheduler {
+    public:
+        void scheduleSubgraphs(const Graph& graph, 
+                             std::vector<NPUCore*>& cores) {
+            // 1. 图分割
+            auto subgraphs = partitionGraph(graph, cores.size());
+            
+            // 2. 负载均衡
+            balanceWorkload(subgraphs, cores);
+            
+            // 3. 生成同步点
+            insertSynchronization(subgraphs);
+            
+            // 4. 分配到各个核心
+            for (size_t i = 0; i < cores.size(); i++) {
+                cores[i]->loadSubgraph(subgraphs[i]);
+            }
+        }
+        
+    private:
+        std::vector<Subgraph> partitionGraph(const Graph& graph, int num_cores) {
+            // 基于最小割的图分割算法
+            GraphPartitioner partitioner;
+            return partitioner.partition(graph, num_cores);
+        }
+        
+        void balanceWorkload(std::vector<Subgraph>& subgraphs,
+                           const std::vector<NPUCore*>& cores) {
+            // 估算每个子图的计算量
+            std::vector<float> workloads(subgraphs.size());
+            for (size_t i = 0; i < subgraphs.size(); i++) {
+                workloads[i] = estimateWorkload(subgraphs[i]);
+            }
+            
+            // 动态调整分割边界
+            while (!isBalanced(workloads)) {
+                adjustPartitionBoundaries(subgraphs, workloads);
+            }
+        }
+    };
+};
+            </div>
+
+            <h3>9.7 性能分析与调优</h3>
+            
+            <p>性能分析工具帮助开发者理解模型在NPU上的执行情况，找出性能瓶颈并进行优化。</p>
+
+            <h4>9.7.1 性能分析框架</h4>
+            <div class="code-block">
+// 性能分析器
+class NPUProfiler {
+public:
+    struct LayerProfile {
+        std::string name;
+        float compute_time_ms;
+        float memory_read_mb;
+        float memory_write_mb;
+        float utilization;
+        std::map<std::string, float> metrics;
+    };
+    
+    // 开始性能分析
+    void startProfiling() {
+        // 清空之前的数据
+        layer_profiles_.clear();
+        
+        // 启用硬件性能计数器
+        enableHardwareCounters();
+        
+        // 记录开始时间
+        start_time_ = getCurrentTime();
+        is_profiling_ = true;
+    }
+    
+    // 记录层执行信息
+    void recordLayer(const std::string& layer_name,
+                    const ExecutionStats& stats) {
+        if (!is_profiling_) return;
+        
+        LayerProfile profile;
+        profile.name = layer_name;
+        profile.compute_time_ms = stats.compute_cycles / clock_freq_ * 1000;
+        profile.memory_read_mb = stats.memory_read_bytes / (1024.0 * 1024.0);
+        profile.memory_write_mb = stats.memory_write_bytes / (1024.0 * 1024.0);
+        
+        // 计算硬件利用率
+        profile.utilization = calculateUtilization(stats);
+        
+        // 收集详细指标
+        profile.metrics["mac_efficiency"] = 
+            stats.mac_operations / (stats.compute_cycles * max_mac_per_cycle_);
+        profile.metrics["memory_bandwidth_utilization"] = 
+            (stats.memory_read_bytes + stats.memory_write_bytes) / 
+            (stats.compute_cycles / clock_freq_ * memory_bandwidth_);
+        profile.metrics["cache_hit_rate"] = 
+            stats.cache_hits / float(stats.cache_hits + stats.cache_misses);
+        
+        layer_profiles_.push_back(profile);
+    }
+    
+    // 生成性能报告
+    void generateReport(const std::string& filename) {
+        std::ofstream report(filename);
+        
+        report << "NPU Performance Analysis Report\n";
+        report << "================================\n\n";
+        
+        // 总体统计
+        float total_time = 0;
+        float total_memory = 0;
+        for (const auto& profile : layer_profiles_) {
+            total_time += profile.compute_time_ms;
+            total_memory += profile.memory_read_mb + profile.memory_write_mb;
+        }
+        
+        report << "Total Execution Time: " << total_time << " ms\n";
+        report << "Total Memory Transfer: " << total_memory << " MB\n";
+        report << "Average Throughput: " << 
+                  (total_ops_ / total_time / 1e6) << " GOPS\n\n";
+        
+        // 层级详细信息
+        report << "Layer-wise Breakdown:\n";
+        report << std::setw(30) << "Layer" 
+               << std::setw(15) << "Time (ms)"
+               << std::setw(15) << "Time %"
+               << std::setw(15) << "Utilization"
+               << std::setw(20) << "Memory (MB)\n";
+        
+        for (const auto& profile : layer_profiles_) {
+            report << std::setw(30) << profile.name
+                   << std::setw(15) << std::fixed << std::setprecision(2) 
+                   << profile.compute_time_ms
+                   << std::setw(15) << std::fixed << std::setprecision(1)
+                   << (profile.compute_time_ms / total_time * 100) << "%"
+                   << std::setw(15) << std::fixed << std::setprecision(1)
+                   << (profile.utilization * 100) << "%"
+                   << std::setw(20) << std::fixed << std::setprecision(2)
+                   << (profile.memory_read_mb + profile.memory_write_mb) << "\n";
+        }
+        
+        // 性能瓶颈分析
+        report << "\nPerformance Bottlenecks:\n";
+        identifyBottlenecks(report);
+        
+        // 优化建议
+        report << "\nOptimization Suggestions:\n";
+        generateOptimizationSuggestions(report);
+    }
+    
+private:
+    std::vector<LayerProfile> layer_profiles_;
+    bool is_profiling_ = false;
+    double start_time_;
+    float clock_freq_;
+    float memory_bandwidth_;
+    int max_mac_per_cycle_;
+    int64_t total_ops_;
+    
+    void identifyBottlenecks(std::ofstream& report) {
+        // 找出执行时间最长的层
+        auto max_time_layer = std::max_element(
+            layer_profiles_.begin(), layer_profiles_.end(),
+            [](const LayerProfile& a, const LayerProfile& b) {
+                return a.compute_time_ms < b.compute_time_ms;
+            });
+        
+        report << "- Slowest layer: " << max_time_layer->name 
+               << " (" << max_time_layer->compute_time_ms << " ms)\n";
+        
+        // 找出内存带宽受限的层
+        for (const auto& profile : layer_profiles_) {
+            if (profile.metrics.at("memory_bandwidth_utilization") > 0.8) {
+                report << "- Memory bandwidth bottleneck in layer: " 
+                       << profile.name << "\n";
+            }
+        }
+        
+        // 找出利用率低的层
+        for (const auto& profile : layer_profiles_) {
+            if (profile.utilization < 0.5) {
+                report << "- Low utilization in layer: " << profile.name 
+                       << " (" << (profile.utilization * 100) << "%)\n";
+            }
+        }
+    }
+};
+            </div>
+
+            <div class="exercise">
+                <h4>练习题集 9</h4>
+                
+                <div class="question">
+                    <p><strong>题目9.1：</strong>解释算子融合的原理，并举例说明Conv+BN+ReLU融合能带来多少内存访问的节省。</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <p><strong>答案：</strong></p>
+                        <p>算子融合原理：将多个连续的算子合并为一个复合算子，在片上完成所有计算，避免中间结果写回内存。</p>
+                        
+                        <p>Conv+BN+ReLU融合的内存访问分析：</p>
+                        <p>假设特征图大小为H×W×C，数据类型为FP16（2字节）</p>
+                        
+                        <p><strong>未融合时：</strong></p>
+                        <ul>
+                            <li>Conv输出写内存：H×W×C×2 字节</li>
+                            <li>BN读Conv输出：H×W×C×2 字节</li>
+                            <li>BN输出写内存：H×W×C×2 字节</li>
+                            <li>ReLU读BN输出：H×W×C×2 字节</li>
+                            <li>ReLU输出写内存：H×W×C×2 字节</li>
+                            <li>总计：5×H×W×C×2 字节</li>
+                        </ul>
+                        
+                        <p><strong>融合后：</strong></p>
+                        <ul>
+                            <li>只有最终结果写内存：H×W×C×2 字节</li>
+                            <li>节省：80%的内存访问</li>
+                        </ul>
+                        
+                        <p>实际例子：224×224×64的特征图，可节省约24.5MB的内存访问。</p>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目9.2：</strong>设计一个简单的内存分配算法，支持tensor的生命周期管理和内存复用。</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <div class="code-block">
+class SimpleMemoryAllocator {
+private:
+    struct Allocation {
+        size_t offset;
+        size_t size;
+        int start_time;
+        int end_time;
+    };
+    
+    size_t total_size;
+    std::vector<Allocation> allocations;
+    
+public:
+    SimpleMemoryAllocator(size_t size) : total_size(size) {}
+    
+    size_t allocate(size_t size, int start, int end) {
+        // 按结束时间排序现有分配
+        std::sort(allocations.begin(), allocations.end(),
+            [](const Allocation& a, const Allocation& b) {
+                return a.end_time < b.end_time;
+            });
+        
+        // 尝试找到可复用的内存块
+        for (auto& alloc : allocations) {
+            if (alloc.end_time <= start && alloc.size >= size) {
+                // 复用这块内存
+                size_t offset = alloc.offset;
+                alloc.start_time = start;
+                alloc.end_time = end;
+                alloc.size = size;
+                return offset;
+            }
+        }
+        
+        // 找不到可复用的，分配新的
+        size_t offset = 0;
+        if (!allocations.empty()) {
+            // 找到第一个空闲位置
+            std::sort(allocations.begin(), allocations.end(),
+                [](const Allocation& a, const Allocation& b) {
+                    return a.offset < b.offset;
+                });
+            
+            for (size_t i = 0; i < allocations.size(); i++) {
+                if (i == 0 && allocations[i].offset >= size) {
+                    offset = 0;
+                    break;
+                }
+                if (i < allocations.size() - 1) {
+                    size_t gap_start = allocations[i].offset + allocations[i].size;
+                    size_t gap_end = allocations[i+1].offset;
+                    if (gap_end - gap_start >= size) {
+                        offset = gap_start;
+                        break;
+                    }
+                } else {
+                    offset = allocations[i].offset + allocations[i].size;
+                }
+            }
+        }
+        
+        // 检查是否超出总内存
+        if (offset + size > total_size) {
+            throw std::runtime_error("Out of memory");
+        }
+        
+        allocations.push_back({offset, size, start, end});
+        return offset;
+    }
+    
+    size_t getMaxMemoryUsage() {
+        size_t max_usage = 0;
+        
+        // 对每个时间点计算内存使用
+        std::set<int> time_points;
+        for (const auto& alloc : allocations) {
+            time_points.insert(alloc.start_time);
+            time_points.insert(alloc.end_time);
+        }
+        
+        for (int t : time_points) {
+            size_t usage = 0;
+            for (const auto& alloc : allocations) {
+                if (alloc.start_time <= t && t < alloc.end_time) {
+                    usage = std::max(usage, alloc.offset + alloc.size);
+                }
+            }
+            max_usage = std::max(max_usage, usage);
+        }
+        
+        return max_usage;
+    }
+};
+                        </div>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目9.3：</strong>实现一个简单的INT8量化函数，支持对称和非对称量化模式。</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <div class="code-block">
+#include <vector>
+#include <algorithm>
+#include <cmath>
+
+class INT8Quantizer {
+public:
+    enum Mode { SYMMETRIC, ASYMMETRIC };
+    
+private:
+    Mode mode;
+    float scale;
+    int zero_point;
+    
+public:
+    INT8Quantizer(Mode m = SYMMETRIC) : mode(m), scale(1.0f), zero_point(0) {}
+    
+    // 校准：计算量化参数
+    void calibrate(const std::vector<float>& data) {
+        if (data.empty()) return;
+        
+        float min_val = *std::min_element(data.begin(), data.end());
+        float max_val = *std::max_element(data.begin(), data.end());
+        
+        if (mode == SYMMETRIC) {
+            // 对称量化：zero_point = 0
+            float max_abs = std::max(std::abs(min_val), std::abs(max_val));
+            scale = max_abs / 127.0f;
+            zero_point = 0;
+        } else {
+            // 非对称量化
+            scale = (max_val - min_val) / 255.0f;
+            zero_point = std::round(-min_val / scale);
+            zero_point = std::clamp(zero_point, 0, 255);
+        }
+    }
+    
+    // 量化单个值
+    int8_t quantize(float value) const {
+        int quantized = std::round(value / scale + zero_point);
+        
+        if (mode == SYMMETRIC) {
+            return static_cast<int8_t>(std::clamp(quantized, -128, 127));
+        } else {
+            // 非对称量化结果需要转换到int8范围
+            quantized = std::clamp(quantized, 0, 255);
+            return static_cast<int8_t>(quantized - 128);
+        }
+    }
+    
+    // 反量化
+    float dequantize(int8_t qvalue) const {
+        if (mode == SYMMETRIC) {
+            return qvalue * scale;
+        } else {
+            // 非对称量化需要先转换回uint8范围
+            int value = static_cast<int>(qvalue) + 128;
+            return (value - zero_point) * scale;
+        }
+    }
+    
+    // 量化向量
+    std::vector<int8_t> quantizeVector(const std::vector<float>& input) const {
+        std::vector<int8_t> output(input.size());
+        for (size_t i = 0; i < input.size(); i++) {
+            output[i] = quantize(input[i]);
+        }
+        return output;
+    }
+    
+    // 计算量化误差
+    float calculateError(const std::vector<float>& original) const {
+        float total_error = 0;
+        for (float val : original) {
+            float dequantized = dequantize(quantize(val));
+            total_error += std::pow(val - dequantized, 2);
+        }
+        return std::sqrt(total_error / original.size());
+    }
+    
+    // 获取量化参数
+    float getScale() const { return scale; }
+    int getZeroPoint() const { return zero_point; }
+};
+
+// 使用示例
+void testQuantization() {
+    std::vector<float> weights = {-1.5, -0.5, 0.0, 0.5, 1.5, 2.0};
+    
+    // 对称量化
+    INT8Quantizer sym_quantizer(INT8Quantizer::SYMMETRIC);
+    sym_quantizer.calibrate(weights);
+    
+    std::cout << "Symmetric Quantization:\n";
+    std::cout << "Scale: " << sym_quantizer.getScale() << "\n";
+    for (float w : weights) {
+        int8_t q = sym_quantizer.quantize(w);
+        float dq = sym_quantizer.dequantize(q);
+        std::cout << w << " -> " << (int)q << " -> " << dq << "\n";
+    }
+    
+    // 非对称量化
+    INT8Quantizer asym_quantizer(INT8Quantizer::ASYMMETRIC);
+    asym_quantizer.calibrate(weights);
+    
+    std::cout << "\nAsymmetric Quantization:\n";
+    std::cout << "Scale: " << asym_quantizer.getScale() 
+              << ", Zero Point: " << asym_quantizer.getZeroPoint() << "\n";
+    for (float w : weights) {
+        int8_t q = asym_quantizer.quantize(w);
+        float dq = asym_quantizer.dequantize(q);
+        std::cout << w << " -> " << (int)q << " -> " << dq << "\n";
+    }
+}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目9.4：</strong>设计一个简单的指令调度算法，考虑数据依赖和硬件资源限制。</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <div class="code-block">
+#include <vector>
+#include <queue>
+#include <unordered_set>
+
+class SimpleScheduler {
+public:
+    struct Instruction {
+        int id;
+        std::string type;  // "LOAD", "COMPUTE", "STORE"
+        std::vector<int> dependencies;
+        int cycles;        // 执行所需周期数
+        int resource;      // 所需资源类型
+    };
+    
+    struct ScheduledInst {
+        int id;
+        int start_cycle;
+        int end_cycle;
+    };
+    
+private:
+    // 资源使用表
+    std::vector<std::vector<bool>> resource_table;
+    int num_resources;
+    int max_cycles;
+    
+public:
+    SimpleScheduler(int resources, int cycles) 
+        : num_resources(resources), max_cycles(cycles) {
+        resource_table.resize(resources, std::vector<bool>(cycles, false));
+    }
+    
+    std::vector<ScheduledInst> schedule(const std::vector<Instruction>& instructions) {
+        std::vector<ScheduledInst> result;
+        std::vector<int> finish_time(instructions.size(), -1);
+        std::vector<bool> scheduled(instructions.size(), false);
+        
+        // 构建依赖关系图
+        std::vector<std::vector<int>> dependents(instructions.size());
+        std::vector<int> in_degree(instructions.size(), 0);
+        
+        for (size_t i = 0; i < instructions.size(); i++) {
+            in_degree[i] = instructions[i].dependencies.size();
+            for (int dep : instructions[i].dependencies) {
+                dependents[dep].push_back(i);
+            }
+        }
+        
+        // 初始化就绪队列（使用贪心策略：优先调度执行时间长的）
+        auto cmp = [&](int a, int b) {
+            return instructions[a].cycles < instructions[b].cycles;
+        };
+        std::priority_queue<int, std::vector<int>, decltype(cmp)> ready_queue(cmp);
+        
+        // 将无依赖的指令加入就绪队列
+        for (size_t i = 0; i < instructions.size(); i++) {
+            if (in_degree[i] == 0) {
+                ready_queue.push(i);
+            }
+        }
+        
+        // 调度主循环
+        while (!ready_queue.empty()) {
+            int inst_id = ready_queue.top();
+            ready_queue.pop();
+            
+            const auto& inst = instructions[inst_id];
+            
+            // 计算最早开始时间
+            int earliest_start = 0;
+            for (int dep : inst.dependencies) {
+                if (finish_time[dep] != -1) {
+                    earliest_start = std::max(earliest_start, finish_time[dep]);
+                }
+            }
+            
+            // 找到可用的资源时间槽
+            int start_cycle = findAvailableSlot(inst.resource, 
+                                               earliest_start, 
+                                               inst.cycles);
+            
+            if (start_cycle == -1 || start_cycle + inst.cycles > max_cycles) {
+                // 资源不足或超出最大周期限制
+                continue;
+            }
+            
+            // 分配资源
+            for (int c = start_cycle; c < start_cycle + inst.cycles; c++) {
+                resource_table[inst.resource][c] = true;
+            }
+            
+            // 记录调度结果
+            finish_time[inst_id] = start_cycle + inst.cycles;
+            scheduled[inst_id] = true;
+            result.push_back({inst_id, start_cycle, start_cycle + inst.cycles});
+            
+            // 更新依赖关系，将新的就绪指令加入队列
+            for (int dependent : dependents[inst_id]) {
+                in_degree[dependent]--;
+                if (in_degree[dependent] == 0) {
+                    ready_queue.push(dependent);
+                }
+            }
+        }
+        
+        return result;
+    }
+    
+private:
+    int findAvailableSlot(int resource, int start_time, int duration) {
+        for (int t = start_time; t <= max_cycles - duration; t++) {
+            bool available = true;
+            for (int d = 0; d < duration; d++) {
+                if (resource_table[resource][t + d]) {
+                    available = false;
+                    break;
+                }
+            }
+            if (available) {
+                return t;
+            }
+        }
+        return -1;
+    }
+};
+
+// 使用示例
+void testScheduler() {
+    SimpleScheduler scheduler(3, 20);  // 3个资源，20个周期
+    
+    std::vector<SimpleScheduler::Instruction> instructions = {
+        {0, "LOAD", {}, 2, 0},          // 加载数据
+        {1, "LOAD", {}, 2, 0},          // 加载权重
+        {2, "COMPUTE", {0, 1}, 5, 1},   // 计算，依赖0和1
+        {3, "COMPUTE", {0, 1}, 5, 1},   // 并行计算
+        {4, "STORE", {2}, 2, 2},        // 存储结果
+        {5, "STORE", {3}, 2, 2}         // 存储结果
+    };
+    
+    auto scheduled = scheduler.schedule(instructions);
+    
+    std::cout << "Scheduled Instructions:\n";
+    for (const auto& s : scheduled) {
+        std::cout << "Instruction " << s.id 
+                  << ": Cycle " << s.start_cycle 
+                  << " - " << s.end_cycle << "\n";
+    }
+}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目9.5：</strong>分析并优化一个简单的神经网络层在NPU上的内存访问模式。</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <p><strong>答案：</strong></p>
+                        <p>以1×1卷积层为例（通常用于通道数变换）：</p>
+                        
+                        <p><strong>原始实现的内存访问模式：</strong></p>
+                        <div class="code-block">
+// 朴素实现
+for (int n = 0; n < N; n++) {           // batch
+    for (int oc = 0; oc < C_out; oc++) { // 输出通道
+        for (int h = 0; h < H; h++) {     // 高度
+            for (int w = 0; w < W; w++) { // 宽度
+                float sum = 0;
+                for (int ic = 0; ic < C_in; ic++) { // 输入通道
+                    sum += input[n][ic][h][w] * weight[oc][ic];
+                }
+                output[n][oc][h][w] = sum;
+            }
+        }
+    }
+}
+
+// 内存访问分析：
+// - Input: 每个元素被读取C_out次
+// - Weight: 每个元素被读取N×H×W次
+// - 缓存不友好：跳跃式访问input的通道维度
+                        </div>
+                        
+                        <p><strong>优化后的实现：</strong></p>
+                        <div class="code-block">
+// 优化1：循环重排序，提高数据局部性
+for (int n = 0; n < N; n++) {
+    for (int h = 0; h < H; h++) {
+        for (int w = 0; w < W; w++) {
+            // 将输入数据加载到本地缓存
+            float local_input[C_in];
+            for (int ic = 0; ic < C_in; ic++) {
+                local_input[ic] = input[n][ic][h][w];
+            }
+            
+            // 计算所有输出通道
+            for (int oc = 0; oc < C_out; oc++) {
+                float sum = 0;
+                // 向量化计算
+                #pragma unroll 8
+                for (int ic = 0; ic < C_in; ic++) {
+                    sum += local_input[ic] * weight[oc][ic];
+                }
+                output[n][oc][h][w] = sum;
+            }
+        }
+    }
+}
+
+// 优化2：分块（tiling）处理
+const int TILE_H = 8, TILE_W = 8, TILE_OC = 32;
+
+for (int n = 0; n < N; n++) {
+    for (int h_tile = 0; h_tile < H; h_tile += TILE_H) {
+        for (int w_tile = 0; w_tile < W; w_tile += TILE_W) {
+            for (int oc_tile = 0; oc_tile < C_out; oc_tile += TILE_OC) {
+                // 预加载权重到片上缓存
+                float local_weight[TILE_OC][C_in];
+                for (int oc = 0; oc < TILE_OC && oc_tile + oc < C_out; oc++) {
+                    for (int ic = 0; ic < C_in; ic++) {
+                        local_weight[oc][ic] = weight[oc_tile + oc][ic];
+                    }
+                }
+                
+                // 处理tile内的计算
+                for (int h = 0; h < TILE_H && h_tile + h < H; h++) {
+                    for (int w = 0; w < TILE_W && w_tile + w < W; w++) {
+                        // 加载输入到寄存器
+                        float local_input[C_in];
+                        for (int ic = 0; ic < C_in; ic++) {
+                            local_input[ic] = input[n][ic][h_tile + h][w_tile + w];
+                        }
+                        
+                        // 计算输出
+                        for (int oc = 0; oc < TILE_OC && oc_tile + oc < C_out; oc++) {
+                            float sum = 0;
+                            for (int ic = 0; ic < C_in; ic++) {
+                                sum += local_input[ic] * local_weight[oc][ic];
+                            }
+                            output[n][oc_tile + oc][h_tile + h][w_tile + w] = sum;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+                        </div>
+                        
+                        <p><strong>优化效果分析：</strong></p>
+                        <ul>
+                            <li>输入数据复用：从C_out次降低到C_out/TILE_OC次</li>
+                            <li>权重数据复用：在每个tile内复用TILE_H×TILE_W次</li>
+                            <li>缓存友好：连续访问，提高缓存命中率</li>
+                            <li>向量化友好：内层循环可以SIMD并行</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
         
     </div>
 
