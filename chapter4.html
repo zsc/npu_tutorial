@@ -527,6 +527,41 @@
             <h4>4.1.1 基础MAC单元</h4>
             <p>MAC (Multiply-Accumulate) 是NPU的基本计算单元，执行 <code>C = C + A × B</code> 运算。</p>
             
+            <p>计算核心的演进历程是一部从标量到张量的进化史。就像生物从单细胞进化到多细胞生物，计算单元也经历了类似的演变：</p>
+            
+            <div class="info-box">
+                <p><strong>计算架构的演进历程</strong></p>
+                <ol>
+                    <li><strong>标量处理器时代（1980s-1990s）：</strong> 一次处理一个数据，就像用筷子一粒一粒地夹米饭。</li>
+                    <li><strong>SIMD时代（2000s）：</strong> 引入向量处理，一条指令处理多个数据，就像用勺子一次舀起多粒米饭。代表作：Intel SSE/AVX。</li>
+                    <li><strong>GPU时代（2010s）：</strong> 大规模并行处理，成千上万个核心同时工作，像一个巨大的自助餐厅，数百个人同时进餐。</li>
+                    <li><strong>NPU/TPU时代（2015s-）：</strong> 专为矩阵运算优化，引入脉动阵列和张量核心，就像高度自动化的寿司传送带，每个工位专注完成特定任务。</li>
+                    <li><strong>未来：模拟计算与存内计算（2025+）：</strong> 打破冯·诺依曼架构，计算与存储融合，像大脑神经元般工作。</li>
+                </ol>
+            </div>
+            
+            <h5>为什么MAC如此重要？</h5>
+            
+            <p>深度学习的本质是大量的矩阵运算，而矩阵运算可以分解为无数个MAC操作。一个简单的全连接层计算可以表示为：</p>
+            
+            <div class="code-block">
+// 全连接层的数学表达
+Y = W × X + B
+
+// 分解为MAC操作
+for i in 0..M:
+    for j in 0..N:
+        Y[i] = 0
+        for k in 0..K:
+            Y[i] += W[i][k] * X[k][j]  // 这就是MAC操作
+        Y[i] += B[i]
+
+// 一个1024×1024的矩阵乘法需要：
+// 1024³ = 1,073,741,824 次MAC操作！
+            </div>
+            
+            <p>这就是为什么现代AI芯片都在疯狂堆砌MAC单元的原因。Google TPU v1拥有65,536个MAC单元，而最新的NVIDIA H100则包含了数百万个等效MAC单元。</p>
+            
             <div class="code-block">
 // 优化的流水线MAC单元 - Verilog版本
 module MAC_Unit #(
@@ -659,6 +694,13 @@ object MACUnitGen extends App {
             </div>
 
             <h4>4.1.2 多精度MAC设计</h4>
+            
+            <p>多精度设计是现代NPU的关键创新。不同的应用场景对精度的需求差异巨大，就像不同的工作需要不同精度的工具——外科手术需要手术刀，而拆墙只需要大锤。</p>
+            
+            <h5>功耗-性能-面积（PPA）权衡的具体数字</h5>
+            
+            <p>以下是基于7nm工艺的实际测量数据（相对于FP32）：</p>
+            
             <div class="table-wrapper">
                 <table>
                     <thead>
@@ -702,6 +744,28 @@ object MACUnitGen extends App {
                     </tbody>
                 </table>
             </div>
+            
+            <div class="warning-box">
+                <p><strong>设计陷阱：精度选择的常见误区</strong></p>
+                <ul>
+                    <li><strong>误区1：越低精度越好。</strong> 实际上，过度量化会导致精度崩塌。例如，ResNet-50在INT8下精度损失小于1%，但在INT4下可能损失超过5%。</li>
+                    <li><strong>误区2：统一精度设计。</strong> 现代NPU采用混合精度，例如权重用INT4，激活值用INT8，累加器用INT32，这样可以在保持精度的同时最大化效率。</li>
+                    <li><strong>误区3：忽视量化友好性。</strong> 不是所有模型都适合量化。Transformer类模型对量化更敏感，需要特殊的量化策略。</li>
+                </ul>
+            </div>
+            
+            <h5>真实世界的创新案例</h5>
+            
+            <p><strong>1. NVIDIA Tensor Core的演进：</strong></p>
+            <ul>
+                <li><strong>第一代（Volta）：</strong> 只支持FP16混合精度，4×4×4矩阵运算</li>
+                <li><strong>第二代（Turing）：</strong> 增加INT8/INT4支持，引入稀疏加速</li>
+                <li><strong>第三代（Ampere）：</strong> 支持TF32（19位精度），结构化稀疏2:4</li>
+                <li><strong>第四代（Hopper）：</strong> 支持FP8（E4M3/E5M2），8×8×16大矩阵</li>
+            </ul>
+            
+            <p><strong>2. Google TPU的极简主义：</strong></p>
+            <p>TPU v1只支持INT8，通过大规模并行（256×256阵列）弥补精度限制。这种"以量取胜"的策略在推理场景下取得了巨大成功，但在训练场景下不得不在TPU v2中加入FP16/BF16支持。</p>
 
             <h4>4.1.3 MAC阵列组织</h4>
             <div class="code-block">
@@ -751,6 +815,12 @@ endmodule
             <h4>4.2.1 脉动阵列原理</h4>
             <p>脉动阵列通过数据在PE间的有节奏流动，实现高效的数据复用和规则的计算模式。</p>
             
+            <p>脉动阵列（Systolic Array）这个名字来源于心脏的脉动（Systole）。就像心脏有节奏地泵血，数据在脉动阵列中也以固定的节奏在处理单元间流动。这个优雅的概念由孔祥重（H.T. Kung）教授在1978年提出，如今已成为AI芯片的核心架构。</p>
+            
+            <h5>脉动阵列的天才之处</h5>
+            
+            <p>想象一个汽车装配线，每个工人负责安装一个部件。传统方法是每个工人都要去仓库取零件，效率低下。脉动阵列的做法是：让零件在传送带上流动，每个工人从传送带取用需要的零件，完成自己的工作后，将半成品继续传递下去。</p>
+            
             <div class="info-box">
                 <p><strong>核心优势：</strong></p>
                 <ul>
@@ -760,6 +830,56 @@ endmodule
                     <li>易于扩展：模块化设计便于增加阵列规模</li>
                 </ul>
             </div>
+            
+            <h5>三种经典的脉动阵列变体</h5>
+            
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>类型</th>
+                            <th>数据流动方式</th>
+                            <th>适用场景</th>
+                            <th>代表实现</th>
+                            <th>优缺点</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Weight Stationary (WS)</strong></td>
+                            <td>权重固定在PE中，输入和输出流动</td>
+                            <td>卷积层（权重复用高）</td>
+                            <td>Google TPU v1</td>
+                            <td>✓ 权重只加载一次<br>✗ 输入/输出带宽需求高</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Output Stationary (OS)</strong></td>
+                            <td>输出固定在PE中累加，输入和权重流动</td>
+                            <td>大矩阵乘法</td>
+                            <td>NVIDIA CUTLASS</td>
+                            <td>✓ 减少部分和读写<br>✗ 权重带宽需求高</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Row Stationary (RS)</strong></td>
+                            <td>一行数据驻留，其他数据流动</td>
+                            <td>通用计算</td>
+                            <td>MIT Eyeriss</td>
+                            <td>✓ 灵活性高<br>✗ 控制复杂</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <h5>现代变体和创新</h5>
+            
+            <p><strong>1. Google TPU的超大规模脉动阵列：</strong></p>
+            <p>TPU v1使用256×256的脉动阵列，这在当时是革命性的。为了支撑如此大的阵列，Google设计了独特的"脉动数据调度器"，能够精确控制数据流入的时机，确保计算单元的利用率接近100%。</p>
+            
+            <p><strong>2. Groq的时间编排架构（TSP）：</strong></p>
+            <p>Groq将脉动阵列的概念推向极致，整个芯片就是一个巨大的脉动系统。他们抛弃了传统的缓存，所有数据移动都是预先编排好的，像一场精心排练的交响乐。</p>
+            
+            <p><strong>3. Cerebras的晶圆级脉动：</strong></p>
+            <p>Cerebras WSE-2包含850,000个核心，整个晶圆就是一个巨大的2D脉动阵列。数据可以在任意方向流动，突破了传统芯片的边界限制。</p>
 
             <h4>4.2.2 Weight Stationary脉动阵列实现</h4>
             <div class="code-block">
@@ -1548,6 +1668,54 @@ class OutputStationarySystolicArray(arraySize: Int = 4, dataWidth: Int = 8, accW
             <h4>4.3.1 SIMD架构设计</h4>
             <p>向量处理单元采用SIMD架构，支持非线性激活、池化等操作。</p>
             
+            <p>虽然MAC阵列负责了深度学习中90%以上的计算量，但剩下的10%——激活函数、归一化、池化等操作——同样至关重要。这就像做菜，炒菜占了大部分时间，但最后的调味决定了菜品的成败。</p>
+            
+            <h5>为什么需要专门的向量处理单元？</h5>
+            
+            <p>让MAC阵列处理激活函数就像让推土机绣花——不是不能，而是大材小用。向量处理单元（VPU）专门为这些"轻量级但高频"的操作优化：</p>
+            
+            <div class="info-box">
+                <p><strong>VPU vs MAC阵列的设计权衡</strong></p>
+                <table>
+                    <tr>
+                        <th>特性</th>
+                        <th>MAC阵列</th>
+                        <th>向量处理单元</th>
+                    </tr>
+                    <tr>
+                        <td>计算模式</td>
+                        <td>固定的乘加运算</td>
+                        <td>灵活的算术/逻辑运算</td>
+                    </tr>
+                    <tr>
+                        <td>数据访问</td>
+                        <td>规则的矩阵访问</td>
+                        <td>灵活的向量访问</td>
+                    </tr>
+                    <tr>
+                        <td>功能单元</td>
+                        <td>大量简单MAC</td>
+                        <td>少量复杂ALU</td>
+                    </tr>
+                    <tr>
+                        <td>面积效率</td>
+                        <td>高（90%用于计算）</td>
+                        <td>中（需要多种功能）</td>
+                    </tr>
+                </table>
+            </div>
+            
+            <h5>现代VPU的关键创新</h5>
+            
+            <p><strong>1. 可重构计算管线：</strong></p>
+            <p>Intel的Nervana NNP包含了可重构的向量单元，可以根据不同的激活函数动态改变计算管线。例如，计算ReLU时只需要比较器，而计算GELU时需要完整的超越函数单元。</p>
+            
+            <p><strong>2. 查找表（LUT）加速：</strong></p>
+            <p>对于复杂的激活函数（如Sigmoid、Tanh），许多NPU使用查找表+插值的方法。例如，将函数域分成256段，存储每段的起点值和斜率，通过线性插值获得结果。这种方法可以将计算延迟从20+周期降低到2-3周期。</p>
+            
+            <p><strong>3. 融合操作（Fused Operations）：</strong></p>
+            <p>现代Transformer大量使用LayerNorm + Activation的组合。高级VPU可以将这些操作融合在一个流水线中完成，避免中间结果写回内存。NVIDIA的Hopper架构可以将整个"Linear-LayerNorm-GeLU"序列融合执行。</p>
+            
             <div class="code-block">
 module VectorProcessingUnit #(
     parameter VECTOR_WIDTH = 16,    // 向量宽度（并行度）
@@ -1829,6 +1997,50 @@ TPU_VPU_MUL      output, vr3, vr5        // 乘法归一化
             
             <h4>4.4.1 Tensor Core设计</h4>
             <p>Tensor Core是一种执行小矩阵乘法的专用单元，提供更高的计算密度。</p>
+            
+            <p>Tensor Core代表了计算单元设计的范式转变：从标量运算到矩阵运算。这就像从单兵作战升级到集团军作战——虽然单个士兵的能力没有显著提升，但协同作战的效率呈指数级增长。</p>
+            
+            <h5>Tensor Core的革命性创新</h5>
+            
+            <div class="info-box">
+                <p><strong>传统MAC vs Tensor Core的根本区别</strong></p>
+                <ul>
+                    <li><strong>传统MAC：</strong> C += A × B（标量运算）</li>
+                    <li><strong>Tensor Core：</strong> D = A×B + C（矩阵运算，如4×4×4）</li>
+                    <li><strong>计算密度提升：</strong> 单个Tensor Core完成64次乘法和48次加法，而占用的面积仅为64个独立MAC的约40%</li>
+                    <li><strong>能效提升：</strong> 批量操作减少了控制开销，能效提升2-3倍</li>
+                </ul>
+            </div>
+            
+            <h5>实现挑战与解决方案</h5>
+            
+            <p><strong>挑战1：数据对齐和填充</strong></p>
+            <p>Tensor Core要求输入矩阵的维度是特定倍数（如4、8、16）。对于不规则尺寸，需要填充（padding），这会浪费计算资源。解决方案包括：</p>
+            <ul>
+                <li>动态尺寸支持：NVIDIA Ampere引入了更灵活的维度支持</li>
+                <li>稀疏加速：利用结构化稀疏跳过填充的零值计算</li>
+            </ul>
+            
+            <p><strong>挑战2：数据供给带宽</strong></p>
+            <p>一个4×4×4的Tensor Core每周期需要32个输入数据。传统的寄存器文件设计无法提供如此高的带宽。创新解决方案：</p>
+            <ul>
+                <li>分布式寄存器文件：每个Tensor Core配备专用的局部寄存器</li>
+                <li>寄存器缓存层次：引入L0.5级寄存器缓存</li>
+                <li>数据预取和双缓冲：隐藏数据加载延迟</li>
+            </ul>
+            
+            <h5>未来趋势：从数字到模拟</h5>
+            
+            <p>下一代计算单元正在探索模拟计算和存内计算：</p>
+            
+            <p><strong>1. 模拟矩阵乘法器（Analog Matrix Multiplier）：</strong></p>
+            <p>利用欧姆定律和基尔霍夫定律，在模拟域完成矩阵运算。Mythic和Syntiant等公司已经实现了商用产品，能效提升100倍以上。</p>
+            
+            <p><strong>2. 存内计算（Compute-in-Memory）：</strong></p>
+            <p>将计算单元直接集成到存储阵列中，彻底消除数据移动。三星的HBM-PIM和SK海力士的AiM都是这个方向的先驱。</p>
+            
+            <p><strong>3. 光子计算（Photonic Computing）：</strong></p>
+            <p>利用光的干涉实现矩阵乘法，理论上可以达到光速计算。Lightmatter公司的Envise芯片已经展示了这种可能性。</p>
             
             <div class="code-block">
 // 4x4x4 Tensor Core实现

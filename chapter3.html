@@ -545,6 +545,45 @@ NPU系统架构层次：
 └─────────────────────────────────────────┘
             </div>
 
+            <p>NPU的整体架构不仅仅是计算、存储和控制单元的简单堆砌，它更像一个为数据流精心设计的"智能工厂"。其核心设计哲学是<strong>最大化数据复用</strong>并<strong>最小化数据搬运</strong>，因为在现代NPU中，数据移动的能耗和时间开销远超计算本身。</p>
+
+            <h5>核心组件的协同工作流（以一次卷积计算为例）</h5>
+            
+            <p>一个典型的NPU工作流程可以类比为一座高效的<strong>汽车装配厂</strong>：</p>
+            
+            <ol>
+                <li><strong>任务下发 (Instruction)：</strong> CPU（工厂总指挥）向NPU的<strong>主控单元 (Control Unit)</strong> 下达指令："开始生产一批特定型号的汽车（执行一个卷积层计算）"。主控单元是"车间主任"，负责解析蓝图（神经网络指令），协调整个生产流程。</li>
+                
+                <li><strong>原料入库 (Data Fetch)：</strong> 主控单元命令 <strong>DMA（Direct Memory Access）控制器</strong>——工厂的"智能物流系统"——从外部DRAM（"中央仓库"）中提取所需的<strong>输入特征图 (Input Feature Maps)</strong> 和<strong>权重 (Weights)</strong>。DMA将这些"原材料"高效地运送到位于NPU内部的<strong>片上缓冲 (On-chip Buffer)</strong>，即"车间暂存区"。
+                    <div class="info-box">
+                        <p><strong>设计洞察 (Why DMA?)：</strong> 为什么不让CPU亲自搬运数据？因为CPU是高薪聘请的"总工程师"，让他处理这种重复性的搬运工作是巨大的资源浪费。DMA这个自动化物流系统可以在计算单元工作的同时，并行地准备下一批数据，完美隐藏了数据传输的延迟，确保生产线"永不停工"。</p>
+                    </div>
+                </li>
+                
+                <li><strong>车间生产 (Computation)：</strong> 数据准备就绪后，主控单元激活<strong>计算单元阵列 (PE Array)</strong>——"装配线上的机器人矩阵"。成百上千的PE（Processing Element）就像机器人手臂，每个PE从其旁边的<strong>本地存储 (Local Storage)</strong>（"零件盒"）中取出数据，执行大量的<strong>乘加 (MAC) 运算</strong>。
+                    <div class="info-box">
+                        <p><strong>协同方式 (How they interact?)：</strong> 数据在PE阵列中以一种称为<strong>"脉动阵列 (Systolic Array)"</strong> 的模式高效流动。数据像心跳的脉搏一样，在一个时钟周期内从一个PE传递到下一个PE，并在此过程中完成计算。这种方式最大化了每个数据片段的复用次数，例如，一个权重数据可以与一行输入数据依次进行计算，而无需重复从内存中读取。</p>
+                    </div>
+                </li>
+                
+                <li><strong>成品出库 (Result Write-back)：</strong> 计算完成后，<strong>部分和 (Partial Sums)</strong> 或最终的<strong>输出特征图 (Output Feature Maps)</strong> 被写回到片上缓冲。当一个计算任务块（Tile）完成后，DMA再次启动，将这些"半成品"或"成品"运回DRAM"中央仓库"，或直接送往下一个"生产车间"（下一个神经网络层）。</li>
+            </ol>
+
+            <h5>真实世界案例</h5>
+            <ul>
+                <li><strong>Google TPU (Tensor Processing Unit):</strong> 其核心就是巨大的脉动阵列。在TPU v1中，拥有一个256x256的MAC阵列，能够在一个时钟周期内完成65,536次运算。它的设计哲学就是"为卷积而生"，通过巨大的片上内存（例如，TPU v2/v3拥有数十MB的HBM）和高效的数据流，确保这个庞大的计算阵列始终"吃饱喝足"。</li>
+                
+                <li><strong>NVIDIA A100 GPU:</strong> 虽然是GPU，但其Tensor Core就是专为AI设计的NPU模块。它采用更灵活的架构，支持不同精度（TF32, FP16, INT8）的计算，并引入了<strong>"结构化稀疏 (Structured Sparsity)"</strong> 支持，这是一种软硬件协同设计，能在不牺牲太多精度的情况下，让计算性能翻倍。</li>
+            </ul>
+
+            <div class="warning-box">
+                <p><strong>常见陷阱与规避：</strong></p>
+                <ul>
+                    <li><strong>陷阱：唯"峰值算力 (Peak TOPs)"论。</strong> 很多NPU宣传极高的理论算力，但如果内存带宽跟不上，计算单元大部分时间都在"挨饿"，实际利用率（Utilization）可能不足20%。</li>
+                    <li><strong>规避：</strong> 评估NPU时，应关注<strong>算力/内存带宽比 (Compute/Memory Ratio)</strong>。一个健康的比例才能确保高效率。对于设计者而言，必须通过精巧的数据流（Dataflow）和缓存（Tiling）策略来弥合计算与访存之间的鸿沟。</li>
+                </ul>
+            </div>
+
             <h4>3.1.2 设计考虑因素</h4>
             <div class="table-wrapper">
                 <table>
@@ -622,6 +661,70 @@ Compute Cluster
                 </ul>
             </div>
 
+            <p>计算单元（PE）是NPU的"肌肉"，其设计的核心是在<strong>性能、功耗、面积和精度</strong>之间做出明智的权衡。</p>
+
+            <h5>核心权衡：数据精度 (Precision Trade-offs)</h5>
+            
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>精度</th>
+                            <th>优点</th>
+                            <th>缺点</th>
+                            <th>典型应用</th>
+                            <th>类比：画画用的铅笔</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>FP32</strong> (32位浮点)</td>
+                            <td>精度高，动态范围广，是算法研究的黄金标准</td>
+                            <td>面积大，功耗高，速度慢</td>
+                            <td>模型训练，科学计算</td>
+                            <td><strong>HB美术铅笔</strong>：笔芯软，细节丰富，但消耗快且昂贵。</td>
+                        </tr>
+                        <tr>
+                            <td><strong>FP16</strong> (16位浮点)</td>
+                            <td>性能、功耗、面积是FP32的2-4倍</td>
+                            <td>动态范围小，易出现"下溢"或"上溢"</td>
+                            <td>AI推理，部分训练任务</td>
+                            <td><strong>2H工程铅笔</strong>：笔芯硬，线条清晰，但细节表现力不如HB。</td>
+                        </tr>
+                        <tr>
+                            <td><strong>BF16</strong> (16位脑浮点)</td>
+                            <td><strong>谷歌首创</strong>。动态范围与FP32相同，但精度较低</td>
+                            <td>牺牲了尾数精度</td>
+                            <td>AI训练与推理（TPU标配）</td>
+                            <td><strong>特制铅笔</strong>：和HB一样粗，但笔芯颗粒感更强。能画出轮廓，但不适合精细素描。</td>
+                        </tr>
+                        <tr>
+                            <td><strong>INT8</strong> (8位整数)</td>
+                            <td><strong>性能、功耗、面积最优</strong> (相比FP32有4-16倍优势)</td>
+                            <td>动态范围极小，需"量化"操作，可能损失精度</td>
+                            <td><strong>AI推理</strong> (特别是边缘端)</td>
+                            <td><strong>儿童蜡笔</strong>：非常节省，颜色鲜艳，但无法画出平滑的渐变和细节。</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="info-box">
+                <p><strong>设计洞察与具体数字：</strong></p>
+                <ul>
+                    <li><strong>面积与功耗：</strong> 一个FP32的MAC单元所需的芯片面积大约是INT8 MAC单元的<strong>4倍</strong>，功耗则可能是其<strong>6倍</strong>以上。这意味着在相同的芯片面积下，您可以塞进4倍数量的INT8计算单元，获得远超FP32的理论性能。</li>
+                    <li><strong>量化 (Quantization) 的重要性：</strong> 使用INT8/INT4精度的关键在于量化技术。这个过程就像将一幅色彩丰富的油画（FP32）转换成一幅只有256种颜色的GIF图（INT8）。如果调色板（量化参数）选择得好，肉眼几乎看不出差别（精度损失小）。如果选择得不好，图像就会严重失真（精度崩塌）。因此，NPU的工具链（Compiler & SDK）在量化支持上的成熟度至关重要。</li>
+                </ul>
+            </div>
+
+            <h5>实用考量：稀疏计算 (Sparsity Support)</h5>
+            
+            <ul>
+                <li><strong>为什么重要？</strong> 神经网络模型经过"剪枝 (Pruning)"后，其权重矩阵中含有大量的零。执行"乘以零"的运算是纯粹的浪费。</li>
+                <li><strong>如何实现？</strong> 在PE中加入一个简单的"零值检测"逻辑。当输入数据或权重为零时，通过<strong>"时钟门控 (Clock Gating)"</strong> 技术跳过这个MAC运算，从而节省功耗和计算周期。</li>
+                <li><strong>真实世界案例：NVIDIA Ampere架构的"结构化稀疏"</strong>。它要求权重矩阵必须符合一种"2:4"的稀疏模式（每4个权重中有2个必须为零）。这虽然限制了算法的灵活性，但换来了硬件实现上的极大便利，可以直接将理论吞吐量翻倍。这是一个典型的<strong>软硬件协同设计 (Hardware/Software Co-design)</strong> 的成功案例。</li>
+            </ul>
+
             <h3>3.3 存储层次结构</h3>
             
             <h4>3.3.1 存储层次设计</h4>
@@ -652,6 +755,49 @@ Compute Cluster
    - 延迟: 100+ cycles
    - 带宽: 受限（关键瓶颈）
             </div>
+
+            <p>NPU的存储层次结构是其生命线。如果说计算单元是引擎，那么存储系统就是燃料供应管道，管道的粗细和响应速度决定了引擎能否全速运转。</p>
+
+            <h5>核心挑战："内存墙 (The Memory Wall)"</h5>
+            
+            <p>计算性能（TOP/s）的增长速度遵循摩尔定律，每18-24个月翻一番。但片外DRAM的带宽增长速度远慢于此。这导致了巨大的性能鸿沟：NPU执行一次计算可能只需要几个皮秒（ps），而从DRAM取一个数据则需要数十纳秒（ns）——<strong>两者相差数千倍</strong>。</p>
+
+            <div class="info-box">
+                <p><strong>能量消耗的具体数字：</strong></p>
+                <ul>
+                    <li>执行一次32位浮点乘加运算：<strong>~20 pJ</strong> (皮焦耳)</li>
+                    <li>从片上SRAM读取32位数据：<strong>~50 pJ</strong></li>
+                    <li>从片外LPDDR4 DRAM读取32位数据：<strong>~1200 pJ</strong></li>
+                </ul>
+                <p><strong>洞察：</strong> 从DRAM取一次数据的能耗，足够在片内执行<strong>60次</strong>计算！因此，<strong>减少片外访存是NPU能效设计的重中之重</strong>。</p>
+            </div>
+
+            <h5>核心优化策略</h5>
+
+            <p><strong>1. 数据分块 (Data Tiling / Loop Tiling)</strong></p>
+            <ul>
+                <li><strong>是什么？</strong> 这是对抗"内存墙"的<strong>最核心技术</strong>。它将大型的计算任务（如整个卷积层）分解成可以完全放入片上高速缓存（SRAM）的"小块 (Tile)"。</li>
+                <li><strong>类比：</strong> 您要为一篇万字长文校对。
+                    <ul>
+                        <li><strong>无分块策略：</strong> 每校对一个词，都去中央图书馆（DRAM）查一次字典。效率极低。</li>
+                        <li><strong>分块策略：</strong> 将文章按章节（Tile）划分。把第一章（Input Tile）和该章节可能用到的所有词典（Weight Tile）都借到你桌边的书架上（SRAM）。然后，你只在书架的范围内完成第一章的全部校对工作，期间无需再去中央图书馆。这极大地提高了数据（词典）的复用率。</li>
+                    </ul>
+                </li>
+                <li><strong>效果：</strong> 通过精细的分块，可以将DRAM的访问次数降低几个数量级。</li>
+            </ul>
+
+            <p><strong>2. 数据流架构 (Dataflow Architecture)</strong></p>
+            <ul>
+                <li><strong>是什么？</strong> 它定义了数据在PE阵列和存储层次之间移动的具体"编排方式"，以最大化数据复用。</li>
+                <li><strong>主流类型：</strong>
+                    <ul>
+                        <li><strong>权重固定流 (Weight Stationary):</strong> 将权重（Filters）加载到PE的寄存器中并保持不动，然后将输入特征图（Inputs）流过整个计算阵列。<strong>优点：</strong> 极大地复用了权重数据。非常适合卷积层，因为一个卷积核会在整个输入图上滑动计算。<strong>代表作：</strong> MIT的Eyeriss项目。</li>
+                        <li><strong>输出固定流 (Output Stationary):</strong> 将一个输出点所需的累加值（Partial Sums）锁定在PE中，然后将计算它所需的权重和输入依次流过这个PE。<strong>优点：</strong> 最小化了部分和的读写开销，因为部分和的位宽通常比输入和权重大，读写更耗能。</li>
+                        <li><strong>输入固定流 (Input Stationary):</strong> 将输入特征图分布在PE阵列中并保持不动，然后广播（Broadcast）权重给所有PE。</li>
+                    </ul>
+                </li>
+                <li><strong>为什么重要？</strong> 不同的数据流对访存模式和能量效率的影响是巨大的。一个优秀的NPU编译器会根据网络层类型（卷积、全连接等）和硬件特性，自动选择最优的数据流策略。</li>
+            </ul>
 
             <h4>3.3.2 内存访问优化</h4>
             <div class="table-wrapper">
@@ -729,6 +875,45 @@ Compute Cluster
                 <li><strong>多播(Multicast)：</strong>权重广播到多个PE</li>
                 <li><strong>归约(Reduction)：</strong>部分和累加</li>
                 <li><strong>全局同步：</strong>barrier同步</li>
+            </ul>
+
+            <p>如果NPU是一个多核心的城市，那么互连网络就是其交通系统。它的设计决定了数据在不同功能区（计算簇、内存块）之间流动的效率和成本。</p>
+
+            <h5>主流拓扑及其现实世界对比</h5>
+
+            <p><strong>1. 2D Mesh / Torus (二维网格/环形网格)</strong></p>
+            <ul>
+                <li><strong>描述：</strong> 像<strong>纽约曼哈顿的棋盘式街道</strong>。每个节点（PE簇）只能直接与其上下左右的邻居通信。Torus（环形）则像是把城市的东西、南北边缘连接起来，形成一个甜甜圈，从一边出去可以从另一边进来。</li>
+                <li><strong>真实世界案例：Google TPU v2/v3</strong>。谷歌将其多个TPU芯片通过高速的2D Torus网络连接成一个巨大的"超级计算机（Pod）"。这种规整的结构非常适合数据并行训练，尤其是处理卷积等具有规整邻近通信模式的计算。</li>
+                <li><strong>优点：</strong> 结构简单，易于物理布线，扩展性好。对于邻近通信（如卷积的像素块操作）效率极高。</li>
+                <li><strong>缺点：</strong> 对角线或远距离通信延迟高，需要经过多个"十字路口"（Hop），容易在网络中心造成"交通拥堵"。</li>
+            </ul>
+
+            <p><strong>2. 片上网络 (Network-on-Chip, NoC)</strong></p>
+            <ul>
+                <li><strong>描述：</strong> 更像一个带有智能路由的<strong>高速公路系统</strong>。数据被打包成"数据包（Packets）"，每个包都有一个目标地址。沿途的路由器（Router）会像GPS导航一样，为数据包选择最佳路径。</li>
+                <li><strong>真实世界案例：</strong> 几乎所有现代复杂SoC（System-on-Chip）中的NPU都采用NoC，例如<strong>华为的达芬奇架构 (DaVinci Architecture)</strong>。它提供了极高的灵活性，可以连接不同类型的计算单元（标量、矢量）、内存和I/O。</li>
+                <li><strong>优点：</strong> 灵活，支持任意节点间的通信，能提供服务质量（QoS）保证，确保关键数据的优先传输。</li>
+                <li><strong>缺点：</strong> 路由器本身会占用额外的芯片面积和功耗，设计和验证的复杂度远高于Mesh。</li>
+            </ul>
+
+            <p><strong>3. Chiplet（芯粒）互连技术</strong></p>
+            <ul>
+                <li><strong>描述：</strong> 当单个芯片的尺寸达到物理极限（光刻掩模尺寸限制）时，就需要将一个巨大的单体NPU拆分成多个更小的、独立制造的"芯粒（Chiplet）"，然后通过先进的封装技术将它们"粘合"在一起。这就像<strong>用高速铁路网连接起一个"城市群"</strong>。</li>
+                <li><strong>真实世界案例：</strong>
+                    <ul>
+                        <li><strong>Intel Ponte Vecchio GPU:</strong> 使用了多达47个不同功能的Chiplet，通过EMIB（一种2.5D封装技术）连接。</li>
+                        <li><strong>AMD Instinct MI300A:</strong> 将CPU和GPU的Chiplet封装在一起，实现了极高带宽的内存共享。</li>
+                    </ul>
+                </li>
+                <li><strong>优点：</strong>
+                    <ul>
+                        <li><strong>突破尺寸限制：</strong> 可以构建远超单个芯片规模的"巨兽级"处理器。</li>
+                        <li><strong>提高良率：</strong> 单个小Chiplet的制造良率远高于一个巨大的单片芯片。即使一个Chiplet有缺陷，也只需丢弃那个小片，而不是整个昂贵的芯片。</li>
+                        <li><strong>异构集成：</strong> 可以用最先进的工艺（如3nm）制造计算Chiplet，同时用更成熟、成本更低的工艺（如7nm）制造I/O Chiplet，实现成本和性能的最优化组合。</li>
+                    </ul>
+                </li>
+                <li><strong>缺点：</strong> 封装成本极高，Chiplet之间的通信延迟和能耗仍然高于片内通信，对散热设计提出了严峻挑战。</li>
             </ul>
 
             <div class="warning-box">

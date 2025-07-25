@@ -527,8 +527,31 @@
             <h3>5.1 片上SRAM设计</h3>
             
             <p>片上SRAM是NPU存储层次结构的核心，为计算单元提供超低延迟、超高带宽的数据访问。</p>
+            
+            <h5>CPU时代的Scratchpad记忆</h5>
+            
+            <p>在NPU大规模采用Scratchpad内存之前，CPU领域已经有了丰富的探索历史：</p>
+            
+            <div class="info-box">
+                <p><strong>CPU Scratchpad的历史演进</strong></p>
+                <ul>
+                    <li><strong>IBM Cell BE (2005)：</strong> PlayStation 3的处理器，每个SPE（协处理器）配备256KB的本地存储（Local Store），完全由软件管理。这是最早的大规模商用Scratchpad设计。</li>
+                    <li><strong>TI DSP系列：</strong> 德州仪器的DSP从C6000系列开始就采用了L1P（程序）和L1D（数据）分离的Scratchpad设计，专门用于信号处理的确定性延迟。</li>
+                    <li><strong>ARM TCM (Tightly Coupled Memory)：</strong> ARM Cortex-R系列处理器的标配，提供单周期访问延迟，广泛用于汽车电子和实时控制。</li>
+                    <li><strong>Intel Xeon Phi：</strong> 每个核心配备512KB的本地内存，可配置为缓存或Scratchpad模式。</li>
+                </ul>
+            </div>
+            
+            <p>NPU从这些先驱中学到的关键经验：</p>
+            <ul>
+                <li><strong>软件管理的优势：</strong> 虽然增加了编程复杂度，但能实现近乎完美的数据局部性</li>
+                <li><strong>分层设计的必要性：</strong> 单一级别的Scratchpad无法满足所有需求</li>
+                <li><strong>DMA的关键作用：</strong> 高效的DMA引擎是Scratchpad成功的前提</li>
+            </ul>
 
             <h4>5.1.1 SRAM设计权衡</h4>
+            <p>SRAM设计就像建造一个高效的仓库系统——容量、速度、成本之间存在着根本性的权衡。理解这些权衡是设计高效存储系统的基础。</p>
+            
             <div class="code-block">
 SRAM设计的关键权衡：
 
@@ -546,6 +569,45 @@ SRAM设计的关键权衡：
    - 容量增大 → 延迟增加（解码器、字线、位线延迟）
    - 典型延迟：32KB ~1 cycle, 256KB ~2-3 cycles
             </div>
+            
+            <h5>深入理解SRAM的物理限制</h5>
+            
+            <p><strong>1. 为什么SRAM这么"贵"？</strong></p>
+            <p>一个SRAM单元需要6个晶体管（6T），而DRAM只需要1个晶体管+1个电容（1T1C）。这意味着：</p>
+            <ul>
+                <li>相同面积下，DRAM容量是SRAM的6-8倍</li>
+                <li>但SRAM速度快10-100倍，且不需要刷新</li>
+                <li>这就像跑车vs货车的权衡——速度与容量不可兼得</li>
+            </ul>
+            
+            <p><strong>2. 多端口的代价</strong></p>
+            <p>每增加一个端口，需要：</p>
+            <ul>
+                <li>额外的字线（Word Line）和位线（Bit Line）</li>
+                <li>更复杂的仲裁逻辑</li>
+                <li>更大的单元面积（每个端口需要2个额外晶体管）</li>
+            </ul>
+            
+            <div class="warning-box">
+                <p><strong>设计陷阱：盲目追求多端口</strong></p>
+                <p>很多设计师认为端口越多越好，但实际上：</p>
+                <ul>
+                    <li>4端口SRAM的面积是单端口的3-4倍</li>
+                    <li>大多数访问模式并不需要真正的多端口</li>
+                    <li>通过Banking和时分复用，往往能达到类似效果</li>
+                </ul>
+            </div>
+            
+            <h5>现代SRAM创新技术</h5>
+            
+            <p><strong>1. 近阈值电压（Near-Threshold）SRAM：</strong></p>
+            <p>通过降低工作电压接近晶体管阈值电压，可以大幅降低功耗（减少50-70%），但代价是速度降低和稳定性挑战。适用于边缘AI设备。</p>
+            
+            <p><strong>2. 基于MRAM/ReRAM的"类SRAM"：</strong></p>
+            <p>新型非易失性存储器正在模糊SRAM和存储的界限。例如，台积电的22nm eMRAM已经可以提供接近SRAM的速度，但密度提升3-4倍。</p>
+            
+            <p><strong>3. 3D SRAM：</strong></p>
+            <p>将SRAM堆叠在逻辑电路上方，通过TSV（硅通孔）连接。这种技术已经在某些高端GPU中使用，可以将存储密度提升2-3倍。</p>
 
             <h4>5.1.2 多级存储层次</h4>
             <div class="code-block">
@@ -708,6 +770,21 @@ endmodule
             <h3>5.2 Memory Banking策略</h3>
             
             <p>Memory Banking通过将SRAM划分为多个独立的Bank，实现并行访问，成倍提升有效带宽。</p>
+            
+            <p>Banking的本质是"分而治之"——将一个大的存储器拆分成多个可以独立访问的小存储器。这就像将一个大超市拆分成多个专柜，顾客可以同时在不同专柜购物，而不会相互阻塞。</p>
+            
+            <h5>Banking的数学原理</h5>
+            
+            <p>理想情况下，N个Bank可以提供N倍的带宽。但现实中，由于访问模式的不均匀性，会产生Bank冲突。关键是找到最优的Bank数量和地址映射策略。</p>
+            
+            <div class="info-box">
+                <p><strong>Bank数量选择的黄金法则</strong></p>
+                <ul>
+                    <li><strong>质数法则：</strong> Bank数量选择质数（如7、11、13），可以减少规则访问模式的冲突</li>
+                    <li><strong>2的幂次：</strong> 便于硬件实现（简单的位操作），但容易产生冲突</li>
+                    <li><strong>混合策略：</strong> 2的幂次×质数（如8×3=24），平衡实现复杂度和冲突率</li>
+                </ul>
+            </div>
 
             <h4>5.2.1 Bank冲突分析</h4>
             <div class="code-block">
@@ -724,6 +801,38 @@ Bank冲突的主要场景：
 3. 稀疏访问模式
    - 不规则的访问地址
    - 需要动态仲裁机制
+            </div>
+            
+            <h5>真实案例：卷积访问的Bank冲突</h5>
+            
+            <p>让我们分析一个3×3卷积在8-Bank系统中的访问模式：</p>
+            
+            <div class="code-block">
+假设输入特征图宽度W=64，使用简单的模8映射：
+Bank_ID = Address % 8
+
+第一行访问地址：[0, 1, 2]  → Banks: [0, 1, 2]  ✓ 无冲突
+第二行访问地址：[64, 65, 66] → Banks: [0, 1, 2]  ✗ 全部冲突！
+第三行访问地址：[128, 129, 130] → Banks: [0, 1, 2]  ✗ 全部冲突！
+
+问题：所有访问都集中在前3个Bank，其他5个Bank完全空闲！
+            </div>
+            
+            <p><strong>解决方案：XOR-Based Banking</strong></p>
+            <div class="code-block">
+// 改进的地址映射
+Bank_ID = (Address[2:0]) XOR (Address[8:6])
+
+这种映射将高位地址位混入Bank选择，打散了规则的访问模式
+            </div>
+            
+            <div class="warning-box">
+                <p><strong>实战经验：Banking不是越多越好</strong></p>
+                <ul>
+                    <li>Bank数量翻倍，仲裁器复杂度增加4倍</li>
+                    <li>过多的Bank会导致每个Bank容量太小，增加miss率</li>
+                    <li>典型的sweet spot：8-16个Bank</li>
+                </ul>
             </div>
 
             <h4>5.2.2 地址映射策略</h4>
@@ -1063,6 +1172,28 @@ endmodule
             <h3>5.3 数据预取机制</h3>
             
             <p>数据预取通过提前将数据从DRAM加载到片上SRAM，隐藏内存访问延迟，是提升NPU性能的关键技术。</p>
+            
+            <p>预取的艺术在于"料敌于先"——在计算单元需要数据之前，就已经将数据准备好。这就像一个优秀的助手，总能在老板需要文件之前就放在桌上。</p>
+            
+            <h5>预取的三大挑战</h5>
+            
+            <div class="info-box">
+                <p><strong>挑战与解决方案</strong></p>
+                <ul>
+                    <li><strong>挑战1：预取太早</strong> → 数据被驱逐出缓存 → 解决：基于计算进度的动态预取</li>
+                    <li><strong>挑战2：预取太晚</strong> → 无法隐藏延迟 → 解决：多级预取队列</li>
+                    <li><strong>挑战3：预取错误数据</strong> → 浪费带宽和功耗 → 解决：基于编译器提示的确定性预取</li>
+                </ul>
+            </div>
+            
+            <h5>NPU预取 vs CPU预取</h5>
+            
+            <p>NPU的预取相比CPU有独特优势：</p>
+            <ul>
+                <li><strong>确定性访问模式：</strong> 神经网络的数据访问是完全可预测的，不像CPU的通用程序</li>
+                <li><strong>编译时优化：</strong> 可以在编译时生成精确的预取指令</li>
+                <li><strong>双缓冲友好：</strong> 自然适合乒乓缓冲的设计模式</li>
+            </ul>
 
             <h4>5.3.1 预取策略</h4>
             <div class="code-block">
@@ -1702,6 +1833,32 @@ endmodule
             <h3>5.5 DMA设计</h3>
             
             <p>DMA（直接内存访问）控制器是NPU中的数据搬运引擎，负责在片外DRAM和片上SRAM之间高效传输数据。</p>
+            
+            <p>如果说计算单元是NPU的心脏，那么DMA就是血管系统——确保营养（数据）能够及时送达每个需要的地方。一个设计良好的DMA可以让计算单元的利用率从30%提升到90%以上。</p>
+            
+            <h5>NPU DMA的独特挑战</h5>
+            
+            <p>与传统的DMA相比，NPU的DMA面临着独特的挑战：</p>
+            
+            <div class="info-box">
+                <p><strong>三大核心挑战</strong></p>
+                <ul>
+                    <li><strong>多维张量支持：</strong> 需要处理复杂的4D/5D张量，而不仅仅是1D数据流</li>
+                    <li><strong>数据转换：</strong> 在传输过程中完成布局转换（NCHW→NHWC）、数据类型转换（FP32→INT8）</li>
+                    <li><strong>同步复杂性：</strong> 需要与计算单元精确同步，实现真正的计算与传输重叠</li>
+                </ul>
+            </div>
+            
+            <h5>现代DMA的创新设计</h5>
+            
+            <p><strong>1. 描述符链（Descriptor Chain）DMA：</strong></p>
+            <p>将多个DMA操作串成链表，硬件自动执行，减少CPU干预。NVIDIA的GPU采用这种设计，可以预先编排整个神经网络的数据传输。</p>
+            
+            <p><strong>2. 智能预取DMA：</strong></p>
+            <p>根据计算进度自动调整传输速度，避免过早预取导致的缓存污染。华为达芬奇架构的DMA可以监控计算单元的进度，动态调整预取策略。</p>
+            
+            <p><strong>3. 压缩感知DMA：</strong></p>
+            <p>在传输过程中进行数据压缩/解压，有效利用有限的内存带宽。Cerebras的DMA支持稀疏压缩，可以将带宽利用率提升3-4倍。</p>
 
             <h4>5.5.1 NPU DMA特性</h4>
             <div class="code-block">
