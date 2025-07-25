@@ -1,0 +1,2355 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>第3章：NPU系统架构 - NPU设计教程</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f5f5f5;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
+            color: white;
+            padding: 40px 0;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .nav-bar {
+            background: #34495e;
+            padding: 15px 0;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .nav-bar ul {
+            list-style: none;
+            display: flex;
+            justify-content: center;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0;
+        }
+
+        .nav-bar li {
+            margin: 0 15px;
+        }
+
+        .nav-bar a {
+            color: white;
+            text-decoration: none;
+            padding: 5px 10px;
+            border-radius: 4px;
+            transition: background 0.3s;
+        }
+
+        .nav-bar a:hover {
+            background: #2c3e50;
+        }
+
+        .nav-bar .current {
+            background: #2c3e50;
+            font-weight: bold;
+        }
+
+        .chapter {
+            background: white;
+            margin: 20px 0;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .chapter h2 {
+            color: #2c3e50;
+            font-size: 2em;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 3px solid #3498db;
+        }
+
+        .chapter h3 {
+            color: #34495e;
+            font-size: 1.5em;
+            margin: 25px 0 15px 0;
+        }
+
+        .chapter h4 {
+            color: #7f8c8d;
+            font-size: 1.2em;
+            margin: 20px 0 10px 0;
+        }
+
+        .code-block {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 20px;
+            border-radius: 5px;
+            margin: 15px 0;
+            overflow-x: auto;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            position: relative;
+        }
+        
+        /* Language label */
+        .code-block::before {
+            content: attr(data-language);
+            position: absolute;
+            top: 5px;
+            right: 10px;
+            font-size: 12px;
+            color: #95a5a6;
+            text-transform: uppercase;
+        }
+        
+        /* Syntax highlighting classes */
+        .code-block .keyword { color: #e74c3c; font-weight: bold; }
+        .code-block .type { color: #3498db; }
+        .code-block .comment { color: #95a5a6; font-style: italic; }
+        .code-block .number { color: #e67e22; }
+        .code-block .string { color: #2ecc71; }
+        .code-block .function { color: #3498db; }
+
+        .exercise {
+            background: #ecf0f1;
+            padding: 20px;
+            border-radius: 5px;
+            margin: 20px 0;
+            border-left: 5px solid #3498db;
+        }
+
+        .exercise h4 {
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+
+        .question {
+            margin: 15px 0;
+            padding: 15px;
+            background: white;
+            border-radius: 5px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .answer {
+            margin-top: 10px;
+            padding: 15px;
+            background: #e8f5e9;
+            border-radius: 5px;
+            display: none;
+            border-left: 4px solid #4caf50;
+        }
+
+        .answer.show {
+            display: block;
+        }
+        
+        .hint {
+            margin: 10px 0;
+            padding: 10px 15px;
+            background: #fff8dc;
+            border-left: 4px solid #ffa500;
+            border-radius: 5px;
+            font-size: 0.95em;
+        }
+        
+        .hint summary {
+            cursor: pointer;
+            font-weight: bold;
+            color: #ff8c00;
+            outline: none;
+        }
+        
+        .hint summary:hover {
+            color: #ff6347;
+        }
+        
+        .hint p {
+            margin-top: 10px;
+            color: #666;
+        }
+
+        .toggle-answer {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-top: 10px;
+            transition: background 0.3s;
+        }
+
+        .toggle-answer:hover {
+            background: #2980b9;
+        }
+
+        .table-wrapper {
+            overflow-x: auto;
+            margin: 20px 0;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+
+        th {
+            background: #34495e;
+            color: white;
+            font-weight: bold;
+        }
+
+        tr:hover {
+            background: #f5f5f5;
+        }
+
+        .info-box {
+            background: #e3f2fd;
+            border-left: 5px solid #2196f3;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+
+        .warning-box {
+            background: #fff3cd;
+            border-left: 5px solid #ff9800;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+
+        .chapter-nav {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 2px solid #ecf0f1;
+        }
+
+        .chapter-nav a {
+            background: #3498db;
+            color: white;
+            padding: 10px 20px;
+            text-decoration: none;
+            border-radius: 5px;
+            transition: background 0.3s;
+        }
+
+        .chapter-nav a:hover {
+            background: #2980b9;
+        }
+
+        .chapter-nav .prev::before {
+            content: "← ";
+        }
+
+        .chapter-nav .next::after {
+            content: " →";
+        }
+
+        /* Mobile Responsive Design */
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+            
+            header {
+                padding: 20px 10px;
+            }
+            
+            header h1 {
+                font-size: 1.5em;
+            }
+            
+            .chapter {
+                padding: 15px;
+                margin: 10px 0;
+            }
+            
+            .chapter h2 {
+                font-size: 1.5em;
+            }
+            
+            .chapter h3 {
+                font-size: 1.2em;
+            }
+            
+            .nav-bar ul {
+                flex-wrap: wrap;
+                justify-content: center;
+            }
+            
+            .nav-bar li {
+                margin: 5px;
+            }
+            
+            .code-block {
+                padding: 10px;
+                font-size: 12px;
+            }
+            
+            table {
+                font-size: 14px;
+            }
+            
+            th, td {
+                padding: 8px;
+            }
+        }
+    </style>
+    <script>
+        // Syntax highlighting functions
+        function escapeHtml(text) {
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return text.replace(/[&<>"']/g, m => map[m]);
+        }
+        
+        function highlightSyntax() {
+            const codeBlocks = document.querySelectorAll('.code-block');
+            
+            codeBlocks.forEach(block => {
+                const content = block.textContent;
+                let language = 'text';
+                let highlighted = content;
+                
+                // Auto-detect language based on content
+                if (content.includes('module ') || content.includes('always @') || content.includes('wire ') || content.includes('reg ')) {
+                    language = 'verilog';
+                    highlighted = highlightVerilog(content);
+                } else if (content.includes('import ') || content.includes('def ') || content.includes('class ')) {
+                    language = 'python';
+                    highlighted = highlightPython(content);
+                }
+                
+                block.innerHTML = highlighted;
+                block.classList.add(language);
+                block.setAttribute('data-language', language);
+            });
+        }
+        
+        function highlightVerilog(code) {
+            const placeholders = [];
+            let placeholderIndex = 0;
+            
+            // Replace comments with placeholders
+            code = code.replace(/(\/\/.*$|\/\*[\s\S]*?\*\/)/gm, (match) => {
+                const placeholder = `__COMMENT_${placeholderIndex}__`;
+                placeholders[placeholderIndex] = `<span class="comment">${escapeHtml(match)}</span>`;
+                placeholderIndex++;
+                return placeholder;
+            });
+            
+            // Replace strings with placeholders
+            code = code.replace(/("[^"]*")/g, (match) => {
+                const placeholder = `__STRING_${placeholderIndex}__`;
+                placeholders[placeholderIndex] = `<span class="string">${escapeHtml(match)}</span>`;
+                placeholderIndex++;
+                return placeholder;
+            });
+            
+            // Apply highlights
+            const keywords = /\b(module|endmodule|input|output|wire|reg|always|assign|begin|end|if|else|for|while|parameter|posedge|negedge)\b/g;
+            const types = /\b(bit|logic|byte|shortint|int|longint|integer|time|real)\b/g;
+            const numbers = /\b(\d+'[hbdo][\da-fA-F_]+|\d+)\b/g;
+            
+            code = code.replace(keywords, '<span class="keyword">$1</span>');
+            code = code.replace(types, '<span class="type">$1</span>');
+            code = code.replace(numbers, '<span class="number">$1</span>');
+            
+            // Restore placeholders
+            for (let i = 0; i < placeholderIndex; i++) {
+                code = code.replace(new RegExp(`__COMMENT_${i}__`, 'g'), placeholders[i]);
+                code = code.replace(new RegExp(`__STRING_${i}__`, 'g'), placeholders[i]);
+            }
+            
+            return code;
+        }
+        
+        function highlightPython(code) {
+            const placeholders = [];
+            let placeholderIndex = 0;
+            
+            // Replace comments
+            code = code.replace(/(#.*$)/gm, (match) => {
+                const placeholder = `__COMMENT_${placeholderIndex}__`;
+                placeholders[placeholderIndex] = `<span class="comment">${escapeHtml(match)}</span>`;
+                placeholderIndex++;
+                return placeholder;
+            });
+            
+            // Replace strings
+            code = code.replace(/("[^"]*"|'[^']*')/g, (match) => {
+                const placeholder = `__STRING_${placeholderIndex}__`;
+                placeholders[placeholderIndex] = `<span class="string">${escapeHtml(match)}</span>`;
+                placeholderIndex++;
+                return placeholder;
+            });
+            
+            // Apply highlights
+            const keywords = /\b(and|as|assert|break|class|continue|def|del|elif|else|except|False|finally|for|from|global|if|import|in|is|lambda|None|not|or|pass|raise|return|True|try|while|with|yield)\b/g;
+            const builtins = /\b(abs|all|any|bin|bool|dict|float|format|hex|input|int|len|list|map|max|min|open|print|range|round|set|sorted|str|sum|tuple|type|zip)\b/g;
+            const numbers = /\b(\d+\.?\d*)\b/g;
+            
+            code = code.replace(keywords, '<span class="keyword">$1</span>');
+            code = code.replace(builtins, '<span class="function">$1</span>');
+            code = code.replace(numbers, '<span class="number">$1</span>');
+            
+            // Restore placeholders
+            for (let i = 0; i < placeholderIndex; i++) {
+                code = code.replace(new RegExp(`__COMMENT_${i}__`, 'g'), placeholders[i]);
+                code = code.replace(new RegExp(`__STRING_${i}__`, 'g'), placeholders[i]);
+            }
+            
+            return code;
+        }
+        
+        // Toggle answer visibility
+        document.addEventListener('DOMContentLoaded', function() {
+            highlightSyntax();
+            
+            const toggleButtons = document.querySelectorAll('.toggle-answer');
+            toggleButtons.forEach(button => {
+                button.addEventListener('click', function() {
+                    const answer = this.nextElementSibling;
+                    answer.classList.toggle('show');
+                    this.textContent = answer.classList.contains('show') ? '隐藏答案' : '显示答案';
+                });
+            });
+        });
+    </script>
+</head>
+<body>
+    <header>
+        <h1>第3章：NPU系统架构</h1>
+    </header>
+    
+    <nav class="nav-bar">
+        <ul>
+            <li><a href="index.html">首页</a></li>
+            <li><a href="chapter1.html">第1章</a></li>
+            <li><a href="chapter2.html">第2章</a></li>
+            <li><a href="chapter3.html" class="current">第3章</a></li>
+            <li><a href="chapter4.html">第4章</a></li>
+            <li><a href="chapter5.html">第5章</a></li>
+            <li><a href="chapter6.html">第6章</a></li>
+            <li><a href="chapter7.html">第7章</a></li>
+            <li><a href="chapter8.html">第8章</a></li>
+            <li><a href="chapter9.html">第9章</a></li>
+            <li><a href="chapter10.html">第10章</a></li>
+            <li><a href="chapter11.html">第11章</a></li>
+            <li><a href="chapter12.html">第12章</a></li>
+        </ul>
+    </nav>
+    
+    <div class="container">
+        <div class="chapter">
+            <h2>第3章：NPU系统架构</h2>
+            
+            <h3>3.1 整体架构设计</h3>
+            
+            <h4>3.1.1 NPU系统组成</h4>
+            <p>现代NPU系统通常包含以下核心组件：</p>
+            
+            <div class="code-block">
+NPU系统架构层次：
+┌─────────────────────────────────────────┐
+│          Host Interface (PCIe/AXI)       │
+├─────────────────────────────────────────┤
+│         Command Processor & Scheduler    │
+├─────────────────────────────────────────┤
+│  ┌─────────┐  ┌─────────┐  ┌─────────┐ │
+│  │ Compute │  │ Memory  │  │  DMA    │ │
+│  │ Cluster │  │ System  │  │ Engine  │ │
+│  └─────────┘  └─────────┘  └─────────┘ │
+├─────────────────────────────────────────┤
+│         On-chip Interconnect (NoC)      │
+├─────────────────────────────────────────┤
+│         External Memory Interface        │
+└─────────────────────────────────────────┘
+            </div>
+
+            <h4>3.1.2 设计考虑因素</h4>
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>设计维度</th>
+                            <th>关键指标</th>
+                            <th>架构影响</th>
+                            <th>优化方向</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>算力</td>
+                            <td>TOPS/TFLOPS</td>
+                            <td>MAC阵列规模</td>
+                            <td>增加PE数量、提高频率</td>
+                        </tr>
+                        <tr>
+                            <td>能效</td>
+                            <td>TOPS/W</td>
+                            <td>数据复用、电压调节</td>
+                            <td>减少数据移动、低功耗设计</td>
+                        </tr>
+                        <tr>
+                            <td>灵活性</td>
+                            <td>支持的算子类型</td>
+                            <td>可编程性</td>
+                            <td>VLIW/SIMD混合架构</td>
+                        </tr>
+                        <tr>
+                            <td>成本</td>
+                            <td>$/TOPS</td>
+                            <td>芯片面积</td>
+                            <td>架构简化、工艺选择</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <h3>3.2 计算单元设计</h3>
+            
+            <h4>3.2.1 计算集群架构</h4>
+            <p>NPU的计算能力主要来自于大规模并行的计算集群：</p>
+            
+            <div class="code-block">
+// 典型的计算集群组织
+Compute Cluster
+├── MAC Array (脉动阵列或其他拓扑)
+│   ├── PE[0][0] ... PE[0][N-1]
+│   ├── PE[1][0] ... PE[1][N-1]
+│   └── PE[M-1][0] ... PE[M-1][N-1]
+├── Vector Unit (向量处理单元)
+│   ├── SIMD ALU
+│   ├── Special Function Unit
+│   └── Reduction Unit
+├── Local Memory
+│   ├── Weight Buffer
+│   ├── Input Buffer
+│   └── Output Buffer
+└── Control Unit
+    ├── Instruction Decoder
+    ├── Address Generator
+    └── Synchronization Logic
+            </div>
+
+            <h4>3.2.2 处理单元(PE)设计</h4>
+            <div class="info-box">
+                <p><strong>PE设计原则：</strong></p>
+                <ul>
+                    <li>面积效率：最大化MAC密度</li>
+                    <li>功耗优化：时钟门控、操作数隔离</li>
+                    <li>数据通路：支持多种精度(INT8/16, FP16/32)</li>
+                    <li>流水线：平衡延迟和吞吐量</li>
+                </ul>
+            </div>
+
+            <h3>3.3 存储层次结构</h3>
+            
+            <h4>3.3.1 存储层次设计</h4>
+            <div class="code-block">
+存储层次（从快到慢）：
+1. Register File (RF)
+   - 容量: ~1KB per PE
+   - 延迟: 1 cycle
+   - 带宽: 极高
+   
+2. L1 Buffer (私有)
+   - 容量: 16-64KB per cluster
+   - 延迟: 2-4 cycles
+   - 用途: 权重/激活值缓存
+
+3. L2 Buffer (共享)
+   - 容量: 256KB-2MB
+   - 延迟: 8-16 cycles
+   - 用途: 跨cluster数据共享
+
+4. Global Buffer
+   - 容量: 4-32MB
+   - 延迟: 20-40 cycles
+   - 用途: 大型特征图存储
+
+5. External Memory (DDR/HBM)
+   - 容量: GB级别
+   - 延迟: 100+ cycles
+   - 带宽: 受限（关键瓶颈）
+            </div>
+
+            <h4>3.3.2 内存访问优化</h4>
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>优化技术</th>
+                            <th>原理</th>
+                            <th>硬件支持</th>
+                            <th>效果</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>数据预取</td>
+                            <td>提前加载数据到片上</td>
+                            <td>硬件预取器</td>
+                            <td>隐藏内存延迟</td>
+                        </tr>
+                        <tr>
+                            <td>双缓冲</td>
+                            <td>计算与数据传输重叠</td>
+                            <td>乒乓Buffer</td>
+                            <td>提高利用率</td>
+                        </tr>
+                        <tr>
+                            <td>数据压缩</td>
+                            <td>减少传输数据量</td>
+                            <td>压缩/解压单元</td>
+                            <td>节省带宽</td>
+                        </tr>
+                        <tr>
+                            <td>地址映射</td>
+                            <td>优化数据布局</td>
+                            <td>可编程DMA</td>
+                            <td>提高局部性</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <h3>3.4 互连网络设计</h3>
+            
+            <h4>3.4.1 片上网络拓扑</h4>
+            <div class="code-block">
+常见的NoC拓扑结构：
+
+1. Mesh (网格)
+   优点：规则、可扩展
+   缺点：跳数多、延迟大
+   
+   [R]--[R]--[R]--[R]
+    |    |    |    |
+   [R]--[R]--[R]--[R]
+    |    |    |    |
+   [R]--[R]--[R]--[R]
+
+2. Torus (环面)
+   优点：降低平均跳数
+   缺点：布线复杂
+   
+3. Tree (树形)
+   优点：层次化、易于广播
+   缺点：根节点瓶颈
+
+4. Crossbar (交叉开关)
+   优点：单跳连接
+   缺点：面积O(N²)，不可扩展
+            </div>
+
+            <h4>3.4.2 数据通信模式</h4>
+            <p>NPU中的典型通信模式：</p>
+            <ul>
+                <li><strong>单播(Unicast)：</strong>点对点数据传输</li>
+                <li><strong>多播(Multicast)：</strong>权重广播到多个PE</li>
+                <li><strong>归约(Reduction)：</strong>部分和累加</li>
+                <li><strong>全局同步：</strong>barrier同步</li>
+            </ul>
+
+            <div class="warning-box">
+                <p><strong>设计挑战：</strong>如何在保证高带宽的同时控制功耗和面积开销是NoC设计的核心挑战。</p>
+            </div>
+
+            <div class="exercise">
+                <h4>练习题集 3</h4>
+                
+                <div class="question">
+                    <p><strong>题目3.1：</strong>设计一个NPU的存储层次结构。给定：MAC阵列32×32，主频1GHz，外部内存带宽100GB/s。计算各级存储的容量和带宽需求。</p>
+                    <details class="hint">
+                        <summary>💡 提示</summary>
+                        <p>思考方向：从MAC阵列的数据需求出发，考虑每个MAC单元每周期需要的输入输出数据量，然后设计多级缓存来逐步降低带宽压力。记住带宽需求应该逐级递减。</p>
+                    </details>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <p><strong>答案：</strong></p>
+                        <p><strong>1. 计算MAC阵列带宽需求：</strong></p>
+                        <ul>
+                            <li>MAC阵列规模：32×32 = 1024个MAC</li>
+                            <li>每个MAC每周期需要：2个输入(weight, activation) + 1个输出</li>
+                            <li>假设INT8精度：每个数据1字节</li>
+                            <li>总带宽需求：1024 × 3 × 1B × 1GHz = 3.072 TB/s</li>
+                        </ul>
+                        
+                        <p><strong>2. 存储层次设计：</strong></p>
+                        <table>
+                            <tr>
+                                <th>存储级别</th>
+                                <th>容量</th>
+                                <th>带宽</th>
+                                <th>设计理由</th>
+                            </tr>
+                            <tr>
+                                <td>L0 (Register)</td>
+                                <td>1KB/PE</td>
+                                <td>3TB/s</td>
+                                <td>直接供给MAC运算</td>
+                            </tr>
+                            <tr>
+                                <td>L1 Buffer</td>
+                                <td>64KB</td>
+                                <td>1TB/s</td>
+                                <td>存储当前tile的数据</td>
+                            </tr>
+                            <tr>
+                                <td>L2 Buffer</td>
+                                <td>2MB</td>
+                                <td>400GB/s</td>
+                                <td>预取下一个tile</td>
+                            </tr>
+                            <tr>
+                                <td>Global Buffer</td>
+                                <td>16MB</td>
+                                <td>200GB/s</td>
+                                <td>存储整层的部分数据</td>
+                            </tr>
+                            <tr>
+                                <td>External Mem</td>
+                                <td>16GB</td>
+                                <td>100GB/s</td>
+                                <td>给定约束</td>
+                            </tr>
+                        </table>
+                        
+                        <p><strong>3. 带宽逐级递减原理：</strong></p>
+                        <ul>
+                            <li>数据复用降低上级需求</li>
+                            <li>时分复用共享带宽</li>
+                            <li>预取隐藏延迟</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目3.2：</strong>比较Weight Stationary、Output Stationary和Row Stationary三种数据流的优缺点，并给出适用场景。</p>
+                    <details class="hint">
+                        <summary>💡 提示</summary>
+                        <p>思考方向：每种数据流的核心区别在于哪种数据被固定在PE中。分析不同神经网络层（全连接层、1×1卷积、3×3卷积）的数据复用特性，来判断最适合的数据流。</p>
+                    </details>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <p><strong>答案：</strong></p>
+                        <table>
+                            <tr>
+                                <th>数据流</th>
+                                <th>固定数据</th>
+                                <th>优点</th>
+                                <th>缺点</th>
+                                <th>适用场景</th>
+                            </tr>
+                            <tr>
+                                <td>Weight Stationary (WS)</td>
+                                <td>权重</td>
+                                <td>• 权重复用最大化<br>• 减少权重读取能耗<br>• 实现简单</td>
+                                <td>• 输入/输出需要大量移动<br>• 对大feature map不友好</td>
+                                <td>• 全连接层<br>• 小batch推理<br>• 权重>>激活值</td>
+                            </tr>
+                            <tr>
+                                <td>Output Stationary (OS)</td>
+                                <td>部分和</td>
+                                <td>• 减少部分和读写<br>• 累加在PE本地完成<br>• 适合深度网络</td>
+                                <td>• 权重和输入都需移动<br>• 控制复杂度高</td>
+                                <td>• 深度卷积<br>• 输出通道数多<br>• ResNet类结构</td>
+                            </tr>
+                            <tr>
+                                <td>Row Stationary (RS)</td>
+                                <td>卷积行</td>
+                                <td>• 所有数据类型都有复用<br>• 能量效率最优<br>• 适应性强</td>
+                                <td>• 实现最复杂<br>• 需要复杂的控制器<br>• 面积开销大</td>
+                                <td>• 通用场景<br>• 各种卷积层<br>• 需要灵活性</td>
+                            </tr>
+                        </table>
+                        
+                        <p><strong>具体例子：</strong></p>
+                        <p>对于1×1卷积（Pointwise）：</p>
+                        <ul>
+                            <li>WS最优：因为没有空间维度的复用</li>
+                            <li>RS退化为WS</li>
+                        </ul>
+                        <p>对于3×3卷积：</p>
+                        <ul>
+                            <li>RS最优：可以复用所有维度的数据</li>
+                            <li>OS次优：如果输出通道很多</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目3.3：</strong>设计一个4×4 Mesh NoC的路由器。要求支持XY路由算法，包含5个端口（东南西北+本地）。给出RTL框架。</p>
+                    <details class="hint">
+                        <summary>💡 提示</summary>
+                        <p>思考方向：路由器需要包含输入缓冲（FIFO）、路由计算（XY算法先X后Y）、仲裁器（处理冲突）、交叉开关（5×5连接矩阵）。注意处理背压和流控。</p>
+                    </details>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <div class="code-block">
+module MeshRouter #(
+    parameter DATA_WIDTH = 32,
+    parameter ADDR_WIDTH = 8,
+    parameter X_COORD = 0,
+    parameter Y_COORD = 0,
+    parameter FIFO_DEPTH = 4
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 5个输入端口 (North, South, East, West, Local)
+    input wire [DATA_WIDTH-1:0] data_in_n, data_in_s, data_in_e, data_in_w, data_in_l,
+    input wire valid_in_n, valid_in_s, valid_in_e, valid_in_w, valid_in_l,
+    output wire ready_out_n, ready_out_s, ready_out_e, ready_out_w, ready_out_l,
+    
+    // 5个输出端口
+    output wire [DATA_WIDTH-1:0] data_out_n, data_out_s, data_out_e, data_out_w, data_out_l,
+    output wire valid_out_n, valid_out_s, valid_out_e, valid_out_w, valid_out_l,
+    input wire ready_in_n, ready_in_s, ready_in_e, ready_in_w, ready_in_l
+);
+
+    // 数据包格式：[DATA | SRC_Y | SRC_X | DST_Y | DST_X]
+    localparam DST_X_START = 0;
+    localparam DST_X_END = 3;
+    localparam DST_Y_START = 4;
+    localparam DST_Y_END = 7;
+    
+    // 内部信号
+    wire [4:0] route_req_n, route_req_s, route_req_e, route_req_w, route_req_l;
+    wire [4:0] grant_n, grant_s, grant_e, grant_w, grant_l;
+    
+    // 输入FIFO
+    wire [DATA_WIDTH-1:0] fifo_data_n, fifo_data_s, fifo_data_e, fifo_data_w, fifo_data_l;
+    wire fifo_empty_n, fifo_empty_s, fifo_empty_e, fifo_empty_w, fifo_empty_l;
+    wire fifo_rd_en_n, fifo_rd_en_s, fifo_rd_en_e, fifo_rd_en_w, fifo_rd_en_l;
+    
+    // FIFO实例化（每个输入端口一个）
+    genvar i;
+    generate
+        // North port FIFO
+        FIFO #(.WIDTH(DATA_WIDTH), .DEPTH(FIFO_DEPTH)) fifo_n (
+            .clk(clk), .rst_n(rst_n),
+            .wr_en(valid_in_n), .wr_data(data_in_n),
+            .rd_en(fifo_rd_en_n), .rd_data(fifo_data_n),
+            .empty(fifo_empty_n), .full(~ready_out_n)
+        );
+        // 类似地实例化其他4个FIFO...
+    endgenerate
+    
+    // XY路由计算模块
+    XYRouteCompute route_comp_n (
+        .current_x(X_COORD), .current_y(Y_COORD),
+        .dest_x(fifo_data_n[DST_X_END:DST_X_START]),
+        .dest_y(fifo_data_n[DST_Y_END:DST_Y_START]),
+        .valid(!fifo_empty_n),
+        .route_request(route_req_n)  // 5-bit one-hot
+    );
+    // 为其他端口实例化路由计算...
+    
+    // 5×5交叉开关仲裁器
+    SwitchAllocator allocator (
+        .clk(clk), .rst_n(rst_n),
+        // 来自5个输入端口的请求
+        .req_n(route_req_n), .req_s(route_req_s), 
+        .req_e(route_req_e), .req_w(route_req_w), .req_l(route_req_l),
+        // 授权信号
+        .grant_n(grant_n), .grant_s(grant_s),
+        .grant_e(grant_e), .grant_w(grant_w), .grant_l(grant_l)
+    );
+    
+    // 交叉开关矩阵
+    Crossbar5x5 xbar (
+        // 输入数据
+        .data_in({fifo_data_l, fifo_data_w, fifo_data_e, fifo_data_s, fifo_data_n}),
+        // 控制信号
+        .sel_n(grant_n), .sel_s(grant_s), 
+        .sel_e(grant_e), .sel_w(grant_w), .sel_l(grant_l),
+        // 输出数据
+        .data_out_n(data_out_n), .data_out_s(data_out_s),
+        .data_out_e(data_out_e), .data_out_w(data_out_w), .data_out_l(data_out_l)
+    );
+    
+    // 输出valid信号生成
+    assign valid_out_n = |grant_n & ready_in_n;
+    assign valid_out_s = |grant_s & ready_in_s;
+    assign valid_out_e = |grant_e & ready_in_e;
+    assign valid_out_w = |grant_w & ready_in_w;
+    assign valid_out_l = |grant_l & ready_in_l;
+    
+    // FIFO读使能
+    assign fifo_rd_en_n = |(grant_n & {ready_in_l, ready_in_w, ready_in_e, ready_in_s, ready_in_n});
+    // 类似处理其他端口...
+
+endmodule
+
+// XY路由计算模块
+module XYRouteCompute #(
+    parameter COORD_WIDTH = 4
+)(
+    input [COORD_WIDTH-1:0] current_x, current_y,
+    input [COORD_WIDTH-1:0] dest_x, dest_y,
+    input valid,
+    output reg [4:0] route_request  // [Local, West, East, South, North]
+);
+    always @(*) begin
+        route_request = 5'b00000;
+        if (valid) begin
+            if (dest_x == current_x && dest_y == current_y) begin
+                route_request[4] = 1'b1;  // Local
+            end else if (dest_x < current_x) begin
+                route_request[3] = 1'b1;  // West
+            end else if (dest_x > current_x) begin
+                route_request[2] = 1'b1;  // East
+            end else if (dest_y < current_y) begin
+                route_request[1] = 1'b1;  // South
+            end else begin
+                route_request[0] = 1'b1;  // North
+            end
+        end
+    end
+endmodule
+                        </div>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目3.4：</strong>计算一个NPU执行ResNet50一个残差块所需的片上存储容量。假设特征图大小为56×56×256，使用3×3卷积。</p>
+                    <details class="hint">
+                        <summary>💡 提示</summary>
+                        <p>思考方向：ResNet残差块包含多个卷积层和shortcut连接。计算每层的输入、输出、权重大小，考虑流水线执行时的数据重叠，以及双缓冲需求。</p>
+                    </details>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <p><strong>答案：</strong></p>
+                        <p><strong>ResNet50残差块结构：</strong></p>
+                        <pre>
+Input (56×56×256)
+    │
+    ├─────────────────────┐
+    │                     │
+    ▼                     │
+Conv1 (1×1, 64)          │
+    │                     │
+    ▼                     │
+Conv2 (3×3, 64)          │
+    │                     │
+    ▼                     │
+Conv3 (1×1, 256)         │
+    │                     │
+    ▼                     │
+    + ←──────────────────┘
+    │
+Output (56×56×256)
+                        </pre>
+                        
+                        <p><strong>存储需求计算（INT8）：</strong></p>
+                        <table>
+                            <tr>
+                                <th>数据类型</th>
+                                <th>尺寸</th>
+                                <th>容量(KB)</th>
+                                <th>说明</th>
+                            </tr>
+                            <tr>
+                                <td>输入特征图</td>
+                                <td>56×56×256</td>
+                                <td>784</td>
+                                <td>需要保存用于残差连接</td>
+                            </tr>
+                            <tr>
+                                <td>Conv1权重</td>
+                                <td>1×1×256×64</td>
+                                <td>16</td>
+                                <td>Pointwise卷积</td>
+                            </tr>
+                            <tr>
+                                <td>Conv1输出</td>
+                                <td>56×56×64</td>
+                                <td>196</td>
+                                <td>中间特征图</td>
+                            </tr>
+                            <tr>
+                                <td>Conv2权重</td>
+                                <td>3×3×64×64</td>
+                                <td>36</td>
+                                <td>Depthwise卷积</td>
+                            </tr>
+                            <tr>
+                                <td>Conv2输出</td>
+                                <td>56×56×64</td>
+                                <td>196</td>
+                                <td>中间特征图</td>
+                            </tr>
+                            <tr>
+                                <td>Conv3权重</td>
+                                <td>1×1×64×256</td>
+                                <td>16</td>
+                                <td>Pointwise卷积</td>
+                            </tr>
+                            <tr>
+                                <td>Conv3输出</td>
+                                <td>56×56×256</td>
+                                <td>784</td>
+                                <td>用于残差加法</td>
+                            </tr>
+                            <tr>
+                                <td><strong>总计</strong></td>
+                                <td>-</td>
+                                <td><strong>2028</strong></td>
+                                <td>约2MB</td>
+                            </tr>
+                        </table>
+                        
+                        <p><strong>优化策略：</strong></p>
+                        <ol>
+                            <li><strong>层融合：</strong>将Conv1输出直接送入Conv2，节省196KB</li>
+                            <li><strong>流水线执行：</strong>分块处理，每块只需存储部分特征图</li>
+                            <li><strong>权重压缩：</strong>使用稀疏或量化技术减少权重存储</li>
+                            <li><strong>双缓冲：</strong>计算当前块时预取下一块数据</li>
+                        </ol>
+                        
+                        <p><strong>实际需求：</strong>考虑优化后，片上存储约需1MB即可高效执行。</p>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目3.5：</strong>设计一个DMA控制器，支持2D数据传输和简单的数据重排。要求支持stride访问模式。</p>
+                    <details class="hint">
+                        <summary>💡 提示</summary>
+                        <p>思考方向：DMA需要支持2D数据传输（宽度×高度），包括源和目标的stride跨步。考虑不同传输模式：线性、2D块、转置、交织等。使用状态机管理传输流程。</p>
+                    </details>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <div class="code-block">
+module DMA2D #(
+    parameter ADDR_WIDTH = 32,
+    parameter DATA_WIDTH = 128,  // 128-bit宽接口
+    parameter BURST_LEN = 16     // 最大突发长度
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 配置接口
+    input wire [ADDR_WIDTH-1:0] src_addr,      // 源地址
+    input wire [ADDR_WIDTH-1:0] dst_addr,      // 目标地址
+    input wire [15:0] width,                   // 2D传输宽度（字节）
+    input wire [15:0] height,                  // 2D传输高度
+    input wire [15:0] src_stride,              // 源跨步（字节）
+    input wire [15:0] dst_stride,              // 目标跨步（字节）
+    input wire [2:0] transfer_mode,            // 传输模式
+    input wire start,
+    output reg done,
+    output reg busy,
+    
+    // 源内存接口（AXI-like）
+    output reg [ADDR_WIDTH-1:0] src_araddr,
+    output reg src_arvalid,
+    input wire src_arready,
+    input wire [DATA_WIDTH-1:0] src_rdata,
+    input wire src_rvalid,
+    output reg src_rready,
+    
+    // 目标内存接口
+    output reg [ADDR_WIDTH-1:0] dst_awaddr,
+    output reg dst_awvalid,
+    input wire dst_awready,
+    output reg [DATA_WIDTH-1:0] dst_wdata,
+    output reg dst_wvalid,
+    input wire dst_wready,
+    input wire dst_bvalid,
+    output reg dst_bready
+);
+
+    // 传输模式定义
+    localparam MODE_LINEAR = 3'd0;      // 线性传输
+    localparam MODE_2D_BLOCK = 3'd1;    // 2D块传输
+    localparam MODE_TRANSPOSE = 3'd2;   // 转置
+    localparam MODE_INTERLEAVE = 3'd3;  // 交织
+    
+    // 状态机
+    localparam IDLE = 3'd0;
+    localparam CALC_ADDR = 3'd1;
+    localparam READ_REQ = 3'd2;
+    localparam READ_DATA = 3'd3;
+    localparam WRITE_REQ = 3'd4;
+    localparam WRITE_DATA = 3'd5;
+    localparam WRITE_RESP = 3'd6;
+    localparam NEXT_LINE = 3'd7;
+    
+    reg [2:0] state, next_state;
+    
+    // 内部计数器
+    reg [15:0] row_cnt, col_cnt;
+    reg [15:0] burst_cnt;
+    reg [ADDR_WIDTH-1:0] current_src_addr, current_dst_addr;
+    
+    // 数据缓冲（支持突发传输）
+    reg [DATA_WIDTH-1:0] data_buffer [0:BURST_LEN-1];
+    reg [4:0] buffer_wr_ptr, buffer_rd_ptr;
+    reg [4:0] buffer_count;
+    
+    // 地址计算单元
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            current_src_addr <= 0;
+            current_dst_addr <= 0;
+        end else if (state == CALC_ADDR) begin
+            case (transfer_mode)
+                MODE_LINEAR: begin
+                    current_src_addr <= src_addr + (row_cnt * src_stride) + col_cnt;
+                    current_dst_addr <= dst_addr + (row_cnt * dst_stride) + col_cnt;
+                end
+                MODE_2D_BLOCK: begin
+                    current_src_addr <= src_addr + (row_cnt * src_stride) + col_cnt;
+                    current_dst_addr <= dst_addr + (row_cnt * dst_stride) + col_cnt;
+                end
+                MODE_TRANSPOSE: begin
+                    // 转置：源按行读，目标按列写
+                    current_src_addr <= src_addr + (row_cnt * src_stride) + col_cnt;
+                    current_dst_addr <= dst_addr + (col_cnt * dst_stride) + row_cnt * (DATA_WIDTH/8);
+                end
+                MODE_INTERLEAVE: begin
+                    // 交织模式：用于通道重排
+                    // 实现NCHW -> NHWC转换等
+                    current_src_addr <= src_addr + calculate_interleave_src(row_cnt, col_cnt);
+                    current_dst_addr <= dst_addr + calculate_interleave_dst(row_cnt, col_cnt);
+                end
+            endcase
+        end
+    end
+    
+    // 状态机控制
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            state <= IDLE;
+        else
+            state <= next_state;
+    end
+    
+    always @(*) begin
+        next_state = state;
+        case (state)
+            IDLE: begin
+                if (start)
+                    next_state = CALC_ADDR;
+            end
+            
+            CALC_ADDR: begin
+                next_state = READ_REQ;
+            end
+            
+            READ_REQ: begin
+                if (src_arready)
+                    next_state = READ_DATA;
+            end
+            
+            READ_DATA: begin
+                if (src_rvalid && burst_cnt == calculate_burst_len() - 1)
+                    next_state = WRITE_REQ;
+            end
+            
+            WRITE_REQ: begin
+                if (dst_awready)
+                    next_state = WRITE_DATA;
+            end
+            
+            WRITE_DATA: begin
+                if (dst_wready && buffer_rd_ptr == buffer_wr_ptr - 1)
+                    next_state = WRITE_RESP;
+            end
+            
+            WRITE_RESP: begin
+                if (dst_bvalid)
+                    next_state = NEXT_LINE;
+            end
+            
+            NEXT_LINE: begin
+                if (row_cnt == height - 1 && col_cnt >= width - (DATA_WIDTH/8))
+                    next_state = IDLE;
+                else
+                    next_state = CALC_ADDR;
+            end
+        endcase
+    end
+    
+    // 数据路径控制
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            row_cnt <= 0;
+            col_cnt <= 0;
+            burst_cnt <= 0;
+            buffer_wr_ptr <= 0;
+            buffer_rd_ptr <= 0;
+            done <= 0;
+            busy <= 0;
+        end else begin
+            case (state)
+                IDLE: begin
+                    done <= 0;
+                    if (start) begin
+                        row_cnt <= 0;
+                        col_cnt <= 0;
+                        busy <= 1;
+                    end
+                end
+                
+                READ_DATA: begin
+                    if (src_rvalid) begin
+                        data_buffer[buffer_wr_ptr] <= apply_transform(src_rdata);
+                        buffer_wr_ptr <= buffer_wr_ptr + 1;
+                        burst_cnt <= burst_cnt + 1;
+                    end
+                end
+                
+                WRITE_DATA: begin
+                    if (dst_wready) begin
+                        buffer_rd_ptr <= buffer_rd_ptr + 1;
+                    end
+                end
+                
+                NEXT_LINE: begin
+                    col_cnt <= col_cnt + (DATA_WIDTH/8) * calculate_burst_len();
+                    if (col_cnt >= width - (DATA_WIDTH/8)) begin
+                        col_cnt <= 0;
+                        row_cnt <= row_cnt + 1;
+                        if (row_cnt == height - 1) begin
+                            done <= 1;
+                            busy <= 0;
+                        end
+                    end
+                    burst_cnt <= 0;
+                    buffer_wr_ptr <= 0;
+                    buffer_rd_ptr <= 0;
+                end
+            endcase
+        end
+    end
+    
+    // AXI接口信号
+    always @(*) begin
+        // 默认值
+        src_arvalid = 0;
+        src_rready = 0;
+        dst_awvalid = 0;
+        dst_wvalid = 0;
+        dst_bready = 0;
+        
+        case (state)
+            READ_REQ: begin
+                src_araddr = current_src_addr;
+                src_arvalid = 1;
+            end
+            
+            READ_DATA: begin
+                src_rready = 1;
+            end
+            
+            WRITE_REQ: begin
+                dst_awaddr = current_dst_addr;
+                dst_awvalid = 1;
+            end
+            
+            WRITE_DATA: begin
+                dst_wdata = data_buffer[buffer_rd_ptr];
+                dst_wvalid = 1;
+            end
+            
+            WRITE_RESP: begin
+                dst_bready = 1;
+            end
+        endcase
+    end
+    
+    // 辅助函数
+    function [4:0] calculate_burst_len;
+        begin
+            // 根据剩余数据量计算突发长度
+            if (width - col_cnt >= BURST_LEN * (DATA_WIDTH/8))
+                calculate_burst_len = BURST_LEN;
+            else
+                calculate_burst_len = (width - col_cnt) / (DATA_WIDTH/8);
+        end
+    endfunction
+    
+    function [DATA_WIDTH-1:0] apply_transform;
+        input [DATA_WIDTH-1:0] data;
+        begin
+            // 根据模式应用数据变换（如字节序转换等）
+            case (transfer_mode)
+                MODE_LINEAR, MODE_2D_BLOCK: 
+                    apply_transform = data;
+                MODE_TRANSPOSE:
+                    apply_transform = transpose_bytes(data);
+                MODE_INTERLEAVE:
+                    apply_transform = interleave_channels(data);
+                default:
+                    apply_transform = data;
+            endcase
+        end
+    endfunction
+
+endmodule
+                        </div>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目3.6：</strong>分析Tensor Core架构相比传统MAC阵列的优势，并计算其理论性能提升。</p>
+                    <details class="hint">
+                        <summary>💡 提示</summary>
+                        <p>思考方向：Tensor Core是以矩阵为基本计算单位，而不是标量。比较一次操作完成的计算量、数据复用率、带宽需求。考虑不同精度（FP16、INT8）的影响。</p>
+                    </details>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <p><strong>答案：</strong></p>
+                        <p><strong>1. 架构对比：</strong></p>
+                        <table>
+                            <tr>
+                                <th>特性</th>
+                                <th>传统MAC阵列</th>
+                                <th>Tensor Core</th>
+                            </tr>
+                            <tr>
+                                <td>基本运算</td>
+                                <td>标量MAC: c += a × b</td>
+                                <td>矩阵MAC: D = A×B + C</td>
+                            </tr>
+                            <tr>
+                                <td>运算粒度</td>
+                                <td>1×1</td>
+                                <td>4×4×4 (或更大)</td>
+                            </tr>
+                            <tr>
+                                <td>每周期运算量</td>
+                                <td>2 ops (乘+加)</td>
+                                <td>128 ops (4×4×4×2)</td>
+                            </tr>
+                            <tr>
+                                <td>数据复用</td>
+                                <td>有限</td>
+                                <td>矩阵级复用</td>
+                            </tr>
+                        </table>
+                        
+                        <p><strong>2. Tensor Core工作原理：</strong></p>
+                        <div class="code-block">
+// Tensor Core执行的运算
+D[4×4] = A[4×4] × B[4×4] + C[4×4]
+
+// 分解为标量运算：
+for i in 0..3:
+    for j in 0..3:
+        sum = 0
+        for k in 0..3:
+            sum += A[i][k] * B[k][j]
+        D[i][j] = sum + C[i][j]
+
+// 总运算数：4×4×4 = 64次乘法，48次加法，16次加法
+// 共128 ops
+                        </div>
+                        
+                        <p><strong>3. 性能提升计算：</strong></p>
+                        <p>假设：</p>
+                        <ul>
+                            <li>传统MAC阵列：16×16 = 256个MAC单元</li>
+                            <li>Tensor Core阵列：4×4 = 16个Tensor Core</li>
+                            <li>相同的总硬件面积</li>
+                        </ul>
+                        
+                        <p>性能对比：</p>
+                        <ul>
+                            <li>传统MAC：256 × 2 = 512 ops/cycle</li>
+                            <li>Tensor Core：16 × 128 = 2048 ops/cycle</li>
+                            <li><strong>理论加速比：4×</strong></li>
+                        </ul>
+                        
+                        <p><strong>4. 优势分析：</strong></p>
+                        <ol>
+                            <li><strong>更高的计算密度：</strong>相同面积下提供更多运算</li>
+                            <li><strong>更好的数据复用：</strong>矩阵运算天然具有数据复用</li>
+                            <li><strong>减少控制开销：</strong>一条指令完成更多运算</li>
+                            <li><strong>更适合深度学习：</strong>直接匹配GEMM运算模式</li>
+                        </ol>
+                        
+                        <p><strong>5. 限制条件：</strong></p>
+                        <ul>
+                            <li>需要对齐到4×4块大小</li>
+                            <li>不适合稀疏或不规则运算</li>
+                            <li>精度限制（通常是混合精度）</li>
+                            <li>编程模型相对复杂</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目3.7：</strong>设计一个简单的NPU指令集架构(ISA)，包含计算、数据传输和控制指令。</p>
+                    <details class="hint">
+                        <summary>💡 提示</summary>
+                        <p>思考方向：NPU ISA需要支持矩阵运算、卷积、激活函数等。设计指令格式、寻址模式、寄存器文件。考虑VLIW或SIMD指令集的特点。</p>
+                    </details>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <p><strong>答案：</strong></p>
+                        <p><strong>NPU ISA设计：</strong></p>
+                        
+                        <p><strong>1. 指令格式（32-bit）：</strong></p>
+                        <div class="code-block">
+[31:28] | [27:24] | [23:16] | [15:8] | [7:0]
+OPCODE  | FLAGS   | DEST    | SRC1   | SRC2/IMM
+
+OPCODE: 4-bit 操作码
+FLAGS:  4-bit 标志位（精度、饱和模式等）
+DEST:   8-bit 目标寄存器/地址
+SRC1:   8-bit 源操作数1
+SRC2:   8-bit 源操作数2或立即数
+                        </div>
+                        
+                        <p><strong>2. 指令集分类：</strong></p>
+                        
+                        <p><strong>A. 计算指令：</strong></p>
+                        <table>
+                            <tr>
+                                <th>助记符</th>
+                                <th>操作码</th>
+                                <th>功能</th>
+                                <th>示例</th>
+                            </tr>
+                            <tr>
+                                <td>MMUL</td>
+                                <td>0x0</td>
+                                <td>矩阵乘法</td>
+                                <td>MMUL R0, M1, M2</td>
+                            </tr>
+                            <tr>
+                                <td>CONV</td>
+                                <td>0x1</td>
+                                <td>卷积运算</td>
+                                <td>CONV R0, I1, W1</td>
+                            </tr>
+                            <tr>
+                                <td>MADD</td>
+                                <td>0x2</td>
+                                <td>矩阵加法</td>
+                                <td>MADD R0, M1, M2</td>
+                            </tr>
+                            <tr>
+                                <td>ACTV</td>
+                                <td>0x3</td>
+                                <td>激活函数</td>
+                                <td>ACTV.RELU R0, R1</td>
+                            </tr>
+                            <tr>
+                                <td>POOL</td>
+                                <td>0x4</td>
+                                <td>池化操作</td>
+                                <td>POOL.MAX R0, I1</td>
+                            </tr>
+                        </table>
+                        
+                        <p><strong>B. 数据传输指令：</strong></p>
+                        <table>
+                            <tr>
+                                <th>助记符</th>
+                                <th>操作码</th>
+                                <th>功能</th>
+                                <th>示例</th>
+                            </tr>
+                            <tr>
+                                <td>LOAD</td>
+                                <td>0x8</td>
+                                <td>从内存加载</td>
+                                <td>LOAD R0, [ADDR]</td>
+                            </tr>
+                            <tr>
+                                <td>STORE</td>
+                                <td>0x9</td>
+                                <td>存储到内存</td>
+                                <td>STORE [ADDR], R0</td>
+                            </tr>
+                            <tr>
+                                <td>DMA</td>
+                                <td>0xA</td>
+                                <td>DMA传输</td>
+                                <td>DMA DST, SRC, LEN</td>
+                            </tr>
+                            <tr>
+                                <td>BCAST</td>
+                                <td>0xB</td>
+                                <td>广播数据</td>
+                                <td>BCAST R0, VAL</td>
+                            </tr>
+                        </table>
+                        
+                        <p><strong>C. 控制指令：</strong></p>
+                        <table>
+                            <tr>
+                                <th>助记符</th>
+                                <th>操作码</th>
+                                <th>功能</th>
+                                <th>示例</th>
+                            </tr>
+                            <tr>
+                                <td>SYNC</td>
+                                <td>0xC</td>
+                                <td>同步屏障</td>
+                                <td>SYNC</td>
+                            </tr>
+                            <tr>
+                                <td>LOOP</td>
+                                <td>0xD</td>
+                                <td>循环控制</td>
+                                <td>LOOP CNT, LABEL</td>
+                            </tr>
+                            <tr>
+                                <td>JUMP</td>
+                                <td>0xE</td>
+                                <td>跳转</td>
+                                <td>JUMP LABEL</td>
+                            </tr>
+                            <tr>
+                                <td>HALT</td>
+                                <td>0xF</td>
+                                <td>停止执行</td>
+                                <td>HALT</td>
+                            </tr>
+                        </table>
+                        
+                        <p><strong>3. 寄存器组织：</strong></p>
+                        <div class="code-block">
+// 通用寄存器
+R0-R31: 32个通用寄存器（标量）
+M0-M15: 16个矩阵寄存器（每个可存储32×32矩阵）
+V0-V15: 16个向量寄存器（每个256元素）
+
+// 特殊寄存器
+PC:     程序计数器
+SP:     栈指针
+STATUS: 状态寄存器
+CONFIG: 配置寄存器（精度模式等）
+                        </div>
+                        
+                        <p><strong>4. 示例程序（卷积层）：</strong></p>
+                        <div class="code-block">
+// 执行一个3×3卷积层
+// 输入: I0, 权重: W0, 输出: O0
+
+    // 配置卷积参数
+    LOAD  R0, #3        // 卷积核大小
+    LOAD  R1, #1        // stride
+    LOAD  R2, #1        // padding
+    
+    // 加载数据
+    DMA   M0, [input_addr], #input_size
+    DMA   M1, [weight_addr], #weight_size
+    
+    // 执行卷积
+    CONV  M2, M0, M1    // 使用配置的参数
+    
+    // 应用激活函数
+    ACTV.RELU M3, M2
+    
+    // 存储结果
+    DMA   [output_addr], M3, #output_size
+    
+    // 同步确保完成
+    SYNC
+    HALT
+                        </div>
+                        
+                        <p><strong>5. ISA特点：</strong></p>
+                        <ul>
+                            <li><strong>CISC风格：</strong>单条指令完成复杂操作</li>
+                            <li><strong>数据并行：</strong>原生支持矩阵/向量操作</li>
+                            <li><strong>内存层次感知：</strong>显式DMA管理</li>
+                            <li><strong>灵活精度：</strong>通过FLAGS支持多精度</li>
+                            <li><strong>硬件加速：</strong>直接映射到硬件单元</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目3.8：</strong>评估不同的功耗优化技术对NPU的影响。给定一个100 TOPS的NPU，分析各种技术的节能潜力。</p>
+                    <details class="hint">
+                        <summary>💡 提示</summary>
+                        <p>思考方向：从动态功耗（开关活动）和静态功耗（漏电流）两方面分析。考虑时钟门控、电压频率调节（DVFS）、数据精度优化、稀疏性利用等技术。</p>
+                    </details>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <p><strong>答案：</strong></p>
+                        <p><strong>基准NPU规格：</strong></p>
+                        <ul>
+                            <li>峰值性能：100 TOPS (INT8)</li>
+                            <li>功耗：50W (2 TOPS/W)</li>
+                            <li>工艺：7nm</li>
+                            <li>频率：1GHz</li>
+                        </ul>
+                        
+                        <p><strong>功耗优化技术分析：</strong></p>
+                        <table>
+                            <tr>
+                                <th>优化技术</th>
+                                <th>原理</th>
+                                <th>节能潜力</th>
+                                <th>性能影响</th>
+                                <th>实现复杂度</th>
+                            </tr>
+                            <tr>
+                                <td>时钟门控</td>
+                                <td>关闭空闲单元时钟</td>
+                                <td>10-20%</td>
+                                <td>无</td>
+                                <td>低</td>
+                            </tr>
+                            <tr>
+                                <td>电源门控</td>
+                                <td>关闭空闲单元电源</td>
+                                <td>20-30%</td>
+                                <td>唤醒延迟</td>
+                                <td>中</td>
+                            </tr>
+                            <tr>
+                                <td>DVFS</td>
+                                <td>动态调节电压频率</td>
+                                <td>30-40%</td>
+                                <td>性能下降</td>
+                                <td>中</td>
+                            </tr>
+                            <tr>
+                                <td>近阈值计算</td>
+                                <td>降低工作电压</td>
+                                <td>50-70%</td>
+                                <td>频率降低</td>
+                                <td>高</td>
+                            </tr>
+                            <tr>
+                                <td>数据压缩</td>
+                                <td>减少数据传输</td>
+                                <td>15-25%</td>
+                                <td>轻微</td>
+                                <td>中</td>
+                            </tr>
+                            <tr>
+                                <td>稀疏计算</td>
+                                <td>跳过零值运算</td>
+                                <td>20-60%</td>
+                                <td>依赖稀疏度</td>
+                                <td>高</td>
+                            </tr>
+                            <tr>
+                                <td>精度缩放</td>
+                                <td>动态调整精度</td>
+                                <td>25-40%</td>
+                                <td>精度损失</td>
+                                <td>中</td>
+                            </tr>
+                        </table>
+                        
+                        <p><strong>功耗分解（50W总功耗）：</strong></p>
+                        <div class="code-block">
+计算单元：    20W (40%)
+├── MAC阵列： 15W
+└── 向量单元： 5W
+
+存储系统：    15W (30%)
+├── SRAM：    10W
+└── 接口：     5W
+
+互连网络：     8W (16%)
+
+控制逻辑：     4W (8%)
+
+IO接口：       3W (6%)
+                        </div>
+                        
+                        <p><strong>组合优化方案：</strong></p>
+                        <ol>
+                            <li><strong>方案A（保守型）：</strong>
+                                <ul>
+                                    <li>时钟门控 + 基础DVFS</li>
+                                    <li>预期节能：25%</li>
+                                    <li>功耗降至：37.5W</li>
+                                    <li>能效提升至：2.67 TOPS/W</li>
+                                </ul>
+                            </li>
+                            <li><strong>方案B（平衡型）：</strong>
+                                <ul>
+                                    <li>时钟/电源门控 + DVFS + 数据压缩</li>
+                                    <li>预期节能：45%</li>
+                                    <li>功耗降至：27.5W</li>
+                                    <li>能效提升至：3.64 TOPS/W</li>
+                                </ul>
+                            </li>
+                            <li><strong>方案C（激进型）：</strong>
+                                <ul>
+                                    <li>全部技术组合 + 近阈值计算</li>
+                                    <li>预期节能：70%</li>
+                                    <li>功耗降至：15W（但性能降至70 TOPS）</li>
+                                    <li>能效提升至：4.67 TOPS/W</li>
+                                </ul>
+                            </li>
+                        </ol>
+                        
+                        <p><strong>实施建议：</strong></p>
+                        <ul>
+                            <li>优先实施低复杂度高收益技术（时钟门控）</li>
+                            <li>根据应用场景选择DVFS策略</li>
+                            <li>稀疏计算需要软硬件协同优化</li>
+                            <li>考虑功耗-性能-面积(PPA)平衡</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            
+            <h3>3.5 Transformer专用架构设计</h3>
+            
+            <p>Transformer模型的独特计算模式需要专门的架构优化。与CNN主要依赖卷积运算不同，Transformer的自注意力机制带来了新的架构设计挑战。</p>
+            
+            <h4>3.5.1 注意力计算的架构挑战</h4>
+            <p>自注意力计算的特点对NPU架构设计提出了独特要求：</p>
+            
+            <div class="info-box">
+                <p><strong>Transformer vs CNN计算特征对比：</strong></p>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>特征</th>
+                            <th>CNN</th>
+                            <th>Transformer</th>
+                            <th>架构影响</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>计算模式</td>
+                            <td>局部连接，权重共享</td>
+                            <td>全局连接，动态权重</td>
+                            <td>需要更大的片上存储</td>
+                        </tr>
+                        <tr>
+                            <td>内存访问</td>
+                            <td>规律的滑窗模式</td>
+                            <td>不规则的全局访问</td>
+                            <td>需要灵活的内存系统</td>
+                        </tr>
+                        <tr>
+                            <td>计算复杂度</td>
+                            <td>O(N)</td>
+                            <td>O(N²)</td>
+                            <td>需要更强的计算能力</td>
+                        </tr>
+                        <tr>
+                            <td>数据复用</td>
+                            <td>高（权重复用）</td>
+                            <td>低（动态注意力）</td>
+                            <td>需要新的数据流设计</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <h4>3.5.2 Transformer加速器架构</h4>
+            <p>针对Transformer的特点，现代NPU采用了多种架构创新：</p>
+            
+            <div class="code-block">
+// Transformer专用NPU架构
+┌─────────────────────────────────────────┐
+│          控制单元 (Controller)           │
+│  - 注意力调度器                         │
+│  - 动态分块控制                         │
+│  - 多头并行管理                         │
+├─────────────────────────────────────────┤
+│     专用计算引擎 (Compute Engines)      │
+│ ┌─────────────┐ ┌──────────────┐       │
+│ │  GEMM引擎   │ │ Softmax引擎 │       │
+│ │ - QK计算    │ │ - 指数单元  │       │
+│ │ - PV计算    │ │ - 归一化器  │       │
+│ └─────────────┘ └──────────────┘       │
+│ ┌─────────────┐ ┌──────────────┐       │
+│ │ 层归一化    │ │  特殊函数   │       │
+│ │   引擎      │ │    单元     │       │
+│ └─────────────┘ └──────────────┘       │
+├─────────────────────────────────────────┤
+│      层次化存储系统 (Memory)            │
+│ ┌─────────────────────────────┐         │
+│ │     注意力缓存 (Att Cache)  │         │
+│ │   - KV Cache: 512KB         │         │
+│ │   - Score Buffer: 256KB     │         │
+│ └─────────────────────────────┘         │
+│ ┌─────────────────────────────┐         │
+│ │    全局缓冲区 (L2 Buffer)   │         │
+│ │   - 统一地址空间: 2MB       │         │
+│ └─────────────────────────────┘         │
+└─────────────────────────────────────────┘
+            </div>
+            
+            <h4>3.5.3 KV Cache优化架构</h4>
+            <p>在Transformer推理中，KV Cache是关键的性能瓶颈。专用的缓存架构可以显著提升性能：</p>
+            
+            <div class="code-block">
+// KV Cache管理单元
+module KVCacheManager #(
+    parameter MAX_SEQ_LEN = 8192,
+    parameter D_MODEL = 1024,
+    parameter NUM_HEADS = 16,
+    parameter CACHE_WAYS = 4
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 请求接口
+    input wire cache_req,
+    input wire cache_write,
+    input wire [12:0] seq_pos,      // 序列位置
+    input wire [3:0] head_idx,       // 注意力头索引
+    input wire [9:0] dim_idx,        // 维度索引
+    
+    // 数据接口
+    input wire [15:0] write_data,    // FP16
+    output reg [15:0] read_data,
+    output reg cache_hit,
+    
+    // 预取接口
+    input wire prefetch_enable,
+    input wire [12:0] prefetch_pos
+);
+    
+    // 分组关联缓存结构
+    localparam CACHE_SETS = MAX_SEQ_LEN / CACHE_WAYS;
+    localparam D_HEAD = D_MODEL / NUM_HEADS;
+    
+    // 缓存存储
+    reg [15:0] k_cache [CACHE_SETS-1:0][CACHE_WAYS-1:0][D_HEAD-1:0];
+    reg [15:0] v_cache [CACHE_SETS-1:0][CACHE_WAYS-1:0][D_HEAD-1:0];
+    
+    // 标签和有效位
+    reg [12:0] cache_tags [CACHE_SETS-1:0][CACHE_WAYS-1:0];
+    reg cache_valid [CACHE_SETS-1:0][CACHE_WAYS-1:0];
+    
+    // LRU替换策略
+    reg [1:0] lru_counter [CACHE_SETS-1:0][CACHE_WAYS-1:0];
+    
+    // 地址解码
+    wire [9:0] set_idx = seq_pos[9:0];
+    wire [2:0] tag = seq_pos[12:10];
+    
+    // 命中检测
+    integer way;
+    reg [1:0] hit_way;
+    always @(*) begin
+        cache_hit = 1'b0;
+        hit_way = 2'b00;
+        for (way = 0; way < CACHE_WAYS; way = way + 1) begin
+            if (cache_valid[set_idx][way] && 
+                cache_tags[set_idx][way] == tag) begin
+                cache_hit = 1'b1;
+                hit_way = way;
+            end
+        end
+    end
+    
+    // 缓存访问
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            // 初始化
+            for (int i = 0; i < CACHE_SETS; i++) begin
+                for (int j = 0; j < CACHE_WAYS; j++) begin
+                    cache_valid[i][j] <= 1'b0;
+                    lru_counter[i][j] <= 2'b00;
+                end
+            end
+        end else if (cache_req) begin
+            if (cache_write) begin
+                if (cache_hit) begin
+                    // 写命中：更新数据
+                    k_cache[set_idx][hit_way][dim_idx] <= write_data;
+                    // 更新LRU
+                    lru_counter[set_idx][hit_way] <= 2'b11;
+                end else begin
+                    // 写缺失：分配新行
+                    // 找LRU way
+                    reg [1:0] lru_way = 0;
+                    reg [1:0] min_lru = 2'b11;
+                    for (way = 0; way < CACHE_WAYS; way = way + 1) begin
+                        if (lru_counter[set_idx][way] < min_lru) begin
+                            min_lru = lru_counter[set_idx][way];
+                            lru_way = way;
+                        end
+                    end
+                    
+                    // 写入新数据
+                    k_cache[set_idx][lru_way][dim_idx] <= write_data;
+                    cache_tags[set_idx][lru_way] <= tag;
+                    cache_valid[set_idx][lru_way] <= 1'b1;
+                    lru_counter[set_idx][lru_way] <= 2'b11;
+                end
+            end else begin
+                // 读操作
+                if (cache_hit) begin
+                    read_data <= k_cache[set_idx][hit_way][dim_idx];
+                    // 更新LRU
+                    lru_counter[set_idx][hit_way] <= 2'b11;
+                end
+            end
+            
+            // 老化LRU计数器
+            for (way = 0; way < CACHE_WAYS; way = way + 1) begin
+                if (way != hit_way && lru_counter[set_idx][way] > 0) begin
+                    lru_counter[set_idx][way] <= lru_counter[set_idx][way] - 1;
+                end
+            end
+        end
+    end
+    
+    // 预取逻辑
+    reg [12:0] prefetch_addr;
+    reg prefetch_active;
+    
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            prefetch_active <= 1'b0;
+        end else if (prefetch_enable && !cache_req) begin
+            // 在空闲时执行预取
+            prefetch_active <= 1'b1;
+            prefetch_addr <= prefetch_pos;
+            // 实际预取逻辑需要连接到内存系统
+        end
+    end
+endmodule
+            </div>
+            
+            <h4>3.5.4 动态序列长度支持</h4>
+            <p>Transformer的序列长度可变特性需要灵活的架构支持：</p>
+            
+            <div class="info-box">
+                <p><strong>序列长度自适应策略：</strong></p>
+                <ul>
+                    <li><strong>分段处理：</strong>将长序列分成固定大小的段，每段独立处理</li>
+                    <li><strong>动态分块：</strong>根据序列长度动态调整块大小，平衡内存和计算</li>
+                    <li><strong>稀疏注意力：</strong>只计算重要的注意力连接，减少计算量</li>
+                    <li><strong>滑窗注意力：</strong>限制注意力范围在局部窗口内</li>
+                </ul>
+            </div>
+            
+            <h4>3.5.5 多模态融合架构</h4>
+            <p>现代Transformer需要处理多种模态（文本、图像、音频），这需要统一的架构设计：</p>
+            
+            <div class="code-block">
+// 多模态Transformer处理单元
+module MultiModalProcessor #(
+    parameter MAX_TEXT_LEN = 2048,
+    parameter MAX_IMAGE_PATCHES = 1024,
+    parameter D_MODEL = 768
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 模态选择
+    input wire [1:0] modality,  // 0:文本 1:图像 2:音频 3:融合
+    
+    // 文本输入
+    input wire [15:0] text_embeddings [MAX_TEXT_LEN-1:0][D_MODEL-1:0],
+    input wire [10:0] text_len,
+    
+    // 图像输入（patch embeddings）
+    input wire [15:0] image_patches [MAX_IMAGE_PATCHES-1:0][D_MODEL-1:0],
+    input wire [9:0] num_patches,
+    
+    // 位置编码生成器
+    output reg [15:0] position_encoding [2047:0][D_MODEL-1:0]
+);
+    
+    // 统一的embedding投影
+    reg [15:0] unified_embeddings [4095:0][D_MODEL-1:0];
+    reg [11:0] total_len;
+    
+    // 模态特定的位置编码
+    always @(posedge clk) begin
+        case (modality)
+            2'b00: begin  // 文本：1D位置编码
+                for (int i = 0; i < text_len; i++) begin
+                    for (int j = 0; j < D_MODEL; j++) begin
+                        if (j[0] == 0) begin
+                            // 偶数维度：sin(pos/10000^(2i/d_model))
+                            position_encoding[i][j] <= $sin(i / (10000.0 ** (j/D_MODEL)));
+                        end else begin
+                            // 奇数维度：cos(pos/10000^(2i/d_model))
+                            position_encoding[i][j] <= $cos(i / (10000.0 ** ((j-1)/D_MODEL)));
+                        end
+                    end
+                end
+                total_len <= text_len;
+            end
+            
+            2'b01: begin  // 图像：2D位置编码
+                for (int p = 0; p < num_patches; p++) begin
+                    int row = p / 32;  // 假设32x32 patches
+                    int col = p % 32;
+                    for (int j = 0; j < D_MODEL/2; j++) begin
+                        // 行编码
+                        position_encoding[p][j*2] <= $sin(row / (10000.0 ** (j/(D_MODEL/2))));
+                        // 列编码
+                        position_encoding[p][j*2+1] <= $sin(col / (10000.0 ** (j/(D_MODEL/2))));
+                    end
+                end
+                total_len <= num_patches;
+            end
+            
+            2'b11: begin  // 多模态融合
+                // 文本部分
+                for (int i = 0; i < text_len; i++) begin
+                    unified_embeddings[i] <= text_embeddings[i];
+                end
+                // 图像部分（追加）
+                for (int i = 0; i < num_patches; i++) begin
+                    unified_embeddings[text_len + i] <= image_patches[i];
+                end
+                total_len <= text_len + num_patches;
+                
+                // 生成融合的位置编码
+                // 可以使用不同的策略，如相对位置编码
+            end
+        endcase
+    end
+    
+    // 跨模态注意力掩码生成
+    reg attention_mask [4095:0][4095:0];
+    
+    always @(posedge clk) begin
+        if (modality == 2'b11) begin  // 融合模式
+            // 允许跨模态注意力
+            for (int i = 0; i < total_len; i++) begin
+                for (int j = 0; j < total_len; j++) begin
+                    if (i < text_len && j >= text_len) begin
+                        // 文本可以关注图像
+                        attention_mask[i][j] <= 1'b1;
+                    end else if (i >= text_len && j < text_len) begin
+                        // 图像可以关注文本
+                        attention_mask[i][j] <= 1'b1;
+                    end else begin
+                        // 模态内注意力始终允许
+                        attention_mask[i][j] <= 1'b1;
+                    end
+                end
+            end
+        end
+    end
+endmodule
+            </div>
+            
+            <div class="exercise">
+                <h4>练习 3.5</h4>
+                <div class="question">
+                    <p><strong>题目：</strong>设计一个支持动态批处理的Transformer加速器架构，要求：
+                    1) 支持可变的批大小（1-32）
+                    2) 支持不同序列长度的padding和mask
+                    3) 实现高效的批内并行和批间流水
+                    4) 考虑内存带宽优化</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <div class="code-block">
+module DynamicBatchTransformer #(
+    parameter MAX_BATCH_SIZE = 32,
+    parameter MAX_SEQ_LEN = 512,
+    parameter D_MODEL = 768,
+    parameter NUM_HEADS = 12,
+    parameter NUM_PE = 256  // 处理单元数量
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 批处理配置
+    input wire [4:0] batch_size,          // 1-32
+    input wire [8:0] seq_lengths [MAX_BATCH_SIZE-1:0],  // 每个样本的长度
+    input wire batch_start,
+    
+    // 输入数据接口
+    input wire [15:0] input_data,
+    input wire input_valid,
+    input wire [4:0] sample_idx,
+    input wire [8:0] token_idx,
+    
+    // 输出接口
+    output reg [15:0] output_data,
+    output reg output_valid,
+    output reg [4:0] output_sample_idx,
+    output reg [8:0] output_token_idx,
+    output reg batch_done
+);
+    
+    // 批处理调度器
+    reg [2:0] batch_state;
+    localparam IDLE = 3'b000;
+    localparam SCHEDULE = 3'b001;
+    localparam PROCESS = 3'b010;
+    localparam COLLECT = 3'b011;
+    
+    // 工作分配表
+    reg [4:0] pe_assignment [NUM_PE-1:0];  // PE到样本的映射
+    reg [8:0] pe_token_start [NUM_PE-1:0]; // 每个PE处理的起始token
+    reg [8:0] pe_token_end [NUM_PE-1:0];   // 每个PE处理的结束token
+    reg pe_active [NUM_PE-1:0];
+    
+    // Padding掩码生成
+    reg padding_mask [MAX_BATCH_SIZE-1:0][MAX_SEQ_LEN-1:0];
+    
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            batch_state <= IDLE;
+            batch_done <= 1'b0;
+        end else begin
+            case (batch_state)
+                IDLE: begin
+                    if (batch_start) begin
+                        batch_state <= SCHEDULE;
+                        batch_done <= 1'b0;
+                        
+                        // 生成padding掩码
+                        for (int b = 0; b < MAX_BATCH_SIZE; b++) begin
+                            for (int s = 0; s < MAX_SEQ_LEN; s++) begin
+                                if (b < batch_size && s < seq_lengths[b]) begin
+                                    padding_mask[b][s] <= 1'b1;  // 有效位置
+                                end else begin
+                                    padding_mask[b][s] <= 1'b0;  // Padding位置
+                                end
+                            end
+                        end
+                    end
+                end
+                
+                SCHEDULE: begin
+                    // 动态工作分配算法
+                    schedule_work();
+                    batch_state <= PROCESS;
+                end
+                
+                PROCESS: begin
+                    // 等待所有PE完成
+                    if (all_pe_done()) begin
+                        batch_state <= COLLECT;
+                    end
+                end
+                
+                COLLECT: begin
+                    batch_done <= 1'b1;
+                    batch_state <= IDLE;
+                end
+            endcase
+        end
+    end
+    
+    // 工作调度函数
+    task schedule_work;
+        integer total_tokens;
+        integer tokens_per_pe;
+        integer current_pe;
+        integer assigned_tokens;
+        begin
+            // 计算总token数
+            total_tokens = 0;
+            for (int b = 0; b < batch_size; b++) begin
+                total_tokens = total_tokens + seq_lengths[b];
+            end
+            
+            // 平均分配策略
+            tokens_per_pe = (total_tokens + NUM_PE - 1) / NUM_PE;
+            
+            current_pe = 0;
+            assigned_tokens = 0;
+            
+            // 分配样本和token范围到PE
+            for (int b = 0; b < batch_size; b++) begin
+                integer sample_start = 0;
+                integer remaining = seq_lengths[b];
+                
+                while (remaining > 0 && current_pe < NUM_PE) begin
+                    integer chunk_size;
+                    
+                    // 确定当前PE处理的token数
+                    if (assigned_tokens + remaining <= tokens_per_pe) begin
+                        chunk_size = remaining;
+                    end else begin
+                        chunk_size = tokens_per_pe - assigned_tokens;
+                    end
+                    
+                    // 分配工作
+                    pe_assignment[current_pe] = b;
+                    pe_token_start[current_pe] = sample_start;
+                    pe_token_end[current_pe] = sample_start + chunk_size;
+                    pe_active[current_pe] = 1'b1;
+                    
+                    sample_start = sample_start + chunk_size;
+                    remaining = remaining - chunk_size;
+                    assigned_tokens = assigned_tokens + chunk_size;
+                    
+                    // 切换到下一个PE
+                    if (assigned_tokens >= tokens_per_pe) begin
+                        current_pe = current_pe + 1;
+                        assigned_tokens = 0;
+                    end
+                end
+            end
+            
+            // 标记未使用的PE
+            for (int p = current_pe; p < NUM_PE; p++) begin
+                pe_active[p] = 1'b0;
+            end
+        end
+    endtask
+    
+    // 检查所有PE是否完成
+    function all_pe_done;
+        begin
+            all_pe_done = 1'b1;
+            for (int p = 0; p < NUM_PE; p++) begin
+                if (pe_active[p] && !pe_done[p]) begin
+                    all_pe_done = 1'b0;
+                end
+            end
+        end
+    endfunction
+    
+    // PE阵列实例化
+    wire pe_done [NUM_PE-1:0];
+    
+    genvar pe_idx;
+    generate
+        for (pe_idx = 0; pe_idx < NUM_PE; pe_idx = pe_idx + 1) begin : pe_array
+            TransformerPE #(
+                .D_MODEL(D_MODEL),
+                .NUM_HEADS(NUM_HEADS)
+            ) pe_inst (
+                .clk(clk),
+                .rst_n(rst_n),
+                .enable(pe_active[pe_idx]),
+                .sample_idx(pe_assignment[pe_idx]),
+                .token_start(pe_token_start[pe_idx]),
+                .token_end(pe_token_end[pe_idx]),
+                .padding_mask(padding_mask[pe_assignment[pe_idx]]),
+                .done(pe_done[pe_idx])
+            );
+        end
+    endgenerate
+    
+    // 内存带宽优化：批内数据预取
+    reg [15:0] prefetch_buffer [MAX_BATCH_SIZE-1:0][63:0][D_MODEL-1:0];
+    reg [5:0] prefetch_ptr [MAX_BATCH_SIZE-1:0];
+    
+    always @(posedge clk) begin
+        if (batch_state == PROCESS) begin
+            // 预取下一个窗口的数据
+            for (int b = 0; b < batch_size; b++) begin
+                if (prefetch_ptr[b] < seq_lengths[b]) begin
+                    // 发起预取请求
+                    // 实际实现需要连接到内存控制器
+                end
+            end
+        end
+    end
+    
+    // 结果收集和重排序
+    reg [15:0] output_buffer [MAX_BATCH_SIZE-1:0][MAX_SEQ_LEN-1:0][D_MODEL-1:0];
+    reg output_ready [MAX_BATCH_SIZE-1:0][MAX_SEQ_LEN-1:0];
+    
+    // 输出生成状态机
+    reg [4:0] out_sample;
+    reg [8:0] out_token;
+    
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            output_valid <= 1'b0;
+            out_sample <= 0;
+            out_token <= 0;
+        end else if (batch_state == COLLECT) begin
+            // 按顺序输出结果
+            if (out_sample < batch_size) begin
+                if (out_token < seq_lengths[out_sample] && 
+                    output_ready[out_sample][out_token]) begin
+                    output_data <= output_buffer[out_sample][out_token][0]; // 简化：只输出第一维
+                    output_valid <= 1'b1;
+                    output_sample_idx <= out_sample;
+                    output_token_idx <= out_token;
+                    
+                    // 移动到下一个token
+                    if (out_token == seq_lengths[out_sample] - 1) begin
+                        out_token <= 0;
+                        out_sample <= out_sample + 1;
+                    end else begin
+                        out_token <= out_token + 1;
+                    end
+                end else begin
+                    output_valid <= 1'b0;
+                end
+            end
+        end else begin
+            output_valid <= 1'b0;
+        end
+    end
+endmodule
+                        </div>
+                        <p><strong>设计要点：</strong></p>
+                        <ul>
+                            <li>动态工作分配实现负载均衡</li>
+                            <li>Padding掩码避免无效计算</li>
+                            <li>预取机制优化内存带宽利用</li>
+                            <li>PE级并行和流水线提高吞吐量</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+        </div>
+        
+        <div class="chapter-nav">
+            <a href="chapter2.html" class="prev">上一章</a>
+            <a href="chapter4.html" class="next">下一章</a>
+        </div>
+    </div>
+</body>
+</html>

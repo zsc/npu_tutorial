@@ -1,0 +1,3464 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>第11章：性能优化技术 - NPU设计教程</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f5f5f5;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
+            color: white;
+            padding: 40px 0;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .nav-bar {
+            background: #34495e;
+            padding: 15px 0;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .nav-bar ul {
+            list-style: none;
+            display: flex;
+            justify-content: center;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0;
+        }
+
+        .nav-bar li {
+            margin: 0 15px;
+        }
+
+        .nav-bar a {
+            color: white;
+            text-decoration: none;
+            padding: 5px 10px;
+            border-radius: 4px;
+            transition: background 0.3s;
+        }
+
+        .nav-bar a:hover {
+            background: #2c3e50;
+        }
+
+        .nav-bar .current {
+            background: #2c3e50;
+            font-weight: bold;
+        }
+
+        .chapter {
+            background: white;
+            margin: 20px 0;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .chapter h2 {
+            color: #2c3e50;
+            font-size: 2em;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 3px solid #3498db;
+        }
+
+        .chapter h3 {
+            color: #34495e;
+            font-size: 1.5em;
+            margin: 25px 0 15px 0;
+        }
+
+        .chapter h4 {
+            color: #7f8c8d;
+            font-size: 1.2em;
+            margin: 20px 0 10px 0;
+        }
+
+        .code-block {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 20px;
+            border-radius: 5px;
+            margin: 15px 0;
+            overflow-x: auto;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            position: relative;
+        }
+        
+        /* Language label */
+        .code-block::before {
+            content: attr(data-language);
+            position: absolute;
+            top: 5px;
+            right: 10px;
+            font-size: 12px;
+            color: #95a5a6;
+            text-transform: uppercase;
+        }
+        
+        /* Syntax highlighting classes */
+        .code-block .keyword { color: #e74c3c; font-weight: bold; }
+        .code-block .type { color: #3498db; }
+        .code-block .comment { color: #95a5a6; font-style: italic; }
+        .code-block .number { color: #e67e22; }
+        .code-block .string { color: #2ecc71; }
+        .code-block .function { color: #3498db; }
+
+        .exercise {
+            background: #ecf0f1;
+            padding: 20px;
+            border-radius: 5px;
+            margin: 20px 0;
+            border-left: 5px solid #3498db;
+        }
+
+        .exercise h4 {
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+
+        .question {
+            margin: 15px 0;
+            padding: 15px;
+            background: white;
+            border-radius: 5px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .answer {
+            margin-top: 10px;
+            padding: 15px;
+            background: #e8f5e9;
+            border-radius: 5px;
+            display: none;
+            border-left: 4px solid #4caf50;
+        }
+
+        .answer.show {
+            display: block;
+        }
+        
+        .hint {
+            margin: 10px 0;
+            padding: 10px 15px;
+            background: #fff8dc;
+            border-left: 4px solid #ffa500;
+            border-radius: 5px;
+            font-size: 0.95em;
+        }
+        
+        .hint summary {
+            cursor: pointer;
+            font-weight: bold;
+            color: #ff8c00;
+            outline: none;
+        }
+        
+        .hint summary:hover {
+            color: #ff6347;
+        }
+        
+        .hint p {
+            margin-top: 10px;
+            color: #666;
+        }
+
+        .toggle-answer {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-top: 10px;
+            transition: background 0.3s;
+        }
+
+        .toggle-answer:hover {
+            background: #2980b9;
+        }
+
+        .table-wrapper {
+            overflow-x: auto;
+            margin: 20px 0;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+
+        th {
+            background: #34495e;
+            color: white;
+            font-weight: bold;
+        }
+
+        tr:hover {
+            background: #f5f5f5;
+        }
+
+        .info-box {
+            background: #e3f2fd;
+            border-left: 5px solid #2196f3;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+
+        .warning-box {
+            background: #fff3cd;
+            border-left: 5px solid #ff9800;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+
+        .chapter-nav {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 2px solid #ecf0f1;
+        }
+
+        .chapter-nav a {
+            background: #3498db;
+            color: white;
+            padding: 10px 20px;
+            text-decoration: none;
+            border-radius: 5px;
+            transition: background 0.3s;
+        }
+
+        .chapter-nav a:hover {
+            background: #2980b9;
+        }
+
+        .chapter-nav .prev::before {
+            content: "← ";
+        }
+
+        .chapter-nav .next::after {
+            content: " →";
+        }
+
+        /* Mobile Responsive Design */
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+            
+            header {
+                padding: 20px 10px;
+            }
+            
+            header h1 {
+                font-size: 1.5em;
+            }
+            
+            .chapter {
+                padding: 15px;
+                margin: 10px 0;
+            }
+            
+            .chapter h2 {
+                font-size: 1.5em;
+            }
+            
+            .chapter h3 {
+                font-size: 1.2em;
+            }
+            
+            .nav-bar ul {
+                flex-wrap: wrap;
+                justify-content: center;
+            }
+            
+            .nav-bar li {
+                margin: 5px;
+            }
+            
+            .code-block {
+                padding: 10px;
+                font-size: 12px;
+            }
+            
+            table {
+                font-size: 14px;
+            }
+            
+            th, td {
+                padding: 8px;
+            }
+        }
+    </style>
+    <script>
+        // Syntax highlighting functions
+        function escapeHtml(text) {
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return text.replace(/[&<>"']/g, m => map[m]);
+        }
+        
+        function highlightSyntax() {
+            const codeBlocks = document.querySelectorAll('.code-block');
+            
+            codeBlocks.forEach(block => {
+                const content = block.textContent;
+                let language = 'text';
+                let highlighted = content;
+                
+                // Auto-detect language based on content
+                if (content.includes('module ') || content.includes('always @') || content.includes('wire ') || content.includes('reg ')) {
+                    language = 'verilog';
+                    highlighted = highlightVerilog(content);
+                } else if (content.includes('import ') || content.includes('def ') || content.includes('class ')) {
+                    language = 'python';
+                    highlighted = highlightPython(content);
+                }
+                
+                block.innerHTML = highlighted;
+                block.classList.add(language);
+                block.setAttribute('data-language', language);
+            });
+        }
+        
+        function highlightVerilog(code) {
+            const placeholders = [];
+            let placeholderIndex = 0;
+            
+            // Replace comments with placeholders
+            code = code.replace(/(\/\/.*$|\/\*[\s\S]*?\*\/)/gm, (match) => {
+                const placeholder = `__COMMENT_${placeholderIndex}__`;
+                placeholders[placeholderIndex] = `<span class="comment">${escapeHtml(match)}</span>`;
+                placeholderIndex++;
+                return placeholder;
+            });
+            
+            // Replace strings with placeholders
+            code = code.replace(/("[^"]*")/g, (match) => {
+                const placeholder = `__STRING_${placeholderIndex}__`;
+                placeholders[placeholderIndex] = `<span class="string">${escapeHtml(match)}</span>`;
+                placeholderIndex++;
+                return placeholder;
+            });
+            
+            // Apply highlights
+            const keywords = /\b(module|endmodule|input|output|wire|reg|always|assign|begin|end|if|else|for|while|parameter|posedge|negedge)\b/g;
+            const types = /\b(bit|logic|byte|shortint|int|longint|integer|time|real)\b/g;
+            const numbers = /\b(\d+'[hbdo][\da-fA-F_]+|\d+)\b/g;
+            
+            code = code.replace(keywords, '<span class="keyword">$1</span>');
+            code = code.replace(types, '<span class="type">$1</span>');
+            code = code.replace(numbers, '<span class="number">$1</span>');
+            
+            // Restore placeholders
+            for (let i = 0; i < placeholderIndex; i++) {
+                code = code.replace(new RegExp(`__COMMENT_${i}__`, 'g'), placeholders[i]);
+                code = code.replace(new RegExp(`__STRING_${i}__`, 'g'), placeholders[i]);
+            }
+            
+            return code;
+        }
+        
+        function highlightPython(code) {
+            const placeholders = [];
+            let placeholderIndex = 0;
+            
+            // Replace comments
+            code = code.replace(/(#.*$)/gm, (match) => {
+                const placeholder = `__COMMENT_${placeholderIndex}__`;
+                placeholders[placeholderIndex] = `<span class="comment">${escapeHtml(match)}</span>`;
+                placeholderIndex++;
+                return placeholder;
+            });
+            
+            // Replace strings
+            code = code.replace(/("[^"]*"|'[^']*')/g, (match) => {
+                const placeholder = `__STRING_${placeholderIndex}__`;
+                placeholders[placeholderIndex] = `<span class="string">${escapeHtml(match)}</span>`;
+                placeholderIndex++;
+                return placeholder;
+            });
+            
+            // Apply highlights
+            const keywords = /\b(and|as|assert|break|class|continue|def|del|elif|else|except|False|finally|for|from|global|if|import|in|is|lambda|None|not|or|pass|raise|return|True|try|while|with|yield)\b/g;
+            const builtins = /\b(abs|all|any|bin|bool|dict|float|format|hex|input|int|len|list|map|max|min|open|print|range|round|set|sorted|str|sum|tuple|type|zip)\b/g;
+            const numbers = /\b(\d+\.?\d*)\b/g;
+            
+            code = code.replace(keywords, '<span class="keyword">$1</span>');
+            code = code.replace(builtins, '<span class="function">$1</span>');
+            code = code.replace(numbers, '<span class="number">$1</span>');
+            
+            // Restore placeholders
+            for (let i = 0; i < placeholderIndex; i++) {
+                code = code.replace(new RegExp(`__COMMENT_${i}__`, 'g'), placeholders[i]);
+                code = code.replace(new RegExp(`__STRING_${i}__`, 'g'), placeholders[i]);
+            }
+            
+            return code;
+        }
+        
+        // Toggle answer visibility
+        document.addEventListener('DOMContentLoaded', function() {
+            highlightSyntax();
+            
+            const toggleButtons = document.querySelectorAll('.toggle-answer');
+            toggleButtons.forEach(button => {
+                button.addEventListener('click', function() {
+                    const answer = this.nextElementSibling;
+                    answer.classList.toggle('show');
+                    this.textContent = answer.classList.contains('show') ? '隐藏答案' : '显示答案';
+                });
+            });
+        });
+    </script>
+</head>
+<body>
+    <header>
+        <h1>第11章：性能优化技术</h1>
+    </header>
+    
+    <nav class="nav-bar">
+        <ul>
+            <li><a href="index.html">首页</a></li>
+            <li><a href="chapter1.html">第1章</a></li>
+            <li><a href="chapter2.html">第2章</a></li>
+            <li><a href="chapter3.html">第3章</a></li>
+            <li><a href="chapter4.html">第4章</a></li>
+            <li><a href="chapter5.html">第5章</a></li>
+            <li><a href="chapter6.html">第6章</a></li>
+            <li><a href="chapter7.html">第7章</a></li>
+            <li><a href="chapter8.html">第8章</a></li>
+            <li><a href="chapter9.html">第9章</a></li>
+            <li><a href="chapter10.html">第10章</a></li>
+            <li><a href="chapter11.html" class="current">第11章</a></li>
+            <li><a href="chapter12.html">第12章</a></li>
+        </ul>
+    </nav>
+    
+    <div class="container">
+        <div class="chapter">
+            <h2>第11章：性能优化技术</h2>
+            
+            <p>NPU的性能优化是一个系统工程，涉及算法、架构、实现等多个层面。本章深入探讨NPU性能优化的四个关键维度：算法优化、数据流优化、功耗优化和面积优化，以及它们之间的相互关系和权衡。</p>
+
+            <h3>11.1 算法优化</h3>
+            
+            <p>算法优化是从根本上减少计算量和参数量的有效方法。通过模型压缩、量化等技术，可以在保持精度的同时显著提升NPU的运行效率。</p>
+
+            <h4>11.1.1 模型量化技术</h4>
+            <div class="warning-box">
+                <p><strong>重要说明：</strong>本章的部分代码示例是为了说明概念而设计的行为模型，并非可直接综合的RTL代码。在实际硬件设计中，需要根据具体的工艺库和设计约束进行相应调整。</p>
+            </div>
+            <div class="code-block">
+// 量化方案对比
+┌──────────────┬────────┬────────┬────────┬──────────┐
+│   量化方案    │  精度  │ 模型大小│ 推理速度│ 精度损失 │
+├──────────────┼────────┼────────┼────────┼──────────┤
+│    FP32      │ 100%   │  100%  │  1.0x  │   0%     │
+│    FP16      │ 99.9%  │   50%  │  2.0x  │  <0.1%   │
+│    INT8      │ 99.5%  │   25%  │  4.0x  │  ~0.5%   │
+│    INT4      │ 98.5%  │  12.5% │  8.0x  │  ~1.5%   │
+│  Binary/1-bit│ 92-95% │  3.1%  │  32x   │  5-8%    │
+└──────────────┴────────┴────────┴────────┴──────────┘
+
+// INT8量化器 - 定点数实现
+// 注意：这是一个简化的行为模型，展示量化的基本原理
+// 实际设计中，输入数据通常已经是定点格式
+module INT8_Quantizer #(
+    parameter INPUT_WIDTH = 16,      // 输入定点数位宽
+    parameter INPUT_FRAC_BITS = 8,   // 输入小数位数
+    parameter SCALE_WIDTH = 16,      // 缩放因子位宽
+    parameter SCALE_FRAC_BITS = 12  // 缩放因子小数位数
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 定点数输入
+    input wire signed [INPUT_WIDTH-1:0] fixed_input,
+    input wire input_valid,
+    
+    // 量化参数（定点格式）
+    input wire [SCALE_WIDTH-1:0] scale,      // 缩放因子
+    input wire [7:0] zero_point,             // 零点偏移
+    
+    // INT8输出
+    output reg [7:0] int8_output,
+    output reg output_valid
+);
+    
+    // 流水线寄存器和有效信号
+    reg signed [INPUT_WIDTH+SCALE_WIDTH-1:0] scaled_value;
+    reg signed [INPUT_WIDTH-1:0] rounded_value;
+    reg signed [8:0] with_zp_value;
+    
+    reg stage1_valid, stage2_valid, stage3_valid;
+    
+    // 第一级：定点数乘法（缩放）
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            scaled_value <= 0;
+            stage1_valid <= 1'b0;
+        end else if (input_valid) begin
+            // 定点数乘法：结果需要右移以对齐小数点
+            scaled_value <= fixed_input * $signed({1'b0, scale});
+            stage1_valid <= 1'b1;
+        end else begin
+            stage1_valid <= 1'b0;
+        end
+    end
+    
+    // 第二级：舍入处理
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            rounded_value <= 0;
+            stage2_valid <= 1'b0;
+        end else if (stage1_valid) begin
+            // 右移对齐并四舍五入
+            localparam SHIFT = INPUT_FRAC_BITS + SCALE_FRAC_BITS;
+            rounded_value <= (scaled_value + (1 << (SHIFT-1))) >>> SHIFT;
+            stage2_valid <= 1'b1;
+        end else begin
+            stage2_valid <= 1'b0;
+        end
+    end
+    
+    // 第三级：加零点
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            with_zp_value <= 0;
+            stage3_valid <= 1'b0;
+        end else if (stage2_valid) begin
+            with_zp_value <= rounded_value + zero_point;
+            stage3_valid <= 1'b1;
+        end else begin
+            stage3_valid <= 1'b0;
+        end
+    end
+    
+    // 第四级：饱和到INT8范围
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            int8_output <= 8'h0;
+            output_valid <= 1'b0;
+        end else if (stage3_valid) begin
+            // 饱和到[0, 255]
+            if (with_zp_value > 255)
+                int8_output <= 8'hFF;
+            else if (with_zp_value < 0)
+                int8_output <= 8'h00;
+            else
+                int8_output <= with_zp_value[7:0];
+                
+            output_valid <= 1'b1;
+        end else begin
+            output_valid <= 1'b0;
+        end
+    end
+endmodule
+            </div>
+            
+            <h4>11.1.2 知识蒸馏技术</h4>
+            <div class="info-box">
+                <p><strong>知识蒸馏（Knowledge Distillation）：</strong>使用大型教师模型指导小型学生模型的训练，在保持高精度的同时显著减小模型规模。这是部署前优化的重要技术。</p>
+            </div>
+            <div class="code-block">
+// 知识蒸馏在NPU中的应用
+// 1. 离线阶段：使用教师模型生成软标签
+// 2. 训练阶段：学生模型同时学习硬标签和软标签
+// 3. 部署阶段：只需要学生模型，大幅减少计算量
+
+知识蒸馏的硬件优势：
+┌─────────────┬──────────┬──────────┬──────────┐
+│   模型类型   │ 参数量   │ 计算量   │ 精度     │
+├─────────────┼──────────┼──────────┼──────────┤
+│ 教师模型     │ 100M     │ 10 GOPS  │ 95.0%    │
+│ 学生模型     │ 10M      │ 1 GOPS   │ 93.5%    │
+│ 直接训练小模型│ 10M      │ 1 GOPS   │ 91.0%    │
+└─────────────┴──────────┴──────────┴──────────┘
+
+// NPU推理加速比：10x（相比教师模型）
+// 精度损失：仅1.5%（相比教师模型）
+            </div>
+
+            <h4>11.1.3 模型剪枝技术</h4>
+            <div class="info-box">
+                <p><strong>剪枝策略对比：</strong></p>
+                <ul>
+                    <li><strong>非结构化剪枝：</strong>细粒度移除单个权重，稀疏度高但硬件加速困难</li>
+                    <li><strong>结构化剪枝：</strong>移除整个通道/滤波器，硬件友好但灵活性低</li>
+                    <li><strong>块稀疏剪枝：</strong>以小块为单位剪枝，平衡稀疏度和硬件效率</li>
+                    <li><strong>动态剪枝：</strong>运行时根据输入动态决定剪枝，灵活但开销大</li>
+                </ul>
+            </div>
+
+            <div class="code-block">
+// 结构化剪枝的硬件实现 - 并行化设计
+module ChannelPruningUnit #(
+    parameter NUM_CHANNELS = 64,
+    parameter CHANNEL_WIDTH = 8,
+    parameter DATA_WIDTH = 8,
+    parameter MAX_ACTIVE = 32    // 最大活跃通道数
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 输入特征图
+    input wire [NUM_CHANNELS-1:0][CHANNEL_WIDTH-1:0][DATA_WIDTH-1:0] input_channels,
+    input wire input_valid,
+    
+    // 剪枝配置（在配置阶段设置）
+    input wire config_en,
+    input wire [NUM_CHANNELS-1:0] pruning_mask,
+    
+    // 输出（压缩后的通道）
+    output wire [MAX_ACTIVE-1:0][CHANNEL_WIDTH-1:0][DATA_WIDTH-1:0] output_channels,
+    output reg [$clog2(NUM_CHANNELS):0] active_channels,
+    output reg output_valid
+);
+    
+    // 通道映射表（配置时设置）
+    reg [$clog2(NUM_CHANNELS)-1:0] channel_map [MAX_ACTIVE-1:0];
+    reg [$clog2(NUM_CHANNELS):0] num_active;
+    
+    // 配置阶段：计算通道映射（只在pruning_mask改变时执行）
+    // 这通常由软件完成，硬件只存储结果
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            num_active <= 0;
+            active_channels <= 0;
+        end else if (config_en) begin
+            // 简化的配置逻辑 - 实际中由外部控制器提供
+            num_active <= $countones(pruning_mask);
+            active_channels <= $countones(pruning_mask);
+        end
+    end
+    
+    // 使用优先编码器生成通道映射
+    genvar ch;
+    generate
+        // 为每个可能的输出位置生成选择逻辑
+        for (ch = 0; ch < MAX_ACTIVE; ch = ch + 1) begin : channel_select
+            // 多路选择器选择对应的输入通道
+            wire [CHANNEL_WIDTH-1:0][DATA_WIDTH-1:0] selected_channel;
+            
+            // 64选1多路选择器
+            assign selected_channel = (ch < num_active) ? 
+                                    input_channels[channel_map[ch]] : 
+                                    '0;
+            
+            // 寄存输出
+            reg [CHANNEL_WIDTH-1:0][DATA_WIDTH-1:0] output_reg;
+            always @(posedge clk) begin
+                if (!rst_n) begin
+                    output_reg <= '0;
+                end else if (input_valid) begin
+                    output_reg <= selected_channel;
+                end
+            end
+            
+            assign output_channels[ch] = output_reg;
+        end
+    endgenerate
+    
+    // 输出有效信号
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            output_valid <= 1'b0;
+        end else begin
+            output_valid <= input_valid;
+        end
+    end
+    
+endmodule
+
+// 配套的通道映射配置器（通常由软件或固件控制）
+module ChannelMapConfigurator #(
+    parameter NUM_CHANNELS = 64,
+    parameter MAX_ACTIVE = 32
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    input wire [NUM_CHANNELS-1:0] pruning_mask,
+    input wire config_start,
+    
+    output reg [$clog2(NUM_CHANNELS)-1:0] channel_map [MAX_ACTIVE-1:0],
+    output reg config_done
+);
+    // 这个模块展示了如何生成channel_map
+    // 实际设计中，这通常在软件中完成
+    
+    reg [5:0] write_ptr;
+    reg [5:0] scan_ptr;
+    
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            write_ptr <= 0;
+            scan_ptr <= 0;
+            config_done <= 0;
+        end else if (config_start) begin
+            write_ptr <= 0;
+            scan_ptr <= 0;
+            config_done <= 0;
+        end else if (!config_done && scan_ptr < NUM_CHANNELS) begin
+            if (pruning_mask[scan_ptr] && write_ptr < MAX_ACTIVE) begin
+                channel_map[write_ptr] <= scan_ptr;
+                write_ptr <= write_ptr + 1;
+            end
+            scan_ptr <= scan_ptr + 1;
+            
+            if (scan_ptr == NUM_CHANNELS - 1) begin
+                config_done <= 1;
+            end
+        end
+    end
+endmodule
+            </div>
+
+            <h4>11.1.4 算子融合优化</h4>
+            <div class="info-box">
+                <p><strong>算子融合的核心价值：</strong>通过将多个算子合并，避免中间结果的内存读写，显著提升能效。Conv+BN+ReLU是最常见的融合模式。</p>
+            </div>
+            <div class="code-block">
+// Conv-BN-ReLU融合实现 - 真实硬件并行化设计
+// 注意：这里展示的是单个输出像素的计算单元
+// 完整的卷积层需要多个这样的单元并行工作
+module ConvBNReLU_ProcessingElement #(
+    parameter KERNEL_SIZE = 3,
+    parameter IN_CHANNELS = 32,
+    parameter DATA_WIDTH = 8,
+    parameter WEIGHT_WIDTH = 8,
+    parameter BN_PARAM_WIDTH = 16
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 输入窗口数据（已经准备好的卷积窗口）
+    input wire [KERNEL_SIZE*KERNEL_SIZE*IN_CHANNELS-1:0][DATA_WIDTH-1:0] input_window,
+    input wire input_valid,
+    
+    // 权重（一个输出通道的所有权重）
+    input wire [KERNEL_SIZE*KERNEL_SIZE*IN_CHANNELS-1:0][WEIGHT_WIDTH-1:0] weights,
+    
+    // BN参数（预融合：scale和bias已经预计算）
+    input wire signed [BN_PARAM_WIDTH-1:0] bn_scale,   // Q2.14格式
+    input wire signed [BN_PARAM_WIDTH-1:0] bn_bias,    // Q8.8格式
+    
+    // 输出
+    output reg [DATA_WIDTH-1:0] output_pixel,
+    output reg output_valid
+);
+    
+    // 计算MAC总数
+    localparam NUM_MACS = KERNEL_SIZE * KERNEL_SIZE * IN_CHANNELS;
+    
+    // 并行MAC单元的输出
+    wire signed [DATA_WIDTH+WEIGHT_WIDTH-1:0] mac_results [NUM_MACS-1:0];
+    
+    // 使用generate创建并行MAC单元
+    genvar i;
+    generate
+        for (i = 0; i < NUM_MACS; i = i + 1) begin : mac_unit
+            // 每个MAC执行一次乘法
+            assign mac_results[i] = $signed(input_window[i]) * $signed(weights[i]);
+        end
+    endgenerate
+    
+    // 加法树 - 将所有MAC结果累加
+    // 这里展示3级加法树的概念（实际实现需要根据NUM_MACS调整）
+    reg signed [DATA_WIDTH+WEIGHT_WIDTH+$clog2(NUM_MACS)-1:0] conv_sum;
+    reg signed [DATA_WIDTH+WEIGHT_WIDTH+$clog2(NUM_MACS)+BN_PARAM_WIDTH-1:0] bn_result;
+    
+    // 流水线有效信号
+    reg stage1_valid, stage2_valid;
+    
+    // 第一级：并行累加（加法树）
+    // 实际硬件中会用Wallace Tree或其他高效加法树结构
+    integer j;
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            conv_sum <= 0;
+            stage1_valid <= 1'b0;
+        end else if (input_valid) begin
+            conv_sum <= 0;
+            // 简化的累加 - 实际应该用加法树
+            for (j = 0; j < NUM_MACS; j = j + 1) begin
+                conv_sum <= conv_sum + mac_results[j];
+            end
+            stage1_valid <= 1'b1;
+        end else begin
+            stage1_valid <= 1'b0;
+        end
+    end
+    
+    // 第二级：BN计算（使用预融合的参数）
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            bn_result <= 0;
+            stage2_valid <= 1'b0;
+        end else if (stage1_valid) begin
+            // BN融合计算：y = conv_sum * scale + bias
+            // scale是Q2.14格式，需要右移14位
+            bn_result <= (conv_sum * bn_scale) >>> 14 + (bn_bias <<< 8);
+            stage2_valid <= 1'b1;
+        end else begin
+            stage2_valid <= 1'b0;
+        end
+    end
+    
+    // 第三级：ReLU和量化回INT8
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            output_pixel <= 0;
+            output_valid <= 1'b0;
+        end else if (stage2_valid) begin
+            // ReLU: max(0, x)
+            if (bn_result < 0) begin
+                output_pixel <= 0;
+            end else if (bn_result > (255 << 16)) begin  // 饱和到255（考虑定点偏移）
+                output_pixel <= 255;
+            end else begin
+                output_pixel <= bn_result[23:16];  // 取合适的位
+            end
+            output_valid <= 1'b1;
+        end else begin
+            output_valid <= 1'b0;
+        end
+    end
+endmodule
+
+// 高效的并行加法树实现示例
+module AdderTree #(
+    parameter NUM_INPUTS = 288,  // 3x3x32 = 288
+    parameter DATA_WIDTH = 16
+)(
+    input wire [NUM_INPUTS-1:0][DATA_WIDTH-1:0] inputs,
+    output wire [DATA_WIDTH+$clog2(NUM_INPUTS)-1:0] sum
+);
+    // Wallace Tree加法器的简化实现
+    // 实际设计中会使用更优化的结构
+    
+    // 第一级：将输入两两相加
+    localparam STAGE1_OUTPUTS = (NUM_INPUTS + 1) / 2;
+    wire [DATA_WIDTH:0] stage1 [STAGE1_OUTPUTS-1:0];
+    
+    genvar i;
+    generate
+        for (i = 0; i < STAGE1_OUTPUTS; i = i + 1) begin : stage1_add
+            if (2*i+1 < NUM_INPUTS) begin
+                assign stage1[i] = inputs[2*i] + inputs[2*i+1];
+            end else begin
+                assign stage1[i] = inputs[2*i];
+            end
+        end
+    endgenerate
+    
+    // 后续级使用类似的方式递归构建...
+    // 最终输出sum
+endmodule
+            </div>
+
+            <h3>11.2 数据流优化</h3>
+            
+            <p>数据流优化的核心是最小化数据搬运，最大化数据复用。NPU中数据搬运的能耗远高于计算本身，因此优化数据流是提升能效的关键。</p>
+
+            <h4>11.2.1 数据复用策略</h4>
+            <div class="info-box">
+                <p><strong>三种主要的数据复用模式：</strong></p>
+                <ul>
+                    <li><strong>权重固定（Weight Stationary）：</strong>权重驻留在PE中，输入数据流动</li>
+                    <li><strong>输出固定（Output Stationary）：</strong>部分和驻留在PE中累加，减少写回</li>
+                    <li><strong>行固定（Row Stationary）：</strong>卷积行数据驻留，最大化局部数据复用</li>
+                </ul>
+            </div>
+            
+            <div class="code-block">
+// 数据流策略对比
+┌────────────────┬─────────────┬──────────────┬────────────┐
+│   数据流类型    │ 驻留数据    │ 优点         │ 适用场景   │
+├────────────────┼─────────────┼──────────────┼────────────┤
+│ Weight Stationary│ 权重       │ 权重读取最少 │ 大batch    │
+│ Output Stationary│ 部分和     │ 部分和写回少 │ 深度网络   │
+│ Row Stationary  │ 卷积行     │ 总体能效最优 │ 通用场景   │
+└────────────────┴─────────────┴──────────────┴────────────┘
+            </div>
+
+            <div class="code-block">
+// 输出固定数据流（Output Stationary）实现
+// 特点：部分和在PE内累加，直到完成所有计算才输出
+module OutputStationaryPE #(
+    parameter DATA_WIDTH = 8,
+    parameter WEIGHT_WIDTH = 8,
+    parameter ACCUM_WIDTH = 32
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 控制信号
+    input wire new_output,       // 开始新的输出计算
+    input wire compute_en,       // 计算使能
+    input wire output_ready,     // 输出就绪
+    
+    // 数据输入（每周期新数据）
+    input wire [DATA_WIDTH-1:0] input_data,
+    input wire [WEIGHT_WIDTH-1:0] weight,
+    
+    // 累加结果输出
+    output reg [ACCUM_WIDTH-1:0] accumulator,
+    output reg acc_valid
+);
+    
+    // 内部累加器
+    reg [ACCUM_WIDTH-1:0] partial_sum;
+    
+    // MAC运算
+    wire [DATA_WIDTH+WEIGHT_WIDTH-1:0] product;
+    assign product = input_data * weight;
+    
+    // 累加逻辑
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            partial_sum <= 0;
+            acc_valid <= 1'b0;
+        end else if (new_output) begin
+            // 开始新的输出计算
+            partial_sum <= 0;
+            acc_valid <= 1'b0;
+        end else if (compute_en) begin
+            // 累加新的乘积
+            partial_sum <= partial_sum + product;
+        end else if (output_ready) begin
+            // 输出最终结果
+            accumulator <= partial_sum;
+            acc_valid <= 1'b1;
+        end else begin
+            acc_valid <= 1'b0;
+        end
+    end
+    
+endmodule
+
+// 输出固定脉动阵列
+module OutputStationaryArray #(
+    parameter ARRAY_SIZE = 16,
+    parameter DATA_WIDTH = 8
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 控制信号
+    input wire start_compute,
+    input wire [15:0] num_accumulations,  // 需要累加的次数
+    
+    // 输入数据和权重
+    input wire [ARRAY_SIZE-1:0][DATA_WIDTH-1:0] input_vector,
+    input wire [ARRAY_SIZE-1:0][DATA_WIDTH-1:0] weight_vector,
+    
+    // 输出向量
+    output wire [ARRAY_SIZE-1:0][31:0] output_vector,
+    output wire output_valid
+);
+    
+    // 控制状态机
+    reg [15:0] acc_counter;
+    reg computing;
+    wire last_accumulation;
+    
+    assign last_accumulation = (acc_counter == num_accumulations - 1);
+    
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            acc_counter <= 0;
+            computing <= 0;
+        end else if (start_compute) begin
+            acc_counter <= 0;
+            computing <= 1;
+        end else if (computing) begin
+            if (last_accumulation) begin
+                computing <= 0;
+            end else begin
+                acc_counter <= acc_counter + 1;
+            end
+        end
+    end
+    
+    // PE阵列实例化
+    genvar i;
+    generate
+        for (i = 0; i < ARRAY_SIZE; i = i + 1) begin : pe_array
+            OutputStationaryPE pe (
+                .clk(clk),
+                .rst_n(rst_n),
+                .new_output(start_compute),
+                .compute_en(computing),
+                .output_ready(last_accumulation),
+                .input_data(input_vector[i]),
+                .weight(weight_vector[i]),
+                .accumulator(output_vector[i]),
+                .acc_valid(output_valid)
+            );
+        end
+    endgenerate
+    
+endmodule
+            </div>
+
+            <div class="code-block">
+// 行固定数据流（Row Stationary）实现 - 修正版
+module RowStationaryPE #(
+    parameter DATA_WIDTH = 8,
+    parameter WEIGHT_WIDTH = 8,
+    parameter ACCUM_WIDTH = 32
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 控制信号
+    input wire load_weight,      // 加载权重
+    input wire shift_enable,     // 数据移位使能
+    input wire accumulate,       // 累加使能
+    input wire output_enable,    // 输出使能
+    
+    // 数据输入
+    input wire [DATA_WIDTH-1:0] input_data,
+    input wire [WEIGHT_WIDTH-1:0] weight_in,
+    
+    // 数据输出（向相邻PE传递）
+    output reg [DATA_WIDTH-1:0] input_out,    // 输入数据向右传递
+    output reg [WEIGHT_WIDTH-1:0] weight_out, // 权重向下传递
+    output reg [ACCUM_WIDTH-1:0] partial_sum
+);
+    
+    // 内部寄存器
+    reg [WEIGHT_WIDTH-1:0] weight_reg;     // 权重寄存器
+    reg [DATA_WIDTH-1:0] input_reg;        // 输入寄存器
+    reg [ACCUM_WIDTH-1:0] accumulator;     // 累加器
+    
+    // MAC运算结果
+    wire [DATA_WIDTH+WEIGHT_WIDTH-1:0] mac_result;
+    assign mac_result = input_reg * weight_reg;
+    
+    // 权重加载和传递
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            weight_reg <= 0;
+            weight_out <= 0;
+        end else if (load_weight) begin
+            weight_reg <= weight_in;
+            weight_out <= weight_in;  // 同时向下传递
+        end
+    end
+    
+    // 输入数据移位
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            input_reg <= 0;
+            input_out <= 0;
+        end else if (shift_enable) begin
+            input_reg <= input_data;
+            input_out <= input_data;  // 同时向右传递
+        end
+    end
+    
+    // 累加器
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            accumulator <= 0;
+        end else if (accumulate) begin
+            accumulator <= accumulator + mac_result;
+        end else if (output_enable) begin
+            accumulator <= 0;  // 输出后清零
+        end
+    end
+    
+    // 输出逻辑
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            partial_sum <= 0;
+        end else if (output_enable) begin
+            partial_sum <= accumulator;
+        end
+    end
+endmodule
+
+// 2D PE阵列实现 - 真正的脉动阵列
+module RowStationaryArray #(
+    parameter ARRAY_HEIGHT = 16,
+    parameter ARRAY_WIDTH = 16,
+    parameter DATA_WIDTH = 8
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 全局控制
+    input wire [2:0] operation_mode,  // 0:空闲 1:加载权重 2:计算 3:输出
+    
+    // 数据输入（从左侧输入）
+    input wire [ARRAY_HEIGHT-1:0][DATA_WIDTH-1:0] input_data,
+    
+    // 权重输入（从上方输入）
+    input wire [ARRAY_WIDTH-1:0][DATA_WIDTH-1:0] weight_data,
+    
+    // 输出接口
+    output wire [ARRAY_HEIGHT-1:0][ARRAY_WIDTH-1:0][31:0] output_matrix
+);
+    
+    // PE间的连接线
+    wire [ARRAY_HEIGHT-1:0][ARRAY_WIDTH:0][DATA_WIDTH-1:0] horizontal_data;
+    wire [ARRAY_HEIGHT:0][ARRAY_WIDTH-1:0][DATA_WIDTH-1:0] vertical_weight;
+    
+    // 连接输入到阵列边界
+    genvar i, j;
+    generate
+        // 左侧输入
+        for (i = 0; i < ARRAY_HEIGHT; i = i + 1) begin : left_input
+            assign horizontal_data[i][0] = input_data[i];
+        end
+        // 上方输入
+        for (j = 0; j < ARRAY_WIDTH; j = j + 1) begin : top_input
+            assign vertical_weight[0][j] = weight_data[j];
+        end
+    endgenerate
+    
+    // 实例化PE阵列
+    generate
+        for (i = 0; i < ARRAY_HEIGHT; i = i + 1) begin : pe_row
+            for (j = 0; j < ARRAY_WIDTH; j = j + 1) begin : pe_col
+                RowStationaryPE pe_inst (
+                    .clk(clk),
+                    .rst_n(rst_n),
+                    .load_weight(operation_mode == 3'b001),
+                    .shift_enable(operation_mode == 3'b010),
+                    .accumulate(operation_mode == 3'b010),
+                    .output_enable(operation_mode == 3'b011),
+                    
+                    // 输入连接
+                    .input_data(horizontal_data[i][j]),
+                    .weight_in(vertical_weight[i][j]),
+                    
+                    // 输出连接到相邻PE
+                    .input_out(horizontal_data[i][j+1]),
+                    .weight_out(vertical_weight[i+1][j]),
+                    
+                    // 结果输出
+                    .partial_sum(output_matrix[i][j])
+                );
+            end
+        end
+    endgenerate
+endmodule
+            </div>
+
+            <h4>11.2.2 分块（Tiling）优化</h4>
+            <div class="info-box">
+                <p><strong>分块优化说明：</strong>分块参数的计算通常由编译器离线完成，硬件只负责执行。下面展示的是执行分块数据传输的DMA控制器。</p>
+            </div>
+            <div class="code-block">
+// 分块数据传输DMA控制器
+// 接收编译器计算好的分块参数，执行高效的数据搬运
+module TilingDMAController #(
+    parameter ADDR_WIDTH = 32,
+    parameter DATA_WIDTH = 256,     // 256位宽数据总线
+    parameter SRAM_ADDR_WIDTH = 18, // 256KB SRAM
+    parameter MAX_TILE_SIZE = 64
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 分块参数（由编译器/驱动程序设置）
+    input wire config_valid,
+    input wire [7:0] tile_h,
+    input wire [7:0] tile_w,
+    input wire [7:0] tile_ic,
+    input wire [7:0] tile_oc,
+    input wire [15:0] total_h,
+    input wire [15:0] total_w,
+    
+    // DDR接口
+    output reg [ADDR_WIDTH-1:0] ddr_addr,
+    output reg ddr_read_req,
+    input wire [DATA_WIDTH-1:0] ddr_read_data,
+    input wire ddr_read_valid,
+    
+    // SRAM接口
+    output reg [SRAM_ADDR_WIDTH-1:0] sram_addr,
+    output reg sram_write_en,
+    output reg [DATA_WIDTH-1:0] sram_write_data,
+    
+    // 状态输出
+    output reg dma_busy,
+    output reg tile_ready,
+    output reg [15:0] current_tile_h,
+    output reg [15:0] current_tile_w
+);
+    
+    // DMA状态机
+    typedef enum logic [2:0] {
+        IDLE,
+        LOAD_INPUT_TILE,
+        LOAD_WEIGHT_TILE,
+        WAIT_COMPUTE,
+        STORE_OUTPUT_TILE,
+        NEXT_TILE
+    } dma_state_t;
+    
+    dma_state_t state, next_state;
+    
+    // 分块迭代计数器
+    reg [15:0] tile_h_idx, tile_w_idx;
+    reg [15:0] tile_ic_idx, tile_oc_idx;
+    
+    // 地址生成器
+    reg [ADDR_WIDTH-1:0] input_base_addr;
+    reg [ADDR_WIDTH-1:0] weight_base_addr;
+    reg [ADDR_WIDTH-1:0] output_base_addr;
+    
+    // 传输计数器
+    reg [15:0] transfer_count;
+    reg [15:0] transfers_per_tile;
+    
+    // 计算每个tile需要的传输次数
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            transfers_per_tile <= 0;
+        end else if (config_valid) begin
+            // 假设每次传输32字节，计算需要多少次传输
+            transfers_per_tile <= (tile_h * tile_w * tile_ic + 31) >> 5;
+        end
+    end
+    
+    // 状态机主逻辑
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            state <= IDLE;
+            dma_busy <= 0;
+            tile_ready <= 0;
+        end else begin
+            state <= next_state;
+            
+            case (state)
+                IDLE: begin
+                    if (config_valid) begin
+                        dma_busy <= 1;
+                        tile_h_idx <= 0;
+                        tile_w_idx <= 0;
+                        tile_ic_idx <= 0;
+                        tile_oc_idx <= 0;
+                    end
+                end
+                
+                LOAD_INPUT_TILE: begin
+                    // 生成输入数据的DDR地址
+                    ddr_addr <= input_base_addr + 
+                               (tile_h_idx * tile_h * total_w + 
+                                tile_w_idx * tile_w) * tile_ic;
+                    
+                    if (transfer_count < transfers_per_tile) begin
+                        ddr_read_req <= 1;
+                        if (ddr_read_valid) begin
+                            sram_write_en <= 1;
+                            sram_write_data <= ddr_read_data;
+                            sram_addr <= transfer_count;
+                            transfer_count <= transfer_count + 1;
+                        end
+                    end
+                end
+                
+                LOAD_WEIGHT_TILE: begin
+                    // 类似地加载权重数据
+                    // 省略具体实现
+                end
+                
+                WAIT_COMPUTE: begin
+                    tile_ready <= 1;
+                    current_tile_h <= tile_h_idx;
+                    current_tile_w <= tile_w_idx;
+                end
+                
+                STORE_OUTPUT_TILE: begin
+                    // 存储输出数据回DDR
+                    // 省略具体实现
+                end
+                
+                NEXT_TILE: begin
+                    tile_ready <= 0;
+                    // 更新tile索引
+                    if (tile_w_idx < (total_w / tile_w - 1)) begin
+                        tile_w_idx <= tile_w_idx + 1;
+                    end else begin
+                        tile_w_idx <= 0;
+                        if (tile_h_idx < (total_h / tile_h - 1)) begin
+                            tile_h_idx <= tile_h_idx + 1;
+                        end else begin
+                            // 所有tile处理完成
+                            dma_busy <= 0;
+                        end
+                    end
+                end
+            endcase
+        end
+    end
+    
+    // 次态逻辑
+    always @(*) begin
+        next_state = state;
+        
+        case (state)
+            IDLE: begin
+                if (config_valid) next_state = LOAD_INPUT_TILE;
+            end
+            
+            LOAD_INPUT_TILE: begin
+                if (transfer_count >= transfers_per_tile) begin
+                    next_state = LOAD_WEIGHT_TILE;
+                end
+            end
+            
+            LOAD_WEIGHT_TILE: begin
+                // 权重加载完成后等待计算
+                next_state = WAIT_COMPUTE;
+            end
+            
+            WAIT_COMPUTE: begin
+                // 收到计算完成信号后存储输出
+                next_state = STORE_OUTPUT_TILE;
+            end
+            
+            STORE_OUTPUT_TILE: begin
+                // 输出存储完成后处理下一个tile
+                next_state = NEXT_TILE;
+            end
+            
+            NEXT_TILE: begin
+                if (dma_busy) begin
+                    next_state = LOAD_INPUT_TILE;
+                end else begin
+                    next_state = IDLE;
+                end
+            end
+        endcase
+    end
+endmodule
+
+// 分块策略分析（概念说明，不是RTL）
+// 编译器会根据以下因素计算最优分块参数：
+// 1. 片上SRAM容量
+// 2. 数据复用机会
+// 3. DDR带宽限制
+// 4. 计算与访存的重叠
+
+// 典型的分块策略：
+// - 输入特征图：尽量保持空间局部性
+// - 权重：考虑多个输入tile的复用
+// - 输出：最小化部分和的存储
+            </div>
+
+            <h3>11.3 功耗优化</h3>
+            
+            <p>功耗是NPU设计的关键约束，特别是在边缘和移动设备上。功耗优化需要从架构、电路到系统级别的全方位考虑。</p>
+
+            <h4>11.3.1 动态功耗管理</h4>
+            <div class="code-block">
+// 多级功耗管理控制器
+module PowerManagementUnit #(
+    parameter NUM_CLUSTERS = 8,
+    parameter NUM_CORES_PER_CLUSTER = 4
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 工作负载监控
+    input wire [NUM_CLUSTERS-1:0] cluster_active,
+    input wire [NUM_CLUSTERS-1:0][NUM_CORES_PER_CLUSTER-1:0] core_active,
+    input wire [7:0] global_utilization,  // 0-100%
+    
+    // DVFS控制
+    output reg [2:0] voltage_level,       // 0-7级电压
+    output reg [2:0] frequency_level,     // 0-7级频率
+    
+    // 电源门控
+    output reg [NUM_CLUSTERS-1:0] cluster_power_gate,
+    output reg [NUM_CLUSTERS-1:0][NUM_CORES_PER_CLUSTER-1:0] core_clock_gate,
+    
+    // 性能计数器
+    output reg [31:0] total_energy,
+    output reg [31:0] active_cycles
+);
+    
+    // DVFS查找表
+    reg [7:0] voltage_table [7:0];  // mV/10
+    reg [7:0] freq_table [7:0];     // MHz/10
+    
+    initial begin
+        // 电压表（0.6V-1.0V）
+        voltage_table[0] = 60;   // 0.6V
+        voltage_table[1] = 65;
+        voltage_table[2] = 70;
+        voltage_table[3] = 75;
+        voltage_table[4] = 80;
+        voltage_table[5] = 85;
+        voltage_table[6] = 90;
+        voltage_table[7] = 100;  // 1.0V
+        
+        // 频率表（100MHz-800MHz）
+        freq_table[0] = 10;      // 100MHz
+        freq_table[1] = 20;
+        freq_table[2] = 30;
+        freq_table[3] = 40;
+        freq_table[4] = 50;
+        freq_table[5] = 60;
+        freq_table[6] = 70;
+        freq_table[7] = 80;      // 800MHz
+    end
+    
+    // 功耗状态机
+    reg [2:0] power_state;
+    localparam ACTIVE = 3'b000;
+    localparam THROTTLE = 3'b001;
+    localparam IDLE = 3'b010;
+    localparam SLEEP = 3'b011;
+    localparam DEEP_SLEEP = 3'b100;
+    
+    // 负载历史记录（用于预测）
+    reg [7:0] load_history [15:0];
+    reg [3:0] history_ptr;
+    reg [7:0] avg_load;
+    
+    // 计算平均负载
+    integer i;
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            history_ptr <= 0;
+            avg_load <= 0;
+        end else begin
+            load_history[history_ptr] <= global_utilization;
+            history_ptr <= history_ptr + 1;
+            
+            // 计算移动平均
+            avg_load <= 0;
+            for (i = 0; i < 16; i = i + 1) begin
+                avg_load <= avg_load + (load_history[i] >> 4);
+            end
+        end
+    end
+    
+    // DVFS控制逻辑
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            voltage_level <= 3'b111;  // 最高性能
+            frequency_level <= 3'b111;
+            power_state <= ACTIVE;
+        end else begin
+            case (power_state)
+                ACTIVE: begin
+                    if (avg_load < 20) begin
+                        power_state <= IDLE;
+                    end else if (avg_load > 90) begin
+                        // 提升性能
+                        if (voltage_level < 7) begin
+                            voltage_level <= voltage_level + 1;
+                            frequency_level <= frequency_level + 1;
+                        end
+                    end else if (avg_load < 50) begin
+                        // 降低性能以节能
+                        if (voltage_level > 3) begin
+                            voltage_level <= voltage_level - 1;
+                            frequency_level <= frequency_level - 1;
+                        end
+                    end
+                end
+                
+                IDLE: begin
+                    if (avg_load > 30) begin
+                        power_state <= ACTIVE;
+                    end else if (avg_load < 10) begin
+                        power_state <= SLEEP;
+                        voltage_level <= 3'b010;
+                        frequency_level <= 3'b010;
+                    end
+                end
+                
+                SLEEP: begin
+                    if (avg_load > 20) begin
+                        power_state <= IDLE;
+                        voltage_level <= 3'b100;
+                        frequency_level <= 3'b100;
+                    end else if (avg_load == 0) begin
+                        power_state <= DEEP_SLEEP;
+                        voltage_level <= 3'b000;
+                        frequency_level <= 3'b000;
+                    end
+                end
+                
+                DEEP_SLEEP: begin
+                    if (|cluster_active) begin
+                        power_state <= IDLE;
+                        voltage_level <= 3'b100;
+                        frequency_level <= 3'b100;
+                    end
+                end
+            endcase
+        end
+    end
+    
+    // 电源门控控制
+    genvar c, p;
+    generate
+        for (c = 0; c < NUM_CLUSTERS; c = c + 1) begin : cluster_ctrl
+            always @(posedge clk) begin
+                if (!rst_n) begin
+                    cluster_power_gate[c] <= 1'b0;
+                end else begin
+                    // 簇级电源门控（需要较长时间空闲）
+                    if (!cluster_active[c] && power_state == SLEEP) begin
+                        cluster_power_gate[c] <= 1'b1;
+                    end else begin
+                        cluster_power_gate[c] <= 1'b0;
+                    end
+                end
+            end
+            
+            // 核心级时钟门控（快速响应）
+            for (p = 0; p < NUM_CORES_PER_CLUSTER; p = p + 1) begin : core_ctrl
+                always @(posedge clk) begin
+                    if (!rst_n) begin
+                        core_clock_gate[c][p] <= 1'b0;
+                    end else begin
+                        core_clock_gate[c][p] <= !core_active[c][p];
+                    end
+                end
+            end
+        end
+    endgenerate
+    
+    // 能量统计
+    reg [15:0] instant_power;
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            total_energy <= 0;
+            active_cycles <= 0;
+            instant_power <= 0;
+        end else begin
+            // 简化的功耗模型：P = CV²f
+            instant_power <= (voltage_table[voltage_level] * voltage_table[voltage_level] * 
+                            freq_table[frequency_level]) >> 8;
+            
+            // 根据活跃单元调整
+            instant_power <= instant_power * global_utilization / 100;
+            
+            // 累加总能量
+            total_energy <= total_energy + instant_power;
+            
+            if (power_state == ACTIVE) begin
+                active_cycles <= active_cycles + 1;
+            end
+        end
+    end
+endmodule
+            </div>
+
+            <h4>11.3.2 静态功耗优化 - 多阈值电压技术</h4>
+            <div class="info-box">
+                <p><strong>多阈值电压（Multi-Vth）技术：</strong>这是在物理设计阶段使用的静态功耗优化技术。通过在芯片中混合使用不同阈值电压的标准单元，在满足时序要求的同时最小化漏电功耗。</p>
+            </div>
+            <div class="code-block">
+// 多阈值电压优化原理（概念说明）
+// 注意：这不是一个硬件模块，而是EDA工具在物理设计时的优化策略
+
+不同Vth单元的特性对比：
+┌─────────┬──────────┬──────────┬──────────┬──────────┐
+│ Vth类型  │ 阈值电压  │ 速度     │ 漏电功耗  │ 应用场景  │
+├─────────┼──────────┼──────────┼──────────┼──────────┤
+│   LVT   │   低     │   快     │    高    │ 关键路径  │
+│   RVT   │   中     │   中     │    中    │ 一般路径  │
+│   HVT   │   高     │   慢     │    低    │ 非关键路径│
+└─────────┴──────────┴──────────┴──────────┴──────────┘
+
+// 在物理设计脚本中的应用（Synopsys DC示例）
+# 定义多Vt库
+set_attribute [get_libs */LVT] default_threshold_voltage_group LVT
+set_attribute [get_libs */RVT] default_threshold_voltage_group RVT
+set_attribute [get_libs */HVT] default_threshold_voltage_group HVT
+
+# 设置优化约束
+set_multi_vth_constraint -lvt_percentage 10  # LVT单元不超过10%
+set_multi_vth_constraint -hvt_percentage 60  # HVT单元至少60%
+
+# 优化策略
+# 1. 综合工具首先满足时序要求
+# 2. 在时序裕量允许的范围内，尽量使用HVT单元
+# 3. 只在关键路径上使用LVT单元
+
+# 结果：在相同性能下，漏电功耗可降低30-50%
+            </div>
+            
+            <div class="warning-box">
+                <p><strong>重要区别：</strong>多阈值电压优化是在芯片设计时由EDA工具完成的，一旦芯片制造完成，每个晶体管的Vth就固定了。这与DVFS（动态电压频率调节）等运行时功耗管理技术有本质区别。</p>
+            </div>
+            
+            <h4>11.3.3 数据通路功耗优化</h4>
+            <div class="code-block">
+// 低功耗数据通路设计
+module LowPowerDatapath #(
+    parameter DATA_WIDTH = 8,
+    parameter NUM_LANES = 16
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 输入数据
+    input wire [NUM_LANES-1:0][DATA_WIDTH-1:0] data_in,
+    input wire [NUM_LANES-1:0] data_valid,
+    
+    // 输出
+    output reg [NUM_LANES-1:0][DATA_WIDTH-1:0] data_out,
+    output reg [NUM_LANES-1:0] data_out_valid
+);
+    
+    // 操作数隔离寄存器
+    reg [NUM_LANES-1:0][DATA_WIDTH-1:0] isolated_data;
+    reg [NUM_LANES-1:0] lane_active;
+    
+    // 数据编码（减少翻转）
+    reg [NUM_LANES-1:0][DATA_WIDTH-1:0] encoded_data;
+    reg [NUM_LANES-1:0] invert_flag;
+    
+    genvar lane;
+    generate
+        for (lane = 0; lane < NUM_LANES; lane = lane + 1) begin : lane_process
+            // 计算汉明距离
+            wire [3:0] hamming_dist;
+            assign hamming_dist = 
+                (data_in[lane][0] ^ isolated_data[lane][0]) +
+                (data_in[lane][1] ^ isolated_data[lane][1]) +
+                (data_in[lane][2] ^ isolated_data[lane][2]) +
+                (data_in[lane][3] ^ isolated_data[lane][3]) +
+                (data_in[lane][4] ^ isolated_data[lane][4]) +
+                (data_in[lane][5] ^ isolated_data[lane][5]) +
+                (data_in[lane][6] ^ isolated_data[lane][6]) +
+                (data_in[lane][7] ^ isolated_data[lane][7]);
+            
+            // 总线反转编码
+            always @(posedge clk) begin
+                if (!rst_n) begin
+                    encoded_data[lane] <= 0;
+                    invert_flag[lane] <= 0;
+                end else if (data_valid[lane]) begin
+                    if (hamming_dist > 4) begin
+                        // 反转数据以减少翻转
+                        encoded_data[lane] <= ~data_in[lane];
+                        invert_flag[lane] <= 1'b1;
+                    end else begin
+                        encoded_data[lane] <= data_in[lane];
+                        invert_flag[lane] <= 1'b0;
+                    end
+                end
+            end
+            
+            // 操作数隔离
+            always @(posedge clk) begin
+                if (!rst_n) begin
+                    isolated_data[lane] <= 0;
+                    lane_active[lane] <= 0;
+                end else begin
+                    if (data_valid[lane]) begin
+                        isolated_data[lane] <= encoded_data[lane];
+                        lane_active[lane] <= 1'b1;
+                    end else begin
+                        // 保持之前的值，避免不必要的翻转
+                        isolated_data[lane] <= isolated_data[lane];
+                        lane_active[lane] <= 1'b0;
+                    end
+                end
+            end
+            
+            // 输出解码
+            always @(posedge clk) begin
+                if (!rst_n) begin
+                    data_out[lane] <= 0;
+                    data_out_valid[lane] <= 0;
+                end else begin
+                    if (lane_active[lane]) begin
+                        // 根据反转标志恢复数据
+                        data_out[lane] <= invert_flag[lane] ? 
+                                        ~isolated_data[lane] : isolated_data[lane];
+                        data_out_valid[lane] <= 1'b1;
+                    end else begin
+                        data_out_valid[lane] <= 1'b0;
+                    end
+                end
+            end
+        end
+    endgenerate
+endmodule
+            </div>
+
+            <h3>11.4 稀疏计算加速</h3>
+            
+            <p>神经网络中存在大量的稀疏性（零值），利用这种稀疏性可以显著减少计算量和功耗。硬件级的稀疏计算加速是NPU优化的重要方向。</p>
+            
+            <h4>11.4.1 稀疏检测与跳过</h4>
+            <div class="code-block">
+// 稀疏计算加速器
+module SparseAccelerator #(
+    parameter DATA_WIDTH = 8,
+    parameter MATRIX_SIZE = 16,
+    parameter SPARSITY_THRESHOLD = 0.5
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 稀疏矩阵输入（CSR格式）
+    input wire [DATA_WIDTH-1:0] values[0:255],      // 非零值
+    input wire [7:0] col_indices[0:255],            // 列索引
+    input wire [8:0] row_ptr[0:MATRIX_SIZE],        // 行指针
+    input wire [8:0] nnz,                           // 非零元素数量
+    
+    // 密集向量输入
+    input wire [DATA_WIDTH-1:0] vector[0:MATRIX_SIZE-1],
+    
+    // 输出
+    output reg [31:0] result[0:MATRIX_SIZE-1],
+    output reg compute_done
+);
+    
+    // 稀疏矩阵向量乘法（SpMV）实现
+    reg [8:0] current_row;
+    reg [8:0] value_idx;
+    reg [2:0] state;
+    
+    localparam IDLE = 3'b000;
+    localparam LOAD_ROW = 3'b001;
+    localparam COMPUTE = 3'b010;
+    localparam STORE = 3'b011;
+    localparam DONE = 3'b100;
+    
+    // 计算单元
+    reg [31:0] accumulator;
+    wire [15:0] mult_result;
+    
+    // 零值跳过逻辑
+    wire is_zero_value = (values[value_idx] == 0);
+    wire is_zero_vector = (vector[col_indices[value_idx]] == 0);
+    wire skip_computation = is_zero_value || is_zero_vector;
+    
+    // 乘法器（只在非零时激活）
+    assign mult_result = skip_computation ? 16'd0 : 
+                        values[value_idx] * vector[col_indices[value_idx]];
+    
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            state <= IDLE;
+            current_row <= 0;
+            value_idx <= 0;
+            compute_done <= 0;
+        end else begin
+            case (state)
+                IDLE: begin
+                    if (nnz > 0) begin
+                        state <= LOAD_ROW;
+                        current_row <= 0;
+                        value_idx <= row_ptr[0];
+                        accumulator <= 0;
+                    end
+                end
+                
+                LOAD_ROW: begin
+                    if (current_row < MATRIX_SIZE) begin
+                        accumulator <= 0;
+                        state <= COMPUTE;
+                    end else begin
+                        state <= DONE;
+                    end
+                end
+                
+                COMPUTE: begin
+                    if (value_idx < row_ptr[current_row + 1]) begin
+                        if (!skip_computation) begin
+                            // 只在非零时累加
+                            accumulator <= accumulator + mult_result;
+                        end
+                        value_idx <= value_idx + 1;
+                    end else begin
+                        state <= STORE;
+                    end
+                end
+                
+                STORE: begin
+                    result[current_row] <= accumulator;
+                    current_row <= current_row + 1;
+                    if (current_row + 1 < MATRIX_SIZE) begin
+                        value_idx <= row_ptr[current_row + 1];
+                        state <= LOAD_ROW;
+                    end else begin
+                        state <= DONE;
+                    end
+                end
+                
+                DONE: begin
+                    compute_done <= 1;
+                    state <= IDLE;
+                end
+            endcase
+        end
+    end
+    
+    // 性能计数器
+    reg [31:0] total_operations;
+    reg [31:0] skipped_operations;
+    
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            total_operations <= 0;
+            skipped_operations <= 0;
+        end else if (state == COMPUTE) begin
+            total_operations <= total_operations + 1;
+            if (skip_computation) begin
+                skipped_operations <= skipped_operations + 1;
+            end
+        end
+    end
+    
+    // 稀疏度统计
+    wire [31:0] sparsity_percentage = (skipped_operations * 100) / total_operations;
+    
+endmodule
+
+// 零值跳过MAC单元
+module ZeroSkippingMAC #(
+    parameter DATA_WIDTH = 8
+)(
+    input wire clk,
+    input wire rst_n,
+    input wire enable,
+    
+    input wire [DATA_WIDTH-1:0] weight,
+    input wire [DATA_WIDTH-1:0] activation,
+    input wire [31:0] accumulator_in,
+    
+    output reg [31:0] accumulator_out,
+    output reg valid_out,
+    output reg operation_skipped
+);
+    
+    // 零检测
+    wire weight_is_zero = (weight == 0);
+    wire activation_is_zero = (activation == 0);
+    wire skip_mac = weight_is_zero || activation_is_zero;
+    
+    // MAC操作
+    wire [2*DATA_WIDTH-1:0] product = weight * activation;
+    
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            accumulator_out <= 0;
+            valid_out <= 0;
+            operation_skipped <= 0;
+        end else if (enable) begin
+            if (skip_mac) begin
+                // 跳过计算，直接传递累加器值
+                accumulator_out <= accumulator_in;
+                operation_skipped <= 1'b1;
+            end else begin
+                // 执行MAC操作
+                accumulator_out <= accumulator_in + product;
+                operation_skipped <= 1'b0;
+            end
+            valid_out <= 1'b1;
+        end else begin
+            valid_out <= 1'b0;
+        end
+    end
+    
+endmodule
+            </div>
+            
+            <h4>11.4.2 稀疏数据格式与硬件支持</h4>
+            <p>不同的稀疏格式适合不同的硬件实现和应用场景：</p>
+            <ul>
+                <li><strong>CSR (Compressed Sparse Row)：</strong>适合行稀疏矩阵，硬件实现简单</li>
+                <li><strong>CSC (Compressed Sparse Column)：</strong>适合列稀疏矩阵</li>
+                <li><strong>COO (Coordinate)：</strong>最灵活但存储开销大</li>
+                <li><strong>Bitmap：</strong>使用位图标记非零位置，适合中等稀疏度</li>
+            </ul>
+            
+            <div class="info-box">
+                <p><strong>稀疏加速效果：</strong>在典型的剪枝神经网络中，稀疏度可达90%以上。通过零值跳过，理论上可以减少90%的MAC操作，实际加速比取决于硬件实现的效率和数据访问模式。</p>
+            </div>
+
+            <h3>11.5 面积优化</h3>
+            
+            <p>面积优化直接影响芯片成本。通过资源共享、存储压缩等技术，可以在满足性能要求的前提下显著减小芯片面积。</p>
+
+            <h4>11.5.1 计算单元复用</h4>
+            <div class="code-block">
+// 可重构计算单元
+module ReconfigurableComputeUnit #(
+    parameter DATA_WIDTH = 8,
+    parameter ACCUM_WIDTH = 32
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 操作模式
+    input wire [2:0] op_mode,  // 0:MAC 1:ADD 2:MUL 3:COMP 4:POOL
+    
+    // 输入数据
+    input wire [DATA_WIDTH-1:0] operand_a,
+    input wire [DATA_WIDTH-1:0] operand_b,
+    input wire [DATA_WIDTH-1:0] operand_c,  // 用于MAC
+    input wire [ACCUM_WIDTH-1:0] accumulator_in,
+    
+    // 输出
+    output reg [ACCUM_WIDTH-1:0] result_out,
+    output reg result_valid
+);
+    
+    // 共享的算术单元
+    reg [DATA_WIDTH*2-1:0] mult_result;
+    reg [ACCUM_WIDTH-1:0] add_result;
+    reg comparison_result;
+    
+    // 操作模式定义
+    localparam OP_MAC = 3'b000;
+    localparam OP_ADD = 3'b001;
+    localparam OP_MUL = 3'b010;
+    localparam OP_MAX = 3'b011;
+    localparam OP_MIN = 3'b100;
+    
+    // 组合逻辑计算
+    always @(*) begin
+        mult_result = operand_a * operand_b;
+        add_result = accumulator_in + {{(ACCUM_WIDTH-DATA_WIDTH){operand_a[DATA_WIDTH-1]}}, operand_a};
+        comparison_result = operand_a > operand_b;
+    end
+    
+    // 流水线寄存器
+    reg [2:0] op_mode_r1, op_mode_r2;
+    reg [ACCUM_WIDTH-1:0] stage1_result;
+    
+    // 第一级流水线：执行基本运算
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            stage1_result <= 0;
+            op_mode_r1 <= 0;
+        end else begin
+            op_mode_r1 <= op_mode;
+            
+            case (op_mode)
+                OP_MAC: begin
+                    // MAC第一步：乘法
+                    stage1_result <= {{(ACCUM_WIDTH-DATA_WIDTH*2){mult_result[DATA_WIDTH*2-1]}}, mult_result};
+                end
+                
+                OP_ADD: begin
+                    // 直接加法
+                    stage1_result <= add_result;
+                end
+                
+                OP_MUL: begin
+                    // 乘法结果扩展
+                    stage1_result <= {{(ACCUM_WIDTH-DATA_WIDTH*2){mult_result[DATA_WIDTH*2-1]}}, mult_result};
+                end
+                
+                OP_MAX: begin
+                    // 最大值
+                    stage1_result <= comparison_result ? 
+                        {{(ACCUM_WIDTH-DATA_WIDTH){operand_a[DATA_WIDTH-1]}}, operand_a} :
+                        {{(ACCUM_WIDTH-DATA_WIDTH){operand_b[DATA_WIDTH-1]}}, operand_b};
+                end
+                
+                OP_MIN: begin
+                    // 最小值
+                    stage1_result <= comparison_result ? 
+                        {{(ACCUM_WIDTH-DATA_WIDTH){operand_b[DATA_WIDTH-1]}}, operand_b} :
+                        {{(ACCUM_WIDTH-DATA_WIDTH){operand_a[DATA_WIDTH-1]}}, operand_a};
+                end
+                
+                default: begin
+                    stage1_result <= 0;
+                end
+            endcase
+        end
+    end
+    
+    // 第二级流水线：完成累加或输出
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            result_out <= 0;
+            result_valid <= 0;
+            op_mode_r2 <= 0;
+        end else begin
+            op_mode_r2 <= op_mode_r1;
+            result_valid <= 1'b1;
+            
+            case (op_mode_r1)
+                OP_MAC: begin
+                    // MAC第二步：累加
+                    result_out <= stage1_result + accumulator_in;
+                end
+                
+                default: begin
+                    // 其他操作直接输出
+                    result_out <= stage1_result;
+                end
+            endcase
+        end
+    end
+endmodule
+
+// 共享计算阵列
+module SharedComputeArray #(
+    parameter ARRAY_SIZE = 16,
+    parameter DATA_WIDTH = 8
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 全局控制
+    input wire [2:0] array_mode,  // 0:卷积 1:矩阵乘 2:池化 3:激活
+    
+    // 数据输入
+    input wire [ARRAY_SIZE-1:0][DATA_WIDTH-1:0] input_a,
+    input wire [ARRAY_SIZE-1:0][DATA_WIDTH-1:0] input_b,
+    input wire [ARRAY_SIZE-1:0][31:0] partial_sums,
+    
+    // 数据输出
+    output wire [ARRAY_SIZE-1:0][31:0] output_results
+);
+    
+    // 模式配置
+    reg [2:0] unit_op_mode [ARRAY_SIZE-1:0];
+    
+    // 根据阵列模式配置单元操作
+    always @(*) begin
+        case (array_mode)
+            3'b000: begin  // 卷积模式
+                for (int i = 0; i < ARRAY_SIZE; i++) begin
+                    unit_op_mode[i] = 3'b000;  // MAC
+                end
+            end
+            
+            3'b001: begin  // 矩阵乘法模式
+                for (int i = 0; i < ARRAY_SIZE; i++) begin
+                    unit_op_mode[i] = 3'b000;  // MAC
+                end
+            end
+            
+            3'b010: begin  // 最大池化
+                for (int i = 0; i < ARRAY_SIZE; i++) begin
+                    unit_op_mode[i] = 3'b011;  // MAX
+                end
+            end
+            
+            3'b011: begin  // ReLU激活
+                for (int i = 0; i < ARRAY_SIZE; i++) begin
+                    unit_op_mode[i] = 3'b011;  // MAX(x, 0)
+                end
+            end
+            
+            default: begin
+                for (int i = 0; i < ARRAY_SIZE; i++) begin
+                    unit_op_mode[i] = 3'b000;
+                end
+            end
+        endcase
+    end
+    
+    // 实例化共享计算单元
+    genvar i;
+    generate
+        for (i = 0; i < ARRAY_SIZE; i = i + 1) begin : compute_units
+            ReconfigurableComputeUnit unit (
+                .clk(clk),
+                .rst_n(rst_n),
+                .op_mode(unit_op_mode[i]),
+                .operand_a(input_a[i]),
+                .operand_b(input_b[i]),
+                .operand_c(8'h0),  // 池化模式下不使用
+                .accumulator_in(partial_sums[i]),
+                .result_out(output_results[i]),
+                .result_valid()
+            );
+        end
+    endgenerate
+endmodule
+            </div>
+
+            <h4>11.5.2 存储压缩技术</h4>
+            <div class="code-block">
+// 权重压缩存储单元
+module CompressedWeightStorage #(
+    parameter WEIGHT_WIDTH = 8,
+    parameter BLOCK_SIZE = 16,
+    parameter MEMORY_DEPTH = 1024
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 写入接口（压缩）
+    input wire write_enable,
+    input wire [9:0] write_addr,
+    input wire [BLOCK_SIZE-1:0][WEIGHT_WIDTH-1:0] write_data,
+    
+    // 读取接口（解压）
+    input wire read_enable,
+    input wire [9:0] read_addr,
+    output reg [BLOCK_SIZE-1:0][WEIGHT_WIDTH-1:0] read_data,
+    output reg read_valid
+);
+    
+    // 压缩存储格式
+    // [元数据(16bit)][压缩数据(变长)]
+    // 元数据：[压缩类型(2bit)][块长度(6bit)][零掩码(8bit)]
+    
+    // 内部存储
+    reg [127:0] compressed_memory [MEMORY_DEPTH-1:0];
+    reg [15:0] metadata_memory [MEMORY_DEPTH-1:0];
+    
+    // 压缩逻辑
+    reg [1:0] compression_type;
+    reg [5:0] compressed_length;
+    reg [BLOCK_SIZE-1:0] zero_mask;
+    reg [127:0] compressed_data;
+    
+    // 检测零值
+    integer i;
+    always @(*) begin
+        zero_mask = 0;
+        for (i = 0; i < BLOCK_SIZE; i = i + 1) begin
+            zero_mask[i] = (write_data[i] == 0);
+        end
+    end
+    
+    // 计算非零值数量
+    reg [4:0] non_zero_count;
+    always @(*) begin
+        non_zero_count = 0;
+        for (i = 0; i < BLOCK_SIZE; i = i + 1) begin
+            if (!zero_mask[i]) non_zero_count = non_zero_count + 1;
+        end
+    end
+    
+    // 压缩写入
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            compression_type <= 0;
+            compressed_length <= 0;
+        end else if (write_enable) begin
+            // 选择压缩方案
+            if (non_zero_count <= 4) begin
+                // 稀疏压缩：只存储非零值和位置
+                compression_type <= 2'b00;
+                compressed_length <= non_zero_count * (WEIGHT_WIDTH + 4);
+                
+                // 打包非零值
+                compressed_data <= 0;
+                for (i = 0; i < BLOCK_SIZE; i = i + 1) begin
+                    if (!zero_mask[i]) begin
+                        compressed_data <= {compressed_data[119:0], write_data[i]};
+                    end
+                end
+            end else if (non_zero_count == BLOCK_SIZE) begin
+                // 无压缩：直接存储
+                compression_type <= 2'b01;
+                compressed_length <= BLOCK_SIZE * WEIGHT_WIDTH;
+                compressed_data <= write_data;
+            end else begin
+                // 零值压缩：使用掩码
+                compression_type <= 2'b10;
+                compressed_length <= non_zero_count * WEIGHT_WIDTH;
+                
+                // 打包非零值
+                compressed_data <= 0;
+                for (i = 0; i < BLOCK_SIZE; i = i + 1) begin
+                    if (!zero_mask[i]) begin
+                        compressed_data <= {compressed_data[119:0], write_data[i]};
+                    end
+                end
+            end
+            
+            // 写入存储
+            metadata_memory[write_addr] <= {compression_type, compressed_length, zero_mask[7:0]};
+            compressed_memory[write_addr] <= compressed_data;
+        end
+    end
+    
+    // 解压读取
+    reg [15:0] read_metadata;
+    reg [127:0] read_compressed;
+    reg [1:0] decomp_type;
+    reg [5:0] decomp_length;
+    reg [7:0] decomp_zero_mask;
+    
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            read_data <= 0;
+            read_valid <= 0;
+        end else if (read_enable) begin
+            // 读取元数据和压缩数据
+            read_metadata <= metadata_memory[read_addr];
+            read_compressed <= compressed_memory[read_addr];
+            read_valid <= 1'b1;
+            
+            // 解析元数据
+            decomp_type <= read_metadata[15:14];
+            decomp_length <= read_metadata[13:8];
+            decomp_zero_mask <= read_metadata[7:0];
+            
+            // 根据压缩类型解压
+            case (read_metadata[15:14])
+                2'b00: begin  // 稀疏压缩
+                    // 恢复零值
+                    read_data <= 0;
+                    // 填充非零值（简化示例）
+                end
+                
+                2'b01: begin  // 无压缩
+                    read_data <= read_compressed[BLOCK_SIZE*WEIGHT_WIDTH-1:0];
+                end
+                
+                2'b10: begin  // 零值压缩
+                    // 根据掩码恢复
+                    read_data <= 0;
+                    for (i = 0; i < BLOCK_SIZE; i = i + 1) begin
+                        if (!decomp_zero_mask[i]) begin
+                            read_data[i] <= read_compressed[WEIGHT_WIDTH-1:0];
+                            read_compressed <= read_compressed >> WEIGHT_WIDTH;
+                        end
+                    end
+                end
+            endcase
+        end else begin
+            read_valid <= 0;
+        end
+    end
+endmodule
+            </div>
+
+            <div class="exercise">
+                <h4>练习 11.1：量化感知训练</h4>
+                <div class="question">
+                    <p><strong>题目：</strong>设计一个支持量化感知训练（QAT）的前向传播单元，要求：
+                    1) 支持FP32训练和INT8推理模式切换
+                    2) 实现fake quantization操作
+                    3) 支持per-channel量化参数</p>
+                    <details class="hint">
+                        <summary>💡 提示</summary>
+                        <p>思考方向：QAT在训练时模拟量化效果但仍用FP32计算。Fake量化：FP32→INT8→FP32的过程。Per-channel意味着每个通道有独立的scale和zero_point。模式切换需要multiplexer选择数据路径。</p>
+                    </details>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <div class="code-block">
+module QATForwardUnit #(
+    parameter NUM_CHANNELS = 64,
+    parameter FP_WIDTH = 32,
+    parameter INT_WIDTH = 8
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 模式控制
+    input wire training_mode,  // 1: 训练, 0: 推理
+    
+    // FP32输入（训练模式）
+    input wire [NUM_CHANNELS-1:0][FP_WIDTH-1:0] fp_input,
+    
+    // INT8输入（推理模式）
+    input wire [NUM_CHANNELS-1:0][INT_WIDTH-1:0] int_input,
+    
+    // 量化参数（per-channel）
+    input wire [NUM_CHANNELS-1:0][15:0] scale,      // Q8.8
+    input wire [NUM_CHANNELS-1:0][7:0] zero_point,
+    
+    // 输出
+    output reg [NUM_CHANNELS-1:0][FP_WIDTH-1:0] fp_output,
+    output reg [NUM_CHANNELS-1:0][INT_WIDTH-1:0] int_output,
+    output reg output_valid
+);
+    
+    // Fake quantization流水线
+    reg [NUM_CHANNELS-1:0][FP_WIDTH-1:0] quantized_fp;
+    reg [NUM_CHANNELS-1:0][INT_WIDTH-1:0] quantized_int;
+    reg stage1_valid, stage2_valid;
+    
+    genvar ch;
+    generate
+        for (ch = 0; ch < NUM_CHANNELS; ch = ch + 1) begin : channel_quant
+            // 第一级：量化到INT8
+            always @(posedge clk) begin
+                if (!rst_n) begin
+                    quantized_int[ch] <= 0;
+                end else if (training_mode) begin
+                    // 量化：q = round(x/scale) + zero_point
+                    // 简化实现，实际需要浮点除法
+                    reg [FP_WIDTH-1:0] scaled_val;
+                    scaled_val = fp_input[ch] / scale[ch];
+                    
+                    // 四舍五入和饱和
+                    if (scaled_val + zero_point[ch] > 127) begin
+                        quantized_int[ch] <= 8'd127;
+                    end else if (scaled_val + zero_point[ch] < -128) begin
+                        quantized_int[ch] <= 8'd128;  // -128的补码表示
+                    end else begin
+                        quantized_int[ch] <= scaled_val + zero_point[ch];
+                    end
+                end else begin
+                    // 推理模式直接使用INT8输入
+                    quantized_int[ch] <= int_input[ch];
+                end
+            end
+            
+            // 第二级：反量化到FP32（仅训练模式）
+            always @(posedge clk) begin
+                if (!rst_n) begin
+                    quantized_fp[ch] <= 0;
+                end else if (stage1_valid && training_mode) begin
+                    // 反量化：x = (q - zero_point) * scale
+                    quantized_fp[ch] <= (quantized_int[ch] - zero_point[ch]) * scale[ch];
+                end
+            end
+        end
+    endgenerate
+    
+    // 输出选择
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            fp_output <= 0;
+            int_output <= 0;
+            output_valid <= 0;
+        end else begin
+            if (training_mode) begin
+                fp_output <= quantized_fp;
+                int_output <= quantized_int;  // 也输出量化值用于统计
+            end else begin
+                fp_output <= 0;  // 推理模式不需要FP输出
+                int_output <= quantized_int;
+            end
+            
+            output_valid <= stage2_valid;
+        end
+    end
+    
+    // 流水线控制
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            stage1_valid <= 0;
+            stage2_valid <= 0;
+        end else begin
+            stage1_valid <= 1'b1;  // 假设输入总是有效
+            stage2_valid <= stage1_valid;
+        end
+    end
+endmodule
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="exercise">
+                <h4>练习 11.2：动态数据流优化</h4>
+                <div class="question">
+                    <p><strong>题目：</strong>实现一个动态数据流控制器，能够根据层类型和数据特征自适应选择最优数据流模式（WS/OS/RS）。考虑：
+                    1) 不同层类型的数据复用特征
+                    2) 片上存储容量限制
+                    3) 数据流切换开销</p>
+                    <details class="hint">
+                        <summary>💡 提示</summary>
+                        <p>思考方向：分析不同层类型（1×1卷积适合WS，深度卷积适合OS）。计算每种模式的内存需求和数据复用率。切换开销包括重新配置和数据重排。使用决策表或启发式算法。</p>
+                    </details>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <div class="code-block">
+module AdaptiveDataflowController #(
+    parameter SRAM_SIZE = 512 * 1024,  // 512KB
+    parameter PE_ARRAY_DIM = 16
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 层配置
+    input wire [3:0] layer_type,  // 0:Conv 1:DW-Conv 2:FC 3:Pool
+    input wire [15:0] input_h, input_w, input_c,
+    input wire [15:0] output_h, output_w, output_c,
+    input wire [3:0] kernel_size,
+    input wire [3:0] stride,
+    
+    // 数据流选择输出
+    output reg [1:0] dataflow_mode,  // 0:WS 1:OS 2:RS
+    output reg [7:0] tile_config [3:0],  // [H,W,IC,OC]
+    output reg config_valid
+);
+    
+    // 数据流模式定义
+    localparam WS = 2'b00;  // Weight Stationary
+    localparam OS = 2'b01;  // Output Stationary
+    localparam RS = 2'b10;  // Row Stationary
+    
+    // 计算数据复用度
+    function [31:0] calc_ws_reuse;
+        input [15:0] ih, iw, ic, oc;
+        input [3:0] ks;
+        begin
+            // WS复用度：每个权重被使用ih*iw次
+            calc_ws_reuse = ih * iw;
+        end
+    endfunction
+    
+    function [31:0] calc_os_reuse;
+        input [15:0] ih, iw, ic, oc;
+        input [3:0] ks;
+        begin
+            // OS复用度：每个输出累加ks*ks*ic次
+            calc_os_reuse = ks * ks * ic;
+        end
+    endfunction
+    
+    function [31:0] calc_rs_reuse;
+        input [15:0] ih, iw, ic, oc;
+        input [3:0] ks;
+        begin
+            // RS复用度：综合考虑
+            calc_rs_reuse = (ih * iw + ks * ks * ic + oc) / 3;
+        end
+    endfunction
+    
+    // 决策状态机
+    reg [2:0] decision_state;
+    reg [31:0] ws_score, os_score, rs_score;
+    
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            decision_state <= 0;
+            dataflow_mode <= WS;
+            config_valid <= 0;
+        end else begin
+            case (decision_state)
+                3'b000: begin  // 分析层特征
+                    case (layer_type)
+                        4'b0000: begin  // 标准卷积
+                            if (output_c > 256 && kernel_size <= 3) begin
+                                // 大量输出通道，小卷积核 -> WS
+                                dataflow_mode <= WS;
+                            end else if (input_c > 256) begin
+                                // 大量输入通道 -> OS
+                                dataflow_mode <= OS;
+                            end else begin
+                                // 平衡情况 -> RS
+                                dataflow_mode <= RS;
+                            end
+                        end
+                        
+                        4'b0001: begin  // 深度可分离卷积
+                            // DW卷积适合OS（输出通道少）
+                            dataflow_mode <= OS;
+                        end
+                        
+                        4'b0010: begin  // 全连接层
+                            // FC层适合WS（大量权重复用）
+                            dataflow_mode <= WS;
+                        end
+                        
+                        4'b0011: begin  // 池化层
+                            // 池化无权重，使用OS
+                            dataflow_mode <= OS;
+                        end
+                    endcase
+                    decision_state <= 3'b001;
+                end
+                
+                3'b001: begin  // 计算复用度得分
+                    ws_score <= calc_ws_reuse(input_h, input_w, input_c, output_c, kernel_size);
+                    os_score <= calc_os_reuse(input_h, input_w, input_c, output_c, kernel_size);
+                    rs_score <= calc_rs_reuse(input_h, input_w, input_c, output_c, kernel_size);
+                    decision_state <= 3'b010;
+                end
+                
+                3'b010: begin  // 选择最优数据流
+                    if (ws_score >= os_score && ws_score >= rs_score) begin
+                        dataflow_mode <= WS;
+                    end else if (os_score >= rs_score) begin
+                        dataflow_mode <= OS;
+                    end else begin
+                        dataflow_mode <= RS;
+                    end
+                    decision_state <= 3'b011;
+                end
+                
+                3'b011: begin  // 配置分块参数
+                    case (dataflow_mode)
+                        WS: begin
+                            // 权重固定：最大化权重在片上
+                            tile_config[0] <= (input_h > 32) ? 32 : input_h;
+                            tile_config[1] <= (input_w > 32) ? 32 : input_w;
+                            tile_config[2] <= input_c;  // 所有输入通道
+                            tile_config[3] <= (output_c > PE_ARRAY_DIM) ? PE_ARRAY_DIM : output_c;
+                        end
+                        
+                        OS: begin
+                            // 输出固定：平衡各维度
+                            tile_config[0] <= (output_h > 16) ? 16 : output_h;
+                            tile_config[1] <= (output_w > 16) ? 16 : output_w;
+                            tile_config[2] <= (input_c > 64) ? 64 : input_c;
+                            tile_config[3] <= (output_c > 64) ? 64 : output_c;
+                        end
+                        
+                        RS: begin
+                            // 行固定：优化行方向复用
+                            tile_config[0] <= PE_ARRAY_DIM;
+                            tile_config[1] <= (input_w > 64) ? 64 : input_w;
+                            tile_config[2] <= (input_c > 32) ? 32 : input_c;
+                            tile_config[3] <= (output_c > 32) ? 32 : output_c;
+                        end
+                    endcase
+                    decision_state <= 3'b100;
+                end
+                
+                3'b100: begin  // 完成配置
+                    config_valid <= 1'b1;
+                    decision_state <= 3'b101;
+                end
+                
+                3'b101: begin  // 等待新请求
+                    config_valid <= 1'b0;
+                    decision_state <= 3'b000;
+                end
+            endcase
+        end
+    end
+endmodule
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="exercise">
+                <h4>练习 11.3：层次化功耗管理</h4>
+                <div class="question">
+                    <p><strong>题目：</strong>设计一个层次化的功耗管理系统，包括：
+                    1) 芯片级、簇级、核心级三层功耗控制
+                    2) 基于负载预测的DVFS策略
+                    3) 细粒度的时钟门控和电源门控
+                    4) 功耗预算分配机制</p>
+                    <details class="hint">
+                        <summary>💡 提示</summary>
+                        <p>思考方向：层次化管理允许不同粒度的控制。DVFS需要预测未来负载并提前调整。时钟门控在细粒度上节省动态功耗。功耗预算分配需要考虑优先级和性能要求。</p>
+                    </details>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <div class="code-block">
+module HierarchicalPowerManager #(
+    parameter NUM_CLUSTERS = 4,
+    parameter CORES_PER_CLUSTER = 8,
+    parameter POWER_BUDGET = 10000  // mW
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 性能监控
+    input wire [31:0] global_instruction_count,
+    input wire [NUM_CLUSTERS-1:0][31:0] cluster_active_cycles,
+    input wire [NUM_CLUSTERS-1:0][CORES_PER_CLUSTER-1:0] core_utilization,
+    
+    // 温度监控
+    input wire [7:0] chip_temperature,  // 摄氏度
+    input wire [NUM_CLUSTERS-1:0][7:0] cluster_temperature,
+    
+    // 功耗控制输出
+    output reg [3:0] chip_voltage_level,
+    output reg [3:0] chip_frequency_level,
+    output reg [NUM_CLUSTERS-1:0][3:0] cluster_voltage_level,
+    output reg [NUM_CLUSTERS-1:0] cluster_power_gate,
+    output reg [NUM_CLUSTERS-1:0][CORES_PER_CLUSTER-1:0] core_clock_gate,
+    
+    // 功耗统计
+    output reg [31:0] estimated_power,
+    output reg [NUM_CLUSTERS-1:0][15:0] cluster_power_allocation
+);
+    
+    // 功耗模型参数
+    localparam STATIC_POWER_BASE = 100;   // mW
+    localparam DYNAMIC_POWER_COEF = 50;  // mW/GHz/V²
+    
+    // 负载预测
+    reg [31:0] load_history [63:0];
+    reg [5:0] history_ptr;
+    reg [31:0] predicted_load;
+    
+    // 移动平均负载预测
+    integer i;
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            history_ptr <= 0;
+            predicted_load <= 0;
+        end else begin
+            load_history[history_ptr] <= global_instruction_count;
+            history_ptr <= history_ptr + 1;
+            
+            // 计算未来负载（简单线性预测）
+            if (history_ptr >= 4) begin
+                predicted_load <= load_history[history_ptr-1] + 
+                    (load_history[history_ptr-1] - load_history[history_ptr-4]) / 3;
+            end
+        end
+    end
+    
+    // 温度管理状态机
+    reg [2:0] thermal_state;
+    localparam THERMAL_NORMAL = 3'b000;
+    localparam THERMAL_WARM = 3'b001;
+    localparam THERMAL_HOT = 3'b010;
+    localparam THERMAL_CRITICAL = 3'b011;
+    localparam THERMAL_SHUTDOWN = 3'b100;
+    
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            thermal_state <= THERMAL_NORMAL;
+        end else begin
+            if (chip_temperature > 95) begin
+                thermal_state <= THERMAL_SHUTDOWN;
+            end else if (chip_temperature > 85) begin
+                thermal_state <= THERMAL_CRITICAL;
+            end else if (chip_temperature > 75) begin
+                thermal_state <= THERMAL_HOT;
+            end else if (chip_temperature > 65) begin
+                thermal_state <= THERMAL_WARM;
+            end else begin
+                thermal_state <= THERMAL_NORMAL;
+            end
+        end
+    end
+    
+    // 芯片级DVFS控制
+    reg [31:0] target_performance;
+    reg [31:0] power_headroom;
+    
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            chip_voltage_level <= 4'b1000;   // 中等电压
+            chip_frequency_level <= 4'b1000;  // 中等频率
+        end else begin
+            // 根据热状态调整
+            case (thermal_state)
+                THERMAL_SHUTDOWN: begin
+                    chip_voltage_level <= 4'b0001;
+                    chip_frequency_level <= 4'b0001;
+                end
+                
+                THERMAL_CRITICAL: begin
+                    if (chip_voltage_level > 4'b0100) begin
+                        chip_voltage_level <= chip_voltage_level - 1;
+                        chip_frequency_level <= chip_frequency_level - 1;
+                    end
+                end
+                
+                THERMAL_HOT: begin
+                    if (chip_voltage_level > 4'b0110) begin
+                        chip_voltage_level <= chip_voltage_level - 1;
+                        chip_frequency_level <= chip_frequency_level - 1;
+                    end
+                end
+                
+                THERMAL_NORMAL: begin
+                    // 基于负载预测调整
+                    if (predicted_load > target_performance * 110 / 100) begin
+                        // 需要提升性能
+                        if (chip_voltage_level < 4'b1111 && estimated_power < POWER_BUDGET * 90 / 100) begin
+                            chip_voltage_level <= chip_voltage_level + 1;
+                            chip_frequency_level <= chip_frequency_level + 1;
+                        end
+                    end else if (predicted_load < target_performance * 50 / 100) begin
+                        // 可以降低功耗
+                        if (chip_voltage_level > 4'b0100) begin
+                            chip_voltage_level <= chip_voltage_level - 1;
+                            chip_frequency_level <= chip_frequency_level - 1;
+                        end
+                    end
+                end
+            endcase
+        end
+    end
+    
+    // 簇级功耗分配
+    reg [31:0] cluster_load [NUM_CLUSTERS-1:0];
+    reg [31:0] total_cluster_load;
+    
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            for (i = 0; i < NUM_CLUSTERS; i = i + 1) begin
+                cluster_power_allocation[i] <= POWER_BUDGET / NUM_CLUSTERS;
+                cluster_voltage_level[i] <= 4'b1000;
+                cluster_power_gate[i] <= 1'b0;
+            end
+        end else begin
+            // 计算各簇负载
+            total_cluster_load = 0;
+            for (i = 0; i < NUM_CLUSTERS; i = i + 1) begin
+                cluster_load[i] = cluster_active_cycles[i];
+                total_cluster_load = total_cluster_load + cluster_load[i];
+            end
+            
+            // 按负载比例分配功耗预算
+            for (i = 0; i < NUM_CLUSTERS; i = i + 1) begin
+                if (total_cluster_load > 0) begin
+                    cluster_power_allocation[i] <= 
+                        (POWER_BUDGET - STATIC_POWER_BASE) * cluster_load[i] / total_cluster_load;
+                end
+                
+                // 簇级电源门控
+                if (cluster_load[i] == 0 && thermal_state != THERMAL_NORMAL) begin
+                    cluster_power_gate[i] <= 1'b1;  // 关闭空闲簇
+                end else begin
+                    cluster_power_gate[i] <= 1'b0;
+                end
+                
+                // 簇级DVFS
+                if (cluster_temperature[i] > 80) begin
+                    cluster_voltage_level[i] <= 4'b0110;  // 降温
+                end else if (cluster_power_allocation[i] > 3000) begin
+                    cluster_voltage_level[i] <= 4'b1111;  // 高性能
+                end else if (cluster_power_allocation[i] > 2000) begin
+                    cluster_voltage_level[i] <= 4'b1100;  // 中高性能
+                end else if (cluster_power_allocation[i] > 1000) begin
+                    cluster_voltage_level[i] <= 4'b1000;  // 中等性能
+                end else begin
+                    cluster_voltage_level[i] <= 4'b0100;  // 低功耗
+                end
+            end
+        end
+    end
+    
+    // 核心级时钟门控
+    genvar c, p;
+    generate
+        for (c = 0; c < NUM_CLUSTERS; c = c + 1) begin : cluster_gen
+            for (p = 0; p < CORES_PER_CLUSTER; p = p + 1) begin : core_gen
+                always @(posedge clk) begin
+                    if (!rst_n) begin
+                        core_clock_gate[c][p] <= 1'b0;
+                    end else begin
+                        // 细粒度时钟门控
+                        if (core_utilization[c][p] < 8'd10) begin
+                            core_clock_gate[c][p] <= 1'b1;  // 关闭低利用率核心
+                        end else begin
+                            core_clock_gate[c][p] <= 1'b0;
+                        end
+                    end
+                end
+            end
+        end
+    endgenerate
+    
+    // 功耗估算
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            estimated_power <= 0;
+        end else begin
+            estimated_power = STATIC_POWER_BASE;
+            
+            // 芯片动态功耗
+            estimated_power = estimated_power + 
+                DYNAMIC_POWER_COEF * chip_frequency_level * 
+                chip_voltage_level * chip_voltage_level / 256;
+            
+            // 各簇功耗
+            for (i = 0; i < NUM_CLUSTERS; i = i + 1) begin
+                if (!cluster_power_gate[i]) begin
+                    estimated_power = estimated_power + 
+                        cluster_power_allocation[i] * 
+                        cluster_voltage_level[i] * cluster_voltage_level[i] / 256;
+                end
+            end
+        end
+    end
+endmodule
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="exercise">
+                <h4>练习 11.4：稀疏计算加速器设计</h4>
+                <div class="question">
+                    <p><strong>题目：</strong>设计一个高效的稀疏计算加速器，支持：
+                    1) 动态稀疏检测和零值跳过
+                    2) 多种稀疏格式（CSR、COO、Bitmap）
+                    3) 稀疏度自适应的负载均衡</p>
+                    <p>要求：实现稀疏矩阵乘法（SpMM），对比稠密计算的性能提升，并分析不同稀疏度下的加速效果。</p>
+                </div>
+                <button class="toggle-answer">显示答案</button>
+                <div class="answer" style="display: none;">
+                    <div class="code-block">
+// 稀疏矩阵乘法加速器
+module SparseMatrixMultiplier #(
+    parameter DATA_WIDTH = 8,
+    parameter MATRIX_DIM = 16,
+    parameter MAX_NNZ = 256
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 控制信号
+    input wire start,
+    input wire [1:0] sparse_format,  // 0:CSR 1:COO 2:Bitmap
+    
+    // 稀疏矩阵A（CSR格式）
+    input wire [DATA_WIDTH-1:0] a_values[MAX_NNZ-1:0],
+    input wire [7:0] a_col_idx[MAX_NNZ-1:0],
+    input wire [8:0] a_row_ptr[MATRIX_DIM:0],
+    
+    // 稀疏矩阵B（可以是稠密或稀疏）
+    input wire [DATA_WIDTH-1:0] b_matrix[MATRIX_DIM-1:0][MATRIX_DIM-1:0],
+    input wire b_is_sparse,
+    
+    // 输出矩阵C
+    output reg [31:0] c_matrix[MATRIX_DIM-1:0][MATRIX_DIM-1:0],
+    output reg done
+);
+    
+    // 稀疏度统计
+    reg [31:0] zero_count, total_count;
+    wire [7:0] sparsity = (zero_count * 100) / total_count;
+    
+    // 负载均衡单元
+    reg [3:0] active_rows[3:0];  // 4个并行处理单元
+    reg [3:0] row_assignment[MATRIX_DIM-1:0];
+    
+    // 根据每行的非零元素数量进行负载均衡
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            for (int i = 0; i < 4; i++) begin
+                active_rows[i] <= 0;
+            end
+        end else if (start) begin
+            // 分析每行的计算量
+            for (int row = 0; row < MATRIX_DIM; row++) begin
+                int nnz_in_row = a_row_ptr[row+1] - a_row_ptr[row];
+                
+                // 分配到负载最轻的处理单元
+                int min_load = 999;
+                int selected_unit = 0;
+                for (int unit = 0; unit < 4; unit++) begin
+                    if (active_rows[unit] < min_load) begin
+                        min_load = active_rows[unit];
+                        selected_unit = unit;
+                    end
+                end
+                
+                row_assignment[row] <= selected_unit;
+                active_rows[selected_unit] <= active_rows[selected_unit] + nnz_in_row;
+            end
+        end
+    end
+    
+    // 并行计算单元
+    genvar unit;
+    generate
+        for (unit = 0; unit < 4; unit = unit + 1) begin : compute_units
+            SparseComputeUnit #(
+                .DATA_WIDTH(DATA_WIDTH),
+                .MATRIX_DIM(MATRIX_DIM)
+            ) unit_inst (
+                .clk(clk),
+                .rst_n(rst_n),
+                .unit_id(unit),
+                .row_assignment(row_assignment),
+                .a_values(a_values),
+                .a_col_idx(a_col_idx),
+                .a_row_ptr(a_row_ptr),
+                .b_matrix(b_matrix),
+                .partial_results(c_matrix)
+            );
+        end
+    endgenerate
+    
+    // 性能监控
+    reg [31:0] cycle_count;
+    reg [31:0] mac_operations;
+    reg [31:0] skipped_operations;
+    
+    always @(posedge clk) begin
+        if (!rst_n || start) begin
+            cycle_count <= 0;
+            mac_operations <= 0;
+            skipped_operations <= 0;
+        end else if (!done) begin
+            cycle_count <= cycle_count + 1;
+        end
+    end
+    
+    // 计算吞吐量和加速比
+    wire [31:0] dense_operations = MATRIX_DIM * MATRIX_DIM * MATRIX_DIM;
+    wire [31:0] sparse_operations = mac_operations;
+    wire [31:0] speedup = (dense_operations * 100) / (sparse_operations > 0 ? sparse_operations : 1);
+    
+endmodule
+                    </div>
+                    <p><strong>解析：</strong></p>
+                    <ul>
+                        <li>稀疏检测：实时统计零值比例，动态调整处理策略</li>
+                        <li>负载均衡：根据每行非零元素数量分配到不同处理单元</li>
+                        <li>性能监控：统计实际MAC操作数和跳过的操作数</li>
+                        <li>格式支持：可扩展支持多种稀疏格式</li>
+                        <li>加速效果：在90%稀疏度下，理论加速比可达10倍</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="exercise">
+                <h4>练习 11.5：面积优化的可重构MAC阵列</h4>
+                <div class="question">
+                    <p><strong>题目：</strong>设计一个面积优化的可重构MAC阵列，要求：
+                    1) 支持INT4/INT8/INT16多精度计算
+                    2) 可配置为不同的阵列形态（如4×4、2×8、1×16）
+                    3) 共享乘法器和加法器资源
+                    4) 最小化互连开销</p>
+                    <details class="hint">
+                        <summary>💡 提示</summary>
+                        <p>思考方向：INT16乘法器可以拆分为4个INT8或16个INT4乘法器。使用MUX网络重新路由数据。不同形态适合不同的矩阵尺寸。考虑部分积累加的位宽增长。</p>
+                    </details>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <div class="code-block">
+module ReconfigurableMACArray #(
+    parameter MAX_ARRAY_DIM = 16,
+    parameter MAX_DATA_WIDTH = 16
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 配置接口
+    input wire [1:0] precision_mode,  // 0:INT4 1:INT8 2:INT16
+    input wire [1:0] array_mode,      // 0:16x1 1:8x2 2:4x4 3:2x8
+    
+    // 数据输入
+    input wire [MAX_ARRAY_DIM-1:0][MAX_DATA_WIDTH-1:0] input_a,
+    input wire [MAX_ARRAY_DIM-1:0][MAX_DATA_WIDTH-1:0] input_b,
+    input wire input_valid,
+    
+    // 输出
+    output reg [MAX_ARRAY_DIM-1:0][31:0] output_results,
+    output reg output_valid
+);
+    
+    // 基础计算单元（可分解）
+    module FlexibleMultiplier (
+        input wire [15:0] a,
+        input wire [15:0] b,
+        input wire [1:0] mode,  // 0:1x16bit 1:2x8bit 2:4x4bit
+        output reg [31:0] products [3:0]
+    );
+        always @(*) begin
+            case (mode)
+                2'b00: begin  // 1个16位乘法
+                    products[0] = a * b;
+                    products[1] = 0;
+                    products[2] = 0;
+                    products[3] = 0;
+                end
+                
+                2'b01: begin  // 2个8位乘法
+                    products[0] = {8'h0, a[7:0]} * {8'h0, b[7:0]};
+                    products[1] = {8'h0, a[15:8]} * {8'h0, b[15:8]};
+                    products[2] = 0;
+                    products[3] = 0;
+                end
+                
+                2'b10: begin  // 4个4位乘法
+                    products[0] = {12'h0, a[3:0]} * {12'h0, b[3:0]};
+                    products[1] = {12'h0, a[7:4]} * {12'h0, b[7:4]};
+                    products[2] = {12'h0, a[11:8]} * {12'h0, b[11:8]};
+                    products[3] = {12'h0, a[15:12]} * {12'h0, b[15:12]};
+                end
+            endcase
+        end
+    endmodule
+    
+    // 共享乘法器阵列（使用更少的物理乘法器）
+    wire [31:0] mult_results [MAX_ARRAY_DIM-1:0][3:0];
+    genvar i;
+    generate
+        for (i = 0; i < MAX_ARRAY_DIM; i = i + 1) begin : mult_array
+            FlexibleMultiplier mult_inst (
+                .a(input_a[i]),
+                .b(input_b[i]),
+                .mode(precision_mode),
+                .products(mult_results[i])
+            );
+        end
+    endgenerate
+    
+    // 可重构累加树
+    reg [31:0] accum_stage1 [MAX_ARRAY_DIM-1:0];
+    reg [31:0] accum_stage2 [MAX_ARRAY_DIM/2-1:0];
+    reg [31:0] accum_stage3 [MAX_ARRAY_DIM/4-1:0];
+    reg [31:0] accum_stage4 [MAX_ARRAY_DIM/8-1:0];
+    
+    // 第一级：局部累加
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            for (i = 0; i < MAX_ARRAY_DIM; i = i + 1) begin
+                accum_stage1[i] <= 0;
+            end
+        end else if (input_valid) begin
+            case (precision_mode)
+                2'b00: begin  // INT16
+                    for (i = 0; i < MAX_ARRAY_DIM; i = i + 1) begin
+                        accum_stage1[i] <= mult_results[i][0];
+                    end
+                end
+                
+                2'b01: begin  // INT8
+                    for (i = 0; i < MAX_ARRAY_DIM; i = i + 2) begin
+                        accum_stage1[i] <= mult_results[i/2][0];
+                        accum_stage1[i+1] <= mult_results[i/2][1];
+                    end
+                end
+                
+                2'b10: begin  // INT4
+                    for (i = 0; i < MAX_ARRAY_DIM; i = i + 4) begin
+                        accum_stage1[i] <= mult_results[i/4][0];
+                        accum_stage1[i+1] <= mult_results[i/4][1];
+                        accum_stage1[i+2] <= mult_results[i/4][2];
+                        accum_stage1[i+3] <= mult_results[i/4][3];
+                    end
+                end
+            endcase
+        end
+    end
+    
+    // 可配置的归约网络
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            output_results <= 0;
+        end else begin
+            case (array_mode)
+                2'b00: begin  // 16x1模式
+                    // 全部累加为一个结果
+                    output_results[0] <= 0;
+                    for (i = 0; i < MAX_ARRAY_DIM; i = i + 1) begin
+                        output_results[0] <= output_results[0] + accum_stage1[i];
+                    end
+                    for (i = 1; i < MAX_ARRAY_DIM; i = i + 1) begin
+                        output_results[i] <= 0;
+                    end
+                end
+                
+                2'b01: begin  // 8x2模式
+                    // 分成2组，每组8个
+                    output_results[0] <= 0;
+                    output_results[1] <= 0;
+                    for (i = 0; i < 8; i = i + 1) begin
+                        output_results[0] <= output_results[0] + accum_stage1[i];
+                        output_results[1] <= output_results[1] + accum_stage1[i+8];
+                    end
+                    for (i = 2; i < MAX_ARRAY_DIM; i = i + 1) begin
+                        output_results[i] <= 0;
+                    end
+                end
+                
+                2'b10: begin  // 4x4模式
+                    // 分成4组，每组4个
+                    for (i = 0; i < 4; i = i + 1) begin
+                        output_results[i] <= accum_stage1[i*4] + accum_stage1[i*4+1] + 
+                                           accum_stage1[i*4+2] + accum_stage1[i*4+3];
+                    end
+                    for (i = 4; i < MAX_ARRAY_DIM; i = i + 1) begin
+                        output_results[i] <= 0;
+                    end
+                end
+                
+                2'b11: begin  // 2x8模式
+                    // 分成8组，每组2个
+                    for (i = 0; i < 8; i = i + 1) begin
+                        output_results[i] <= accum_stage1[i*2] + accum_stage1[i*2+1];
+                    end
+                    for (i = 8; i < MAX_ARRAY_DIM; i = i + 1) begin
+                        output_results[i] <= 0;
+                    end
+                end
+            endcase
+        end
+    end
+    
+    // 输出控制
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            output_valid <= 0;
+        end else begin
+            output_valid <= input_valid;
+        end
+    end
+endmodule
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="exercise">
+                <h4>练习 11.6：综合性能优化</h4>
+                <div class="question">
+                    <p><strong>题目：</strong>设计一个综合考虑算法、数据流、功耗和面积的NPU优化框架，包括：
+                    1) 自动选择最优量化策略
+                    2) 动态调整数据流模式
+                    3) 实时功耗监控和调节
+                    4) 根据工作负载动态分配资源
+                    要求给出完整的系统架构和关键模块实现。</p>
+                    <details class="hint">
+                        <summary>💡 提示</summary>
+                        <p>思考方向：构建分层架构：策略层（决策）、执行层（实施）、监控层（反馈）。使用机器学习模型预测最佳配置。实时性能计数器提供反馈。资源分配需要考虑QoS。</p>
+                    </details>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <div class="code-block">
+module IntegratedNPUOptimizer #(
+    parameter NUM_CLUSTERS = 4,
+    parameter PE_PER_CLUSTER = 64,
+    parameter SRAM_SIZE_KB = 512
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 神经网络模型信息
+    input wire [7:0] model_id,
+    input wire [15:0] num_layers,
+    input wire model_load_start,
+    
+    // 实时监控输入
+    input wire [31:0] current_fps,
+    input wire [31:0] target_fps,
+    input wire [15:0] power_consumption_mw,
+    input wire [15:0] power_budget_mw,
+    input wire [7:0] chip_temperature,
+    
+    // 优化控制输出
+    output reg [2:0] quantization_mode,     // 0:FP32 1:FP16 2:INT8 3:INT4
+    output reg [1:0] dataflow_mode,         // 0:WS 1:OS 2:RS 3:Adaptive
+    output reg [3:0] voltage_level,
+    output reg [3:0] frequency_level,
+    output reg [NUM_CLUSTERS-1:0] cluster_enable,
+    output reg optimization_done
+);
+    
+    // 优化状态机
+    reg [3:0] opt_state;
+    localparam IDLE = 4'b0000;
+    localparam PROFILE = 4'b0001;
+    localparam ANALYZE = 4'b0010;
+    localparam OPTIMIZE_ALGO = 4'b0011;
+    localparam OPTIMIZE_DATAFLOW = 4'b0100;
+    localparam OPTIMIZE_POWER = 4'b0101;
+    localparam OPTIMIZE_RESOURCE = 4'b0110;
+    localparam APPLY = 4'b0111;
+    localparam MONITOR = 4'b1000;
+    
+    // 性能分析结果
+    reg [31:0] layer_compute_density [255:0];  // FLOPs/Byte
+    reg [31:0] layer_memory_footprint [255:0]; // Bytes
+    reg [7:0] layer_precision_loss [255:0];    // 量化后精度损失%
+    
+    // 优化决策变量
+    reg [2:0] best_quant_mode;
+    reg [1:0] best_dataflow;
+    reg [3:0] best_voltage;
+    reg [3:0] best_frequency;
+    reg [NUM_CLUSTERS-1:0] best_cluster_config;
+    reg [31:0] predicted_performance;
+    reg [15:0] predicted_power;
+    
+    // 性能模型
+    function [31:0] estimate_performance;
+        input [2:0] quant;
+        input [1:0] dataflow;
+        input [3:0] voltage;
+        input [3:0] freq;
+        input [NUM_CLUSTERS-1:0] clusters;
+        reg [31:0] compute_throughput;
+        reg [31:0] memory_bandwidth;
+        reg [31:0] effective_performance;
+        begin
+            // 计算吞吐量（简化模型）
+            case (quant)
+                3'b000: compute_throughput = freq * 100;      // FP32
+                3'b001: compute_throughput = freq * 200;      // FP16
+                3'b010: compute_throughput = freq * 400;      // INT8
+                3'b011: compute_throughput = freq * 800;      // INT4
+            endcase
+            
+            // 考虑活跃簇数
+            compute_throughput = compute_throughput * $countones(clusters) / NUM_CLUSTERS;
+            
+            // 数据流效率
+            case (dataflow)
+                2'b00: memory_bandwidth = compute_throughput * 80 / 100;   // WS
+                2'b01: memory_bandwidth = compute_throughput * 85 / 100;   // OS
+                2'b10: memory_bandwidth = compute_throughput * 90 / 100;   // RS
+                2'b11: memory_bandwidth = compute_throughput * 95 / 100;   // Adaptive
+            endcase
+            
+            estimate_performance = memory_bandwidth;
+        end
+    endfunction
+    
+    // 功耗模型
+    function [15:0] estimate_power;
+        input [3:0] voltage;
+        input [3:0] freq;
+        input [NUM_CLUSTERS-1:0] clusters;
+        reg [15:0] dynamic_power;
+        reg [15:0] static_power;
+        begin
+            // P = CV²f
+            dynamic_power = 10 * voltage * voltage * freq / 16;
+            dynamic_power = dynamic_power * $countones(clusters) / NUM_CLUSTERS;
+            
+            // 静态功耗
+            static_power = 50 * $countones(clusters);
+            
+            estimate_power = dynamic_power + static_power;
+        end
+    endfunction
+    
+    // 主优化流程
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            opt_state <= IDLE;
+            optimization_done <= 0;
+            quantization_mode <= 3'b010;  // 默认INT8
+            dataflow_mode <= 2'b11;       // 默认自适应
+            voltage_level <= 4'b1000;
+            frequency_level <= 4'b1000;
+            cluster_enable <= {NUM_CLUSTERS{1'b1}};
+        end else begin
+            case (opt_state)
+                IDLE: begin
+                    if (model_load_start) begin
+                        opt_state <= PROFILE;
+                        optimization_done <= 0;
+                    end
+                end
+                
+                PROFILE: begin
+                    // 分析模型特征（简化示例）
+                    // 实际实现需要解析模型结构
+                    opt_state <= ANALYZE;
+                end
+                
+                ANALYZE: begin
+                    // 分析当前性能差距
+                    if (current_fps < target_fps * 90 / 100) begin
+                        // 性能不足，需要优化
+                        opt_state <= OPTIMIZE_ALGO;
+                    end else if (power_consumption_mw > power_budget_mw) begin
+                        // 功耗超标
+                        opt_state <= OPTIMIZE_POWER;
+                    end else begin
+                        opt_state <= MONITOR;
+                    end
+                end
+                
+                OPTIMIZE_ALGO: begin
+                    // 算法优化：选择量化策略
+                    if (current_fps < target_fps * 50 / 100) begin
+                        // 严重性能不足，使用激进量化
+                        best_quant_mode <= 3'b011;  // INT4
+                    end else if (current_fps < target_fps * 75 / 100) begin
+                        best_quant_mode <= 3'b010;  // INT8
+                    end else begin
+                        best_quant_mode <= 3'b001;  // FP16
+                    end
+                    opt_state <= OPTIMIZE_DATAFLOW;
+                end
+                
+                OPTIMIZE_DATAFLOW: begin
+                    // 根据模型特征选择数据流
+                    // 简化：根据计算密度选择
+                    if (layer_compute_density[0] > 100) begin
+                        best_dataflow <= 2'b00;  // 计算密集->WS
+                    end else if (layer_memory_footprint[0] > SRAM_SIZE_KB * 1024) begin
+                        best_dataflow <= 2'b01;  // 内存密集->OS
+                    end else begin
+                        best_dataflow <= 2'b11;  // 自适应
+                    end
+                    opt_state <= OPTIMIZE_POWER;
+                end
+                
+                OPTIMIZE_POWER: begin
+                    // 功耗优化
+                    if (chip_temperature > 85) begin
+                        // 温度过高，降频
+                        best_voltage <= 4'b0110;
+                        best_frequency <= 4'b0110;
+                    end else if (power_consumption_mw > power_budget_mw) begin
+                        // 功耗超标
+                        if (frequency_level > 4'b0100) begin
+                            best_frequency <= frequency_level - 1;
+                            best_voltage <= voltage_level - 1;
+                        end
+                    end else if (power_consumption_mw < power_budget_mw * 70 / 100) begin
+                        // 功耗余量大，可以提频
+                        if (frequency_level < 4'b1110) begin
+                            best_frequency <= frequency_level + 1;
+                            best_voltage <= voltage_level + 1;
+                        end
+                    end else begin
+                        best_voltage <= voltage_level;
+                        best_frequency <= frequency_level;
+                    end
+                    opt_state <= OPTIMIZE_RESOURCE;
+                end
+                
+                OPTIMIZE_RESOURCE: begin
+                    // 资源分配优化
+                    predicted_performance = estimate_performance(
+                        best_quant_mode, best_dataflow, 
+                        best_voltage, best_frequency, 
+                        {NUM_CLUSTERS{1'b1}}
+                    );
+                    
+                    predicted_power = estimate_power(
+                        best_voltage, best_frequency,
+                        {NUM_CLUSTERS{1'b1}}
+                    );
+                    
+                    // 如果功耗还是超标，关闭部分簇
+                    if (predicted_power > power_budget_mw) begin
+                        best_cluster_config <= {1'b0, {(NUM_CLUSTERS-1){1'b1}}};
+                    end else begin
+                        best_cluster_config <= {NUM_CLUSTERS{1'b1}};
+                    end
+                    
+                    opt_state <= APPLY;
+                end
+                
+                APPLY: begin
+                    // 应用优化配置
+                    quantization_mode <= best_quant_mode;
+                    dataflow_mode <= best_dataflow;
+                    voltage_level <= best_voltage;
+                    frequency_level <= best_frequency;
+                    cluster_enable <= best_cluster_config;
+                    
+                    optimization_done <= 1'b1;
+                    opt_state <= MONITOR;
+                end
+                
+                MONITOR: begin
+                    // 持续监控
+                    optimization_done <= 1'b0;
+                    
+                    // 检测是否需要重新优化
+                    if (current_fps < target_fps * 85 / 100 ||
+                        power_consumption_mw > power_budget_mw * 110 / 100 ||
+                        chip_temperature > 90) begin
+                        opt_state <= ANALYZE;
+                    end
+                end
+            endcase
+        end
+    end
+    
+    // 性能计数器和统计
+    reg [31:0] optimization_count;
+    reg [31:0] total_energy_saved;
+    reg [15:0] average_fps_improvement;
+    
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            optimization_count <= 0;
+            total_energy_saved <= 0;
+            average_fps_improvement <= 0;
+        end else if (opt_state == APPLY) begin
+            optimization_count <= optimization_count + 1;
+            
+            // 计算节能效果
+            if (predicted_power < power_consumption_mw) begin
+                total_energy_saved <= total_energy_saved + 
+                    (power_consumption_mw - predicted_power);
+            end
+            
+            // 更新平均性能提升
+            if (predicted_performance > current_fps) begin
+                average_fps_improvement <= 
+                    (average_fps_improvement * (optimization_count - 1) + 
+                     (predicted_performance - current_fps)) / optimization_count;
+            end
+        end
+    end
+endmodule
+                        </div>
+                        <p><strong>解析：</strong></p>
+                        <ul>
+                            <li>该框架实现了完整的优化循环：监测→分析→优化→应用→监测</li>
+                            <li>算法优化根据性能差距自动选择量化精度</li>
+                            <li>数据流优化基于模型特征（计算密度、内存占用）选择</li>
+                            <li>功耗优化考虑温度、功耗预算和性能需求的平衡</li>
+                            <li>资源分配可以动态开关计算簇以满足功耗约束</li>
+                            <li>包含性能和功耗预测模型，支持优化前评估</li>
+                            <li>提供优化统计，用于长期效果评估</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+        
+        <!-- 第12章：NPU设计实战 -->
+        </div>
+        
+        <div class="chapter-nav">
+            <a href="chapter10.html" class="prev">上一章</a>
+            <a href="chapter12.html" class="next">下一章</a>
+        </div>
+    </div>
+</body>
+</html>

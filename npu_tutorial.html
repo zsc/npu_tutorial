@@ -1697,8 +1697,135 @@ Google TPU v4i:
             
             <p>地平线的成功经验表明，在车载AI芯片领域，技术领先只是成功的一部分。理解汽车行业的特殊需求，提供完整的解决方案，建立开放的生态系统，同样至关重要。随着自动驾驶技术的快速发展，车载AI芯片将继续是最具挑战和机遇的领域之一。</p>
 
+            <h4>1.4.10 Graphcore IPU</h4>
+            <p>Graphcore是英国的AI芯片初创公司，其Intelligence Processing Unit (IPU)代表了一种全新的处理器架构思路。与传统的SIMD架构不同，IPU采用了大规模并行的MIMD（Multiple Instruction Multiple Data）架构，为机器学习工作负载提供了独特的计算模式。Graphcore的IPU不仅在技术上富有创新，其编程模型和软件生态也体现了对AI计算本质的深刻理解。</p>
+            
+            <p><strong>大规模并行MIMD架构：</strong></p>
+            <p>IPU的核心创新在于其大规模并行的处理器设计。一个IPU包含上千个独立的处理器核心，每个核心都有自己的程序计数器，可以执行不同的指令流。这种MIMD架构特别适合处理具有不规则计算模式的AI工作负载，如稀疏矩阵运算、动态计算图等。</p>
+            
+            <div class="code-block">
+// Graphcore IPU架构特点（以GC200 IPU为例）
+- 工艺节点：7nm TSMC
+- IPU处理器核心：1,472个
+- 片上SRAM：900MB（分布式）
+- 计算性能：
+  - FP16：250 TFLOPS
+  - FP32：62.5 TFLOPS
+- 内存带宽：45TB/s（片上）
+- 功耗：150W TDP
+- IPU-Fabric互连：2.8Tbps
+
+// 核心架构特性
+1. Tile架构：
+   - 每个Tile包含一个处理器核心
+   - 256KB本地内存（超快速访问）
+   - 可直接访问相邻Tile的内存
+   
+2. BSP（Bulk Synchronous Parallel）执行模型：
+   - 计算阶段：各Tile独立执行
+   - 同步阶段：全局同步栅栏
+   - 通信阶段：Tile间数据交换
+   
+3. 分布式内存架构：
+   - 无缓存层次结构
+   - 软件管理的内存
+   - 极低延迟访问（单周期）
+            </div>
+            
+            <p><strong>创新的内存系统设计：</strong></p>
+            <p>IPU最独特的设计决策之一是完全使用片上SRAM，而不依赖外部DRAM。这900MB的片上SRAM分布在所有的Tile中，每个处理器可以极低延迟地访问本地内存。这种设计虽然限制了单个模型的大小，但极大地提升了内存带宽和能效。对于需要更大模型的场景，多个IPU可以通过IPU-Fabric高速互连组成集群。</p>
+            
+            <div class="code-block">
+// IPU内存访问模式
+class IPUMemoryAccess {
+    // 本地内存访问：1个周期
+    local_memory_read(address) {
+        return tile_local_memory[address];  // 256KB per tile
+    }
+    
+    // 相邻Tile内存访问：通过交换结构
+    neighbor_memory_read(tile_id, address) {
+        // 通过专用的交换网络
+        // 延迟取决于距离和网络拥塞
+        return exchange_fabric.read(tile_id, address);
+    }
+    
+    // 全局同步通信
+    all_reduce(data) {
+        // 硬件加速的归约操作
+        // 利用交换网络的树形拓扑
+        return hardware_collective.all_reduce(data);
+    }
+}
+
+// 对比传统GPU内存层次
+// GPU: L1 Cache → L2 Cache → HBM → System Memory
+// IPU: Local SRAM → Exchange Fabric → IPU-Link
+// IPU优势：延迟可预测，带宽更高，编程模型更简单
+            </div>
+            
+            <p><strong>Poplar软件栈：</strong></p>
+            <p>Graphcore的Poplar SDK提供了完整的软件开发环境。与传统的GPU编程模型不同，Poplar采用了图编译的方式，开发者描述计算图，编译器负责将其映射到IPU的Tile上。这种方式让编译器有更大的优化空间，可以进行全局的负载均衡和通信优化。</p>
+            
+            <div class="table-wrapper">
+                <table>
+                    <caption>IPU与GPU/TPU架构对比</caption>
+                    <thead>
+                        <tr>
+                            <th>特性</th>
+                            <th>Graphcore IPU</th>
+                            <th>NVIDIA GPU</th>
+                            <th>Google TPU</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>架构类型</strong></td>
+                            <td>MIMD</td>
+                            <td>SIMD/SIMT</td>
+                            <td>SIMD（脉动阵列）</td>
+                        </tr>
+                        <tr>
+                            <td><strong>处理单元</strong></td>
+                            <td>1,472个独立核心</td>
+                            <td>数千个CUDA核心</td>
+                            <td>数万个MAC单元</td>
+                        </tr>
+                        <tr>
+                            <td><strong>内存类型</strong></td>
+                            <td>片上SRAM（900MB）</td>
+                            <td>HBM2e（40-80GB）</td>
+                            <td>HBM（16-32GB）</td>
+                        </tr>
+                        <tr>
+                            <td><strong>内存带宽</strong></td>
+                            <td>45TB/s（片上）</td>
+                            <td>1.5-2TB/s</td>
+                            <td>1.2TB/s</td>
+                        </tr>
+                        <tr>
+                            <td><strong>编程模型</strong></td>
+                            <td>BSP，图编译</td>
+                            <td>CUDA，核函数</td>
+                            <td>XLA编译</td>
+                        </tr>
+                        <tr>
+                            <td><strong>适用场景</strong></td>
+                            <td>稀疏模型，GNN，BERT</td>
+                            <td>通用AI训练</td>
+                            <td>大规模训练</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <p><strong>应用优势与挑战：</strong></p>
+            <p>IPU在某些特定应用上展现出了独特的优势。例如，在处理图神经网络（GNN）时，IPU的MIMD架构可以高效处理不规则的图结构。在BERT等需要频繁all-reduce操作的模型上，IPU的硬件集合通信也表现出色。然而，IPU也面临挑战：有限的片上内存限制了模型大小；新的编程模型需要开发者适应；生态系统相比CUDA还需要时间成熟。</p>
+            
+            <p>Graphcore的IPU代表了AI处理器设计的一个重要方向：针对AI工作负载的特点，从根本上重新思考处理器架构。虽然市场接受度还在培育中，但IPU的创新设计为未来的AI芯片发展提供了宝贵的探索经验。随着AI模型越来越多样化，我们可能会看到更多像IPU这样的专用架构出现。</p>
+
             <div class="exercise">
-                <h4>练习题集 1</h4>
+                <h4>第1章 练习题</h4>
                 <p>通过以下练习题，你可以检验对NPU基础概念的理解程度。这些题目涵盖了理论知识、计算分析和实践编程等多个方面。建议先独立思考，再查看参考答案。记住，理解原理比记忆答案更重要。</p>
                 
                 <div class="question">
@@ -2063,7 +2190,7 @@ if __name__ == "__main__":
             </div>
             
             <div class="exercise">
-                <h4>练习题集 1</h4>
+                <h4>第1章 进阶练习题</h4>
                 <p>本章的练习题旨在加深你对NPU基本概念、架构特点和发展趋势的理解。通过这些练习，你将更好地掌握NPU与CPU/GPU的本质区别，以及不同NPU架构的设计权衡。</p>
                 
                 <div class="question">
