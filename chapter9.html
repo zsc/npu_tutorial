@@ -334,6 +334,39 @@
                 padding: 8px;
             }
         }
+
+        /* List styles for proper indentation */
+        .chapter ul, .chapter ol {
+            margin-left: 20px;
+            margin-bottom: 15px;
+        }
+        
+        .chapter li {
+            margin-bottom: 8px;
+            line-height: 1.8;
+        }
+        
+        .chapter ul ul, .chapter ol ol, .chapter ul ol, .chapter ol ul {
+            margin-left: 20px;
+            margin-top: 5px;
+        }
+        
+        .info-box ul, .warning-box ul, .answer ul {
+            margin-left: 20px;
+        }
+        
+        .info-box li, .warning-box li, .answer li {
+            margin-bottom: 10px;
+        }
+        
+        /* Keep nav-bar lists unstyled */
+        .nav-bar ul {
+            margin-left: 0;
+        }
+        
+        .nav-bar li {
+            margin-bottom: 0;
+        }
     </style>
     <script>
         // Syntax highlighting functions
@@ -824,8 +857,198 @@ endmodule
                     <li><strong>动态配置：</strong>支持chiplet级别的热插拔和功耗管理</li>
                 </ul>
             </div>
+            
+            <h3>9.3 晶圆级集成：Cerebras案例分析</h3>
+            
+            <p>Cerebras Systems的晶圆级引擎（Wafer Scale Engine, WSE）代表了芯片集成的极限探索——在单个晶圆上实现完整的计算系统。这种革命性的方法彻底改变了我们对芯片尺寸和集成度的认知。</p>
+            
+            <h4>9.3.1 WSE架构革新</h4>
+            
+            <div class="info-box">
+                <h5>Cerebras WSE-2 关键参数</h5>
+                <ul>
+                    <li><strong>晶圆尺寸：</strong>300mm晶圆，46,225 mm²芯片面积（约一张A4纸大小）</li>
+                    <li><strong>晶体管数量：</strong>2.6万亿个晶体管（比最大的GPU多56倍）</li>
+                    <li><strong>计算核心：</strong>850,000个AI优化核心</li>
+                    <li><strong>片上存储：</strong>40GB SRAM（全片分布式）</li>
+                    <li><strong>内存带宽：</strong>20 PB/s（片上互连）</li>
+                    <li><strong>互连带宽：</strong>220 Pb/s（2D mesh网络）</li>
+                    <li><strong>功耗：</strong>15-20kW（需要专门的液冷系统）</li>
+                </ul>
+            </div>
+            
+            <p><strong>晶圆级集成的技术挑战与解决方案：</strong></p>
+            
+            <div class="code-block">
+// WSE架构设计原理
+class WaferScaleEngine {
+    // 1. 容错设计：解决良率问题
+    struct FaultTolerantDesign {
+        // 冗余核心设计
+        const int TOTAL_CORES = 850000;
+        const int SPARE_CORES = 1500;  // 约1.7%冗余
+        
+        // 核心级容错
+        void handle_defects() {
+            // 制造测试阶段识别坏核
+            // 通过可编程互连绕过故障核心
+            // 相邻核心接管故障核心的工作
+        }
+        
+        // 互连冗余
+        struct MeshNetwork {
+            bool links[4];  // 每个核心4个方向
+            bool backup_paths[4];  // 备用路径
+            
+            void route_around_fault() {
+                // 动态路由算法
+                // 自动选择可用路径
+                // 保证全局连通性
+            }
+        };
+    };
+    
+    // 2. 散热设计：解决功耗密度问题
+    struct ThermalManagement {
+        // 分布式功耗管理
+        const int POWER_ZONES = 100;
+        float zone_power[POWER_ZONES];
+        
+        // 液冷系统集成
+        struct CoolingSystem {
+            float coolant_flow_rate = 5.0;  // L/min
+            float inlet_temp = 25.0;         // °C
+            float max_junction_temp = 85.0;  // °C
+            
+            // 微通道冷却板
+            int microchannels = 10000;
+            float channel_width = 0.1;       // mm
+        };
+        
+        // 动态热管理
+        void thermal_throttling() {
+            // 实时温度监控
+            // 局部频率调整
+            // 任务迁移到冷区
+        }
+    };
+    
+    // 3. 数据流架构：充分利用带宽
+    struct DataflowArchitecture {
+        // 分布式SRAM
+        const int SRAM_PER_CORE = 48;  // KB
+        const int TOTAL_SRAM = 40;     // GB
+        
+        // 软件管理的数据流
+        void dataflow_mapping() {
+            // 计算和数据co-location
+            // 最小化数据移动
+            // 流水线并行
+        }
+        
+        // Swarm通信协议
+        struct SwarmCommunication {
+            // 硬件支持的集合通信
+            void broadcast();
+            void reduce();
+            void all_reduce();
+            void scatter_gather();
+        };
+    };
+};
+</div>
+            
+            <h4>9.3.2 晶圆级集成的优势与应用</h4>
+            
+            <p><strong>架构优势：</strong></p>
+            <ul>
+                <li><strong>消除内存墙：</strong>40GB的分布式SRAM完全消除了外部DRAM访问，实现了真正的"近数据计算"</li>
+                <li><strong>线性扩展：</strong>85万个核心通过2D mesh完全互连，可实现近乎线性的性能扩展</li>
+                <li><strong>低延迟通信：</strong>片上任意两点通信延迟在纳秒级，支持细粒度并行</li>
+                <li><strong>简化编程模型：</strong>单一地址空间，无需考虑多芯片间的数据分割和同步</li>
+            </ul>
+            
+            <p><strong>典型应用场景：</strong></p>
+            <div class="table-wrapper">
+                <table class="styled-table">
+                    <thead>
+                        <tr>
+                            <th>应用领域</th>
+                            <th>优势体现</th>
+                            <th>性能提升</th>
+                            <th>关键指标</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>超大模型训练</td>
+                            <td>单芯片容纳整个模型</td>
+                            <td>100-1000x</td>
+                            <td>无需模型并行切分</td>
+                        </tr>
+                        <tr>
+                            <td>科学计算</td>
+                            <td>稀疏矩阵运算加速</td>
+                            <td>50-200x</td>
+                            <td>内存带宽不受限</td>
+                        </tr>
+                        <tr>
+                            <td>图神经网络</td>
+                            <td>不规则访问模式优化</td>
+                            <td>20-100x</td>
+                            <td>片上完成所有计算</td>
+                        </tr>
+                        <tr>
+                            <td>流体动力学</td>
+                            <td>空间局部性完美匹配</td>
+                            <td>30-150x</td>
+                            <td>通信延迟最小化</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <h4>9.3.3 晶圆级集成的未来发展</h4>
+            
+            <div class="info-box">
+                <h5>技术演进路线图</h5>
+                
+                <p><strong>近期（2024-2026）：</strong></p>
+                <ul>
+                    <li><strong>工艺升级：</strong>从7nm到5nm，晶体管密度翻倍</li>
+                    <li><strong>3D集成：</strong>在晶圆上堆叠存储器层，突破平面限制</li>
+                    <li><strong>异构集成：</strong>集成HBM接口，支持超大数据集</li>
+                    <li><strong>软件生态：</strong>完善编程模型和开发工具</li>
+                </ul>
+                
+                <p><strong>中期（2026-2030）：</strong></p>
+                <ul>
+                    <li><strong>多晶圆系统：</strong>通过高速互连连接多个WSE</li>
+                    <li><strong>光互连集成：</strong>片上光网络，进一步提升带宽</li>
+                    <li><strong>量子集成：</strong>混合经典-量子计算系统</li>
+                    <li><strong>自适应架构：</strong>运行时可重构的计算阵列</li>
+                </ul>
+                
+                <p><strong>挑战与机遇：</strong></p>
+                <ul>
+                    <li><strong>成本控制：</strong>晶圆级芯片的制造成本极高，需要规模化应用分摊</li>
+                    <li><strong>生态建设：</strong>需要全新的软件栈和开发范式</li>
+                    <li><strong>市场定位：</strong>找准超大规模计算的杀手级应用</li>
+                    <li><strong>技术扩散：</strong>晶圆级集成的技术创新可能影响传统芯片设计</li>
+                </ul>
+            </div>
+            
+            <p><strong>对NPU设计的启示：</strong></p>
+            <p>虽然晶圆级集成目前仅在特定领域应用，但其设计理念对主流NPU发展具有重要启示：</p>
+            <ol>
+                <li><strong>分布式架构：</strong>大规模核心阵列+分布式存储将成为趋势</li>
+                <li><strong>容错设计：</strong>随着芯片规模增大，内建冗余和容错必不可少</li>
+                <li><strong>近数据计算：</strong>最小化数据移动是提升能效的关键</li>
+                <li><strong>软硬件协同：</strong>需要全新的编程模型来发挥硬件潜力</li>
+                <li><strong>热管理创新：</strong>高功耗密度推动冷却技术革新</li>
+            </ol>
 
-            <h3>9.3 新型存储器技术</h3>
+            <h3>9.4 新型存储器技术</h3>
             
             <h4>9.3.1 HBM与存储器演进</h4>
             

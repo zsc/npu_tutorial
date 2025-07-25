@@ -334,6 +334,39 @@
                 padding: 8px;
             }
         }
+
+        /* List styles for proper indentation */
+        .chapter ul, .chapter ol {
+            margin-left: 20px;
+            margin-bottom: 15px;
+        }
+        
+        .chapter li {
+            margin-bottom: 8px;
+            line-height: 1.8;
+        }
+        
+        .chapter ul ul, .chapter ol ol, .chapter ul ol, .chapter ol ul {
+            margin-left: 20px;
+            margin-top: 5px;
+        }
+        
+        .info-box ul, .warning-box ul, .answer ul {
+            margin-left: 20px;
+        }
+        
+        .info-box li, .warning-box li, .answer li {
+            margin-bottom: 10px;
+        }
+        
+        /* Keep nav-bar lists unstyled */
+        .nav-bar ul {
+            margin-left: 0;
+        }
+        
+        .nav-bar li {
+            margin-bottom: 0;
+        }
     </style>
     <script>
         // Syntax highlighting functions
@@ -594,6 +627,152 @@ dequantized_value = (quantized_value - zero_point) * scale
                 <li>饱和逻辑（Saturation Logic）</li>
                 <li>溢出检测（Overflow Detection）</li>
             </ul>
+            
+            <p><strong>4. 新兴的低精度浮点格式（FP8 和 FP4）：</strong></p>
+            <p>随着大语言模型（LLM）的兴起，研究人员发现即使是INT8也可能过于保守。新一代NPU开始支持更激进的低精度浮点格式：</p>
+            
+            <div class="info-box">
+                <h5>低精度浮点格式详解</h5>
+                <table class="styled-table">
+                    <thead>
+                        <tr>
+                            <th>格式</th>
+                            <th>符号位</th>
+                            <th>指数位</th>
+                            <th>尾数位</th>
+                            <th>动态范围</th>
+                            <th>精度</th>
+                            <th>应用场景</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>FP32</strong></td>
+                            <td>1</td>
+                            <td>8</td>
+                            <td>23</td>
+                            <td>±3.4×10³⁸</td>
+                            <td>~7位小数</td>
+                            <td>训练基准</td>
+                        </tr>
+                        <tr>
+                            <td><strong>FP16</strong></td>
+                            <td>1</td>
+                            <td>5</td>
+                            <td>10</td>
+                            <td>±65,504</td>
+                            <td>~3位小数</td>
+                            <td>混合精度训练</td>
+                        </tr>
+                        <tr>
+                            <td><strong>BF16</strong></td>
+                            <td>1</td>
+                            <td>8</td>
+                            <td>7</td>
+                            <td>±3.4×10³⁸</td>
+                            <td>~2位小数</td>
+                            <td>训练（保持范围）</td>
+                        </tr>
+                        <tr>
+                            <td><strong>FP8 (E4M3)</strong></td>
+                            <td>1</td>
+                            <td>4</td>
+                            <td>3</td>
+                            <td>±240</td>
+                            <td>~1位小数</td>
+                            <td>推理/微调</td>
+                        </tr>
+                        <tr>
+                            <td><strong>FP8 (E5M2)</strong></td>
+                            <td>1</td>
+                            <td>5</td>
+                            <td>2</td>
+                            <td>±57,344</td>
+                            <td><1位小数</td>
+                            <td>梯度/激活</td>
+                        </tr>
+                        <tr>
+                            <td><strong>FP4 (E2M1)</strong></td>
+                            <td>1</td>
+                            <td>2</td>
+                            <td>1</td>
+                            <td>±6</td>
+                            <td>0.5位精度</td>
+                            <td>极限推理</td>
+                        </tr>
+                        <tr>
+                            <td><strong>FP4 (E3M0)</strong></td>
+                            <td>1</td>
+                            <td>3</td>
+                            <td>0</td>
+                            <td>±15</td>
+                            <td>整数精度</td>
+                            <td>权重量化</td>
+                        </tr>
+                    </tbody>
+                </table>
+                
+                <p><strong>FP8 格式选择策略：</strong></p>
+                <ul>
+                    <li><strong>E4M3：</strong>更多尾数位，适合权重和需要精度的场景</li>
+                    <li><strong>E5M2：</strong>更大动态范围，适合激活值和梯度（防止溢出）</li>
+                </ul>
+                
+                <p><strong>硬件实现挑战：</strong></p>
+                <ul>
+                    <li><strong>特殊值处理：</strong>FP8/FP4需要处理NaN、Inf等特殊值</li>
+                    <li><strong>舍入模式：</strong>支持多种舍入（最近偶数、随机舍入等）</li>
+                    <li><strong>格式转换：</strong>高效的FP32↔FP8↔FP4转换单元</li>
+                    <li><strong>累加精度：</strong>低精度乘法但高精度累加（如FP8乘法+FP32累加）</li>
+                </ul>
+                
+                <div class="code-block">
+// FP8 (E4M3) 硬件乘法器示例
+module fp8_e4m3_multiplier(
+    input [7:0] a,      // FP8 E4M3 输入A
+    input [7:0] b,      // FP8 E4M3 输入B
+    output [7:0] result // FP8 E4M3 输出
+);
+    // 解包
+    wire sign_a = a[7];
+    wire [3:0] exp_a = a[6:3];
+    wire [2:0] mant_a = a[2:0];
+    
+    wire sign_b = b[7];
+    wire [3:0] exp_b = b[6:3];
+    wire [2:0] mant_b = b[2:0];
+    
+    // 特殊值检测
+    wire a_is_zero = (exp_a == 0) && (mant_a == 0);
+    wire b_is_zero = (exp_b == 0) && (mant_b == 0);
+    wire a_is_inf = (exp_a == 4'hF) && (mant_a == 0);
+    wire b_is_inf = (exp_b == 4'hF) && (mant_b == 0);
+    
+    // 符号计算
+    wire result_sign = sign_a ^ sign_b;
+    
+    // 指数相加（减偏置）
+    wire [4:0] exp_sum = exp_a + exp_b - 7;  // 偏置=7
+    
+    // 尾数乘法（隐含的1）
+    wire [3:0] mant_a_full = {1'b1, mant_a};
+    wire [3:0] mant_b_full = {1'b1, mant_b};
+    wire [7:0] mant_prod = mant_a_full * mant_b_full;
+    
+    // 归一化和舍入
+    // ... 归一化逻辑 ...
+    
+endmodule
+                </div>
+                
+                <p><strong>实际应用案例：</strong></p>
+                <ul>
+                    <li><strong>NVIDIA H100：</strong>支持FP8训练，Transformer引擎自动选择E4M3/E5M2</li>
+                    <li><strong>Google TPU v5e：</strong>支持FP8推理，大幅提升LLM吞吐量</li>
+                    <li><strong>Qualcomm Cloud AI 100：</strong>支持FP8和INT4混合精度</li>
+                    <li><strong>研究前沿：</strong>FP4正在实验阶段，主要用于极限模型压缩</li>
+                </ul>
+            </div>
 
             <h4>2.1.2 激活函数的硬件实现</h4>
             <p>激活函数是神经网络的关键组成部分，它为网络引入非线性，使得网络能够学习复杂的函数映射关系。从硬件设计的角度，不同激活函数的实现复杂度差异巨大。选择合适的激活函数，不仅影响模型的准确性，还直接影响NPU的面积、功耗和性能。</p>
@@ -869,6 +1048,175 @@ A^T = [1  1  1  0]
                 </li>
             </ul>
             
+            <p><strong>Winograd算法深度解析：</strong></p>
+            
+            <div class="info-box">
+                <h5>Winograd快速卷积算法详解</h5>
+                
+                <p><strong>1. 算法原理</strong></p>
+                <p>Winograd算法基于中国剩余定理，通过线性变换将卷积运算从空间域转换到变换域，在变换域中用更少的乘法完成计算：</p>
+                <div class="code-block">
+// Winograd通用公式
+Y = A^T × [(G × g × G^T) ⊙ (B^T × d × B)] × A
+
+其中：
+- d: 输入瓦块（input tile）
+- g: 卷积核（filter）
+- Y: 输出瓦块
+- B^T, G, A^T: 变换矩阵
+- ⊙: Hadamard积（逐元素乘法）
+                </div>
+                
+                <p><strong>2. 常用变换矩阵</strong></p>
+                <table class="styled-table">
+                    <thead>
+                        <tr>
+                            <th>配置</th>
+                            <th>输出大小</th>
+                            <th>输入瓦块</th>
+                            <th>乘法次数</th>
+                            <th>直接卷积乘法</th>
+                            <th>加速比</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>F(2,3)</td>
+                            <td>2×2</td>
+                            <td>4×4</td>
+                            <td>16</td>
+                            <td>36</td>
+                            <td>2.25×</td>
+                        </tr>
+                        <tr>
+                            <td>F(4,3)</td>
+                            <td>4×4</td>
+                            <td>6×6</td>
+                            <td>36</td>
+                            <td>144</td>
+                            <td>4.0×</td>
+                        </tr>
+                        <tr>
+                            <td>F(6,3)</td>
+                            <td>6×6</td>
+                            <td>8×8</td>
+                            <td>64</td>
+                            <td>324</td>
+                            <td>5.06×</td>
+                        </tr>
+                    </tbody>
+                </table>
+                
+                <p><strong>3. F(2,3)详细实现</strong></p>
+                <div class="code-block">
+// F(2,3)变换矩阵（最常用）
+B^T = [1   0  -1   0]     G = [1      0      0]     A^T = [1  1  1  0]
+      [0   1   1   0]         [1/2   1/2   1/2]           [0  1 -1 -1]
+      [0  -1   1   0]         [1/2  -1/2   1/2]
+      [0   1   0  -1]         [0      0      1]
+
+// 硬件友好的实现（避免浮点除法）
+// 步骤1: 输入变换 (只需加减法)
+U[0] = d[0] - d[2]
+U[1] = d[1] + d[2]
+U[2] = d[2] - d[1]
+U[3] = d[1] - d[3]
+
+// 步骤2: 卷积核变换 (可预计算)
+V[0] = g[0]
+V[1] = (g[0] + g[1] + g[2]) / 2
+V[2] = (g[0] - g[1] + g[2]) / 2
+V[3] = g[2]
+
+// 步骤3: 逐元素乘法 (仅4次乘法!)
+M[i] = U[i] * V[i], for i = 0,1,2,3
+
+// 步骤4: 输出变换 (只需加减法)
+Y[0] = M[0] + M[1] + M[2]
+Y[1] = M[1] - M[2] - M[3]
+                </div>
+                
+                <p><strong>4. NPU硬件实现架构</strong></p>
+                <div class="code-block">
+// Winograd硬件加速器架构
+module WinogradAccelerator #(
+    parameter TILE_SIZE = 4,      // F(2,3)的瓦块大小
+    parameter DATA_WIDTH = 8      // INT8精度
+)(
+    input clk, rst, enable,
+    input [DATA_WIDTH-1:0] input_tile[0:TILE_SIZE*TILE_SIZE-1],
+    input [DATA_WIDTH-1:0] filter[0:8],  // 3x3卷积核
+    output [DATA_WIDTH-1:0] output_tile[0:3]  // 2x2输出
+);
+    // 1. 输入变换单元（只需加减器）
+    wire [DATA_WIDTH:0] U[0:15];  // 多1位防溢出
+    TransformInput transform_in(.d(input_tile), .U(U));
+    
+    // 2. 卷积核变换（通常预计算并存储）
+    wire [DATA_WIDTH:0] V[0:15];
+    TransformFilter transform_flt(.g(filter), .V(V));
+    
+    // 3. 逐元素乘法阵列（核心计算单元）
+    wire [2*DATA_WIDTH-1:0] M[0:15];
+    genvar i;
+    generate
+        for (i = 0; i < 16; i++) begin
+            assign M[i] = U[i] * V[i];
+        end
+    endgenerate
+    
+    // 4. 输出逆变换（累加树）
+    TransformOutput transform_out(.M(M), .Y(output_tile));
+endmodule
+                </div>
+                
+                <p><strong>5. 优化策略与权衡</strong></p>
+                <table class="styled-table">
+                    <thead>
+                        <tr>
+                            <th>优化维度</th>
+                            <th>策略</th>
+                            <th>收益</th>
+                            <th>代价</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>数值精度</td>
+                            <td>使用定点数，避免1/2等分数</td>
+                            <td>硬件简单</td>
+                            <td>需要仔细设计缩放因子</td>
+                        </tr>
+                        <tr>
+                            <td>内存访问</td>
+                            <td>瓦块重叠部分复用</td>
+                            <td>减少读取次数</td>
+                            <td>需要额外的缓存管理</td>
+                        </tr>
+                        <tr>
+                            <td>并行化</td>
+                            <td>多个瓦块并行处理</td>
+                            <td>提高吞吐量</td>
+                            <td>增加硬件面积</td>
+                        </tr>
+                        <tr>
+                            <td>混合精度</td>
+                            <td>变换用高精度，乘法用低精度</td>
+                            <td>平衡精度和效率</td>
+                            <td>复杂的数据通路</td>
+                        </tr>
+                    </tbody>
+                </table>
+                
+                <p><strong>6. 与其他算法的选择策略</strong></p>
+                <ul>
+                    <li><strong>使用Winograd：</strong>3×3卷积，stride=1，对功耗敏感，批量较小</li>
+                    <li><strong>使用Im2Col+GEMM：</strong>大卷积核，stride>1，需要灵活性，批量较大</li>
+                    <li><strong>使用直接卷积：</strong>depthwise卷积，内存受限，1×1卷积</li>
+                    <li><strong>混合策略：</strong>现代NPU通常集成多种算法，根据层参数动态选择</li>
+                </ul>
+            </div>
+            
             <p><strong>适用场景：</strong></p>
             <p>Winograd算法在以下场景中特别有效：</p>
             <ul>
@@ -1123,8 +1471,42 @@ zero_point = round(-min_val / scale)
                             <td>~0.1x</td>
                             <td>0.125x</td>
                         </tr>
+                        <tr>
+                            <td>FP8 (E4M3)</td>
+                            <td>8-bit</td>
+                            <td>~0.15x</td>
+                            <td>~0.3x</td>
+                            <td>~0.3x</td>
+                            <td>0.25x</td>
+                        </tr>
+                        <tr>
+                            <td>FP8 (E5M2)</td>
+                            <td>8-bit</td>
+                            <td>~0.14x</td>
+                            <td>~0.28x</td>
+                            <td>~0.28x</td>
+                            <td>0.25x</td>
+                        </tr>
+                        <tr>
+                            <td>FP4 (E2M1)</td>
+                            <td>4-bit</td>
+                            <td>~0.08x</td>
+                            <td>~0.15x</td>
+                            <td>~0.12x</td>
+                            <td>0.125x</td>
+                        </tr>
                     </tbody>
                 </table>
+            </div>
+            
+            <div class="info-box">
+                <p><strong>FP8/FP4 vs INT8/INT4 权衡：</strong></p>
+                <ul>
+                    <li><strong>FP8优势：</strong>保持浮点数的动态范围，无需复杂的量化校准，对异常值更鲁棒</li>
+                    <li><strong>INT8优势：</strong>硬件实现更简单，乘法器面积略小，累加不需要对齐指数</li>
+                    <li><strong>选择策略：</strong>训练和微调倾向FP8（E5M2用于梯度），推理倾向INT8；大模型推理开始采用FP8</li>
+                    <li><strong>FP4应用：</strong>主要用于极限模型压缩，如量化LLM的权重，但激活值仍需更高精度</li>
+                </ul>
             </div>
 
             <div class="exercise">
@@ -2157,7 +2539,141 @@ Attention(Q, K, V) = softmax(QK^T / √d_k)V
                 <p>这对片上存储提出了巨大挑战，需要精心的分块和数据流设计。</p>
             </div>
             
-            <h4>2.5.2 多头注意力硬件映射</h4>
+            <h4>2.5.2 Transformer Encoder/Decoder架构详解</h4>
+            
+            <p><strong>Encoder架构：双向注意力的并行计算</strong></p>
+            <p>Transformer Encoder使用双向自注意力，可以同时看到序列的过去和未来，适合理解任务：</p>
+            
+            <div class="code-block">
+// Encoder层的计算流程
+class TransformerEncoderLayer:
+    def forward(x, mask=None):
+        # 1. 多头自注意力（双向）
+        attn_output = MultiHeadAttention(
+            Q=x, K=x, V=x,  # Self-attention
+            mask=mask,      # 可选的padding mask
+            causal=False    # 非因果，可以看到全部序列
+        )
+        x = LayerNorm(x + attn_output)  # 残差连接 + 层归一化
+        
+        # 2. 前馈网络（Position-wise FFN）
+        ffn_output = FFN(x)  # 通常是 Linear->ReLU->Linear
+        x = LayerNorm(x + ffn_output)   # 残差连接 + 层归一化
+        
+        return x
+
+// 硬件优化要点：
+- 所有位置可以完全并行计算
+- 注意力矩阵可以一次性计算完成
+- FFN在序列维度上独立，易于向量化
+            </div>
+            
+            <p><strong>Decoder架构：因果注意力与交叉注意力</strong></p>
+            <p>Transformer Decoder包含三个子层，需要处理因果掩码确保自回归生成：</p>
+            
+            <div class="code-block">
+// Decoder层的计算流程
+class TransformerDecoderLayer:
+    def forward(x, encoder_output, causal_mask, memory_mask=None):
+        # 1. 掩码多头自注意力（因果注意力）
+        self_attn = MaskedMultiHeadAttention(
+            Q=x, K=x, V=x,
+            mask=causal_mask,  # 下三角掩码，防止看到未来
+            causal=True        # 因果模式
+        )
+        x = LayerNorm(x + self_attn)
+        
+        # 2. 交叉注意力（Cross-Attention）
+        cross_attn = MultiHeadAttention(
+            Q=x,                    # 来自decoder的查询
+            K=encoder_output,       # 来自encoder的键
+            V=encoder_output,       # 来自encoder的值
+            mask=memory_mask        # 可选的encoder掩码
+        )
+        x = LayerNorm(x + cross_attn)
+        
+        # 3. 前馈网络
+        ffn_output = FFN(x)
+        x = LayerNorm(x + ffn_output)
+        
+        return x
+            </div>
+            
+            <p><strong>因果计算的硬件处理策略</strong></p>
+            <p>因果掩码（Causal Mask）确保位置i只能关注位置≤i的信息，这在硬件实现中有特殊考虑：</p>
+            
+            <div class="info-box">
+                <h5>因果注意力的三种硬件实现方案</h5>
+                
+                <p><strong>1. 显式掩码方案</strong></p>
+                <div class="code-block">
+// 使用-inf掩码的标准实现
+causal_mask = torch.triu(torch.ones(L, L) * -inf, diagonal=1)
+scores = Q @ K.T / sqrt(d_k)
+scores = scores + causal_mask  // 将未来位置设为-inf
+attn = softmax(scores, dim=-1)
+output = attn @ V
+
+// 硬件考虑：
+- 需要存储完整的L×L掩码矩阵
+- Softmax前需要额外的加法操作
+- 适合小序列长度
+                </div>
+                
+                <p><strong>2. 分块因果计算</strong></p>
+                <div class="code-block">
+// 将注意力矩阵分块，只计算有效部分
+for i in range(0, L, block_size):
+    for j in range(0, min(i+block_size, L), block_size):
+        # 只计算下三角部分的块
+        block_attn = compute_attention(
+            Q[i:i+block_size],
+            K[j:j+block_size],
+            V[j:j+block_size]
+        )
+        # 应用因果掩码到块内
+        if i == j:
+            apply_block_causal_mask(block_attn)
+        output[i:i+block_size] += block_attn
+
+// 硬件优势：
+- 节省50%的计算量（跳过上三角）
+- 更好的缓存局部性
+- 适合流式推理
+                </div>
+                
+                <p><strong>3. KV Cache优化（推理专用）</strong></p>
+                <div class="code-block">
+// 增量式因果注意力计算
+class KVCache:
+    def __init__(self, max_len, num_heads, head_dim):
+        self.k_cache = zeros(max_len, num_heads, head_dim)
+        self.v_cache = zeros(max_len, num_heads, head_dim)
+        self.pos = 0
+    
+    def update(self, k_new, v_new):
+        # 只存储和更新新位置的KV
+        self.k_cache[self.pos] = k_new
+        self.v_cache[self.pos] = v_new
+        self.pos += 1
+    
+    def compute_attention(self, q_new):
+        # 新查询只与历史KV计算注意力
+        k_valid = self.k_cache[:self.pos]
+        v_valid = self.v_cache[:self.pos]
+        
+        scores = q_new @ k_valid.T / sqrt(d_k)
+        attn = softmax(scores)
+        return attn @ v_valid
+
+// NPU优化：
+- KV Cache常驻片上SRAM
+- 支持动态形状的矩阵乘法
+- 推理延迟与已生成长度成正比
+                </div>
+            </div>
+            
+            <h4>2.5.3 多头注意力硬件映射</h4>
             <p>多头注意力（Multi-Head Attention）将注意力计算并行化，非常适合硬件加速：</p>
             
             <div class="code-block">
@@ -2204,7 +2720,77 @@ softmax(x_i) = exp(x_i) / Σ(exp(x_j))
             </div>
             
             <h4>2.5.5 Flash Attention：算法与硬件协同设计</h4>
-            <p>Flash Attention是专门为GPU/NPU设计的高效注意力算法，其核心思想是通过分块计算减少内存访问：</p>
+            
+            <p><strong>在线Softmax算法：Flash Attention的基础</strong></p>
+            <p>理解Flash Attention首先需要理解在线（Online）Softmax算法。传统Softmax需要两次遍历数据：第一次找最大值和求和，第二次计算结果。在线算法允许单次遍历完成计算：</p>
+            
+            <div class="code-block">
+// 传统Softmax（两次遍历）
+def softmax_traditional(x):
+    max_x = max(x)                    # 第一次遍历
+    exp_x = [exp(xi - max_x) for xi in x]
+    sum_exp = sum(exp_x)              # 第二次遍历
+    return [ei / sum_exp for ei in exp_x]  # 第三次遍历
+
+// 在线Softmax（单次遍历，增量更新）
+def softmax_online(x):
+    # 初始化
+    m = -inf  # 当前最大值
+    l = 0     # 当前指数和
+    y = []    # 输出
+    
+    for i, xi in enumerate(x):
+        # 更新最大值
+        m_new = max(m, xi)
+        
+        # 修正之前的和（因为最大值变了）
+        l = l * exp(m - m_new) + exp(xi - m_new)
+        
+        # 更新所有之前的输出（缩放因子变化）
+        for j in range(i):
+            y[j] = y[j] * exp(m - m_new)
+        
+        # 添加新元素
+        y.append(exp(xi - m_new))
+        m = m_new
+    
+    # 最终归一化
+    return [yi / l for yi in y]
+
+// 分块在线Softmax（Flash Attention的核心）
+def softmax_blocked_online(x, block_size):
+    # 将输入分块
+    blocks = split(x, block_size)
+    
+    # 每块的统计量
+    m_blocks = []  # 每块的最大值
+    l_blocks = []  # 每块的指数和
+    
+    # 第一遍：计算每块的局部统计量
+    for block in blocks:
+        m_block = max(block)
+        exp_block = [exp(xi - m_block) for xi in block]
+        l_block = sum(exp_block)
+        m_blocks.append(m_block)
+        l_blocks.append(l_block)
+    
+    # 第二遍：合并统计量并输出
+    m_global = max(m_blocks)
+    l_global = sum(l_blocks[i] * exp(m_blocks[i] - m_global) 
+                   for i in range(len(blocks)))
+    
+    # 计算最终输出
+    output = []
+    for i, block in enumerate(blocks):
+        scale = exp(m_blocks[i] - m_global) / l_global
+        for xi in block:
+            output.append(exp(xi - m_blocks[i]) * scale)
+    
+    return output
+            </div>
+            
+            <p><strong>Flash Attention：将在线Softmax扩展到注意力计算</strong></p>
+            <p>Flash Attention巧妙地将分块在线Softmax应用到注意力机制中，实现了内存高效的计算：</p>
             
             <div class="code-block">
 // Flash Attention的分块策略
@@ -2496,6 +3082,232 @@ endmodule
                         </ul>
                     </div>
                 </div>
+            </div>
+            
+            <h3>2.6 Mamba架构：线性复杂度的序列建模</h3>
+            
+            <p>Mamba（Selective State Space Model）是一种新型的序列建模架构，通过选择性状态空间模型实现了与序列长度成线性关系的计算复杂度，为处理超长序列提供了新的解决方案。</p>
+            
+            <h4>2.6.1 状态空间模型（SSM）基础</h4>
+            <p>SSM源于控制理论，通过状态演化方程描述系统动态：</p>
+            
+            <div class="code-block">
+// 连续时间SSM
+h'(t) = Ah(t) + Bx(t)    // 状态演化方程
+y(t) = Ch(t) + Dx(t)      // 输出方程
+
+// 离散化后的循环形式
+h[t] = Āh[t-1] + B̄x[t]   // Ā = exp(ΔA)
+y[t] = Ch[t]              // B̄ = (exp(ΔA)-I)A⁻¹B
+
+其中：
+- h: 隐藏状态（维度远小于序列长度）
+- x: 输入序列
+- y: 输出序列
+- A, B, C: 系统参数矩阵
+- Δ: 离散化步长
+            </div>
+            
+            <h4>2.6.2 选择性机制：Mamba的核心创新</h4>
+            <p>传统SSM的参数是固定的，Mamba引入了输入依赖的选择性机制：</p>
+            
+            <div class="info-box">
+                <h5>Mamba选择性状态空间模型</h5>
+                
+                <div class="code-block">
+// Mamba的选择性SSM
+class SelectiveSSM:
+    def forward(x, h_prev):
+        # 1. 输入依赖的参数生成
+        Δ = Linear_Δ(x)     # 时间步长
+        B = Linear_B(x)     # 输入矩阵
+        C = Linear_C(x)     # 输出矩阵
+        
+        # 2. 离散化（A通常是固定的特殊结构）
+        Ā = exp(Δ * A)      # 使用对角A简化计算
+        B̄ = (Ā - I) * A⁻¹ * B
+        
+        # 3. 状态更新
+        h = Ā * h_prev + B̄ * x
+        
+        # 4. 输出计算
+        y = C * h
+        
+        return y, h
+
+// 关键优势：
+- 状态维度固定且较小（如16/32）
+- 内存占用O(1)，不随序列长度增长
+- 计算复杂度O(L)，而非Transformer的O(L²)
+                </div>
+                
+                <p><strong>硬件友好的并行扫描算法</strong></p>
+                <p>虽然SSM是循环结构，但Mamba通过并行扫描实现了高效训练：</p>
+                
+                <div class="code-block">
+// 并行扫描（Parallel Scan）实现
+def parallel_scan_ssm(x, A, B, C):
+    L = len(x)
+    # 1. 分块处理
+    blocks = split_into_blocks(x, block_size)
+    
+    # 2. 块内并行计算（associative scan）
+    block_outputs = []
+    block_states = []
+    for block in blocks:
+        # 构建扫描算子
+        scan_ops = [(A[i], B[i]*x[i]) for i in block]
+        # 并行前缀和
+        states = parallel_prefix_sum(scan_ops)
+        outputs = [C[i] * state for i, state in enumerate(states)]
+        block_outputs.append(outputs)
+        block_states.append(states[-1])
+    
+    # 3. 块间状态传播
+    final_states = cascade_states(block_states)
+    
+    # 4. 输出组合
+    return combine_outputs(block_outputs, final_states)
+
+// NPU实现优势：
+- 块内计算完全并行，适合SIMD
+- 状态小，可常驻片上SRAM
+- 内存访问连续，带宽利用率高
+                </div>
+            </div>
+            
+            <h4>2.6.3 Mamba与Transformer的架构对比</h4>
+            
+            <div class="table-wrapper">
+                <table class="styled-table">
+                    <thead>
+                        <tr>
+                            <th>特性</th>
+                            <th>Mamba (SSM)</th>
+                            <th>Transformer</th>
+                            <th>硬件影响</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>计算复杂度</td>
+                            <td>O(L)</td>
+                            <td>O(L²)</td>
+                            <td>Mamba可处理百万级序列</td>
+                        </tr>
+                        <tr>
+                            <td>内存复杂度</td>
+                            <td>O(1) per step</td>
+                            <td>O(L) KV Cache</td>
+                            <td>Mamba推理内存占用固定</td>
+                        </tr>
+                        <tr>
+                            <td>并行性</td>
+                            <td>块级并行</td>
+                            <td>完全并行</td>
+                            <td>Transformer训练更快</td>
+                        </tr>
+                        <tr>
+                            <td>长程依赖</td>
+                            <td>隐式（通过状态）</td>
+                            <td>显式（注意力）</td>
+                            <td>Mamba需精心设计状态</td>
+                        </tr>
+                        <tr>
+                            <td>内存访问</td>
+                            <td>流式、连续</td>
+                            <td>随机、全局</td>
+                            <td>Mamba带宽效率更高</td>
+                        </tr>
+                        <tr>
+                            <td>硬件适配</td>
+                            <td>Compute-bound</td>
+                            <td>Memory-bound</td>
+                            <td>Mamba更适合现代NPU</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <h4>2.6.4 NPU上的Mamba加速策略</h4>
+            
+            <div class="code-block">
+// Mamba硬件加速器设计
+module MambaAccelerator #(
+    parameter D_MODEL = 512,
+    parameter D_STATE = 16,     // 状态维度
+    parameter BLOCK_SIZE = 64   // 并行块大小
+)(
+    input clk, rst,
+    input [D_MODEL-1:0] x_in,
+    output [D_MODEL-1:0] y_out
+);
+    // 1. 选择性参数生成单元
+    wire [D_STATE-1:0] delta, B, C;
+    SelectiveParamGen param_gen(
+        .x(x_in),
+        .delta(delta),
+        .B(B),
+        .C(C)
+    );
+    
+    // 2. 状态存储（关键：小且固定）
+    reg [D_STATE-1:0] state_mem[0:BLOCK_SIZE-1];
+    
+    // 3. 并行扫描单元
+    ParallelScanUnit #(
+        .D_STATE(D_STATE),
+        .BLOCK_SIZE(BLOCK_SIZE)
+    ) scan_unit (
+        .A_bar(compute_A_bar(delta)),  // 离散化的A
+        .B_bar(B),
+        .state_in(state_mem),
+        .state_out(state_mem_next)
+    );
+    
+    // 4. 输出计算
+    MatVecMul #(.M(D_MODEL), .N(D_STATE)) output_mul(
+        .matrix(C),
+        .vector(state_mem_next),
+        .result(y_out)
+    );
+endmodule
+
+// 优化要点：
+// - 状态完全驻留片上，无需外部内存访问
+// - 参数生成可与状态更新流水线化
+// - 支持多层融合，减少中间结果存储
+// - 利用稀疏性（A通常是对角或带状）
+            </div>
+            
+            <div class="info-box">
+                <h5>Mamba部署最佳实践</h5>
+                <ul>
+                    <li><strong>混合架构：</strong>在注意力关键的层使用Transformer，在需要处理长序列的层使用Mamba</li>
+                    <li><strong>状态量化：</strong>将状态量化到INT8/FP8，进一步减少存储和计算开销</li>
+                    <li><strong>动态切换：</strong>根据序列长度动态选择Mamba或Transformer路径</li>
+                    <li><strong>层融合：</strong>将多个Mamba层的状态更新融合，减少内存往返</li>
+                </ul>
+            </div>
+            
+            <h4>2.6.5 Mamba应用场景与局限</h4>
+            
+            <p><strong>适用场景：</strong></p>
+            <ul>
+                <li><strong>超长序列：</strong>基因组分析（百万碱基对）、长文档理解、时间序列预测</li>
+                <li><strong>流式处理：</strong>实时语音识别、在线翻译、连续学习系统</li>
+                <li><strong>资源受限：</strong>边缘设备、移动端部署（固定内存占用）</li>
+                <li><strong>高吞吐推理：</strong>批量文本生成、大规模特征提取</li>
+            </ul>
+            
+            <p><strong>当前局限：</strong></p>
+            <ul>
+                <li><strong>表达能力：</strong>在某些需要精确注意力模式的任务上不如Transformer</li>
+                <li><strong>训练效率：</strong>虽然有并行扫描，但训练速度仍不如完全并行的Transformer</li>
+                <li><strong>生态成熟度：</strong>预训练模型、优化工具链等生态还在发展中</li>
+                <li><strong>调试复杂：</strong>隐式状态比显式注意力更难解释和调试</li>
+            </ul>
+            
             </div>
             
             <div class="section-summary">

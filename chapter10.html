@@ -334,6 +334,39 @@
                 padding: 8px;
             }
         }
+
+        /* List styles for proper indentation */
+        .chapter ul, .chapter ol {
+            margin-left: 20px;
+            margin-bottom: 15px;
+        }
+        
+        .chapter li {
+            margin-bottom: 8px;
+            line-height: 1.8;
+        }
+        
+        .chapter ul ul, .chapter ol ol, .chapter ul ol, .chapter ol ul {
+            margin-left: 20px;
+            margin-top: 5px;
+        }
+        
+        .info-box ul, .warning-box ul, .answer ul {
+            margin-left: 20px;
+        }
+        
+        .info-box li, .warning-box li, .answer li {
+            margin-bottom: 10px;
+        }
+        
+        /* Keep nav-bar lists unstyled */
+        .nav-bar ul {
+            margin-left: 0;
+        }
+        
+        .nav-bar li {
+            margin-bottom: 0;
+        }
     </style>
     <script>
         // Syntax highlighting functions
@@ -1317,8 +1350,188 @@ public:
     }
 };
             </div>
+            
+            <h4>10.5.2 低精度浮点格式（FP8/FP4）优化</h4>
+            <div class="info-box">
+                <h5>新一代低精度浮点量化技术</h5>
+                <p>随着大语言模型的兴起，FP8和FP4成为新的量化前沿，在保持浮点数表达能力的同时大幅降低计算和存储成本。</p>
+                
+                <div class="code-block">
+// FP8/FP4 量化器实现
+class LowPrecisionFloatQuantizer {
+public:
+    enum Format {
+        FP8_E4M3,    // 1符号位 + 4指数位 + 3尾数位
+        FP8_E5M2,    // 1符号位 + 5指数位 + 2尾数位
+        FP4_E2M1,    // 1符号位 + 2指数位 + 1尾数位
+        FP4_E3M0     // 1符号位 + 3指数位 + 0尾数位
+    };
+    
+    // FP32 到 FP8 转换
+    uint8_t quantizeFP8(float value, Format format) {
+        if (format == FP8_E4M3) {
+            return quantizeFP8_E4M3(value);
+        } else if (format == FP8_E5M2) {
+            return quantizeFP8_E5M2(value);
+        }
+        throw std::runtime_error("Unsupported format");
+    }
+    
+private:
+    uint8_t quantizeFP8_E4M3(float value) {
+        // 特殊值处理
+        if (std::isnan(value)) return 0x7F;  // NaN
+        if (std::isinf(value)) return value > 0 ? 0x78 : 0xF8;  // ±Inf
+        
+        // 提取FP32组件
+        uint32_t bits = *reinterpret_cast<uint32_t*>(&value);
+        uint32_t sign = (bits >> 31) & 0x1;
+        uint32_t exp = (bits >> 23) & 0xFF;
+        uint32_t mant = bits & 0x7FFFFF;
+        
+        // 转换到FP8 E4M3
+        int32_t exp_fp8 = exp - 127 + 7;  // 重新偏置（FP8偏置=7）
+        
+        // 范围检查和饱和
+        if (exp_fp8 <= 0) {
+            // 下溢到0
+            return sign << 7;
+        } else if (exp_fp8 >= 15) {
+            // 上溢到最大值
+            return (sign << 7) | 0x77;
+        }
+        
+        // 尾数舍入
+        uint32_t mant_fp8 = (mant + 0x100000) >> 20;  // 舍入到3位
+        if (mant_fp8 > 7) {
+            mant_fp8 = 7;
+            exp_fp8++;
+        }
+        
+        return (sign << 7) | (exp_fp8 << 3) | mant_fp8;
+    }
+    
+    uint8_t quantizeFP8_E5M2(float value) {
+        // E5M2格式：更大动态范围，适合梯度
+        // 实现类似，但指数位更多，尾数位更少
+        // ...
+    }
+};
 
-            <h4>10.5.2 量化感知训练</h4>
+// FP8/FP4 编译器优化策略
+class FP8CompilerOptimizer {
+public:
+    struct LayerPrecisionConfig {
+        Format weight_format;
+        Format activation_format;
+        Format gradient_format;
+    };
+    
+    // 自动混合精度策略
+    std::map<std::string, LayerPrecisionConfig> optimizePrecision(
+        const Graph& graph,
+        const ProfilingData& profile) {
+        
+        std::map<std::string, LayerPrecisionConfig> config;
+        
+        for (const auto& layer : graph.layers) {
+            LayerPrecisionConfig layer_config;
+            
+            // 基于层类型选择格式
+            if (layer.type == "MatMul" || layer.type == "Conv") {
+                // 权重使用E4M3（更高精度）
+                layer_config.weight_format = FP8_E4M3;
+                
+                // 激活值基于动态范围选择
+                float activation_range = profile.getActivationRange(layer.name);
+                if (activation_range > 100.0f) {
+                    layer_config.activation_format = FP8_E5M2;  // 更大范围
+                } else {
+                    layer_config.activation_format = FP8_E4M3;  // 更高精度
+                }
+            } else if (layer.type == "LayerNorm" || layer.type == "BatchNorm") {
+                // 归一化层需要更高精度
+                layer_config.weight_format = FP8_E4M3;
+                layer_config.activation_format = FP8_E4M3;
+            } else if (layer.type == "Attention") {
+                // 注意力机制的特殊处理
+                layer_config.weight_format = FP8_E4M3;
+                layer_config.activation_format = FP8_E5M2;  // QK需要大范围
+            }
+            
+            // 梯度始终使用E5M2（防止梯度消失）
+            layer_config.gradient_format = FP8_E5M2;
+            
+            config[layer.name] = layer_config;
+        }
+        
+        return config;
+    }
+    
+    // FP4 极限量化（实验性）
+    void extremeQuantizationFP4(Graph& graph) {
+        // FP4仅用于特定场景
+        for (auto& layer : graph.layers) {
+            if (layer.type == "Embedding") {
+                // 嵌入层可以使用FP4
+                layer.precision = "FP4_E2M1";
+            } else if (layer.type == "Dense" && layer.is_output_layer) {
+                // 输出层权重可能可以使用FP4
+                if (analyzeWeightDistribution(layer) < 0.1) {
+                    layer.precision = "FP4_E3M0";
+                }
+            }
+        }
+    }
+};
+
+// 运行时动态精度切换
+class DynamicPrecisionRuntime {
+public:
+    void executeLowPrecision(const Layer& layer, 
+                           const Tensor& input,
+                           Tensor& output) {
+        // 根据输入动态范围选择精度
+        float input_range = input.abs().max().item<float>();
+        
+        if (input_range < 1.0f && layer.allow_fp4) {
+            // 小范围值使用FP4
+            executeFP4(layer, input, output);
+        } else if (input_range < 100.0f) {
+            // 中等范围使用FP8 E4M3
+            executeFP8_E4M3(layer, input, output);
+        } else {
+            // 大范围使用FP8 E5M2
+            executeFP8_E5M2(layer, input, output);
+        }
+    }
+    
+private:
+    void executeFP4(const Layer& layer, const Tensor& input, Tensor& output) {
+        // FP4执行路径
+        auto input_fp4 = quantizeToFP4(input);
+        auto weight_fp4 = layer.weights_fp4;  // 预量化的权重
+        
+        // 使用专门的FP4硬件单元
+        output = npu::fp4_matmul(input_fp4, weight_fp4);
+        
+        // 累加使用更高精度
+        output = accumulateInFP16(output);
+    }
+};
+                </div>
+                
+                <p><strong>FP8/FP4 最佳实践：</strong></p>
+                <ul>
+                    <li><strong>格式选择：</strong>权重用E4M3（精度优先），激活/梯度用E5M2（范围优先）</li>
+                    <li><strong>累加精度：</strong>即使输入是FP8，累加器应使用FP16或FP32</li>
+                    <li><strong>动态切换：</strong>根据数值范围动态选择FP8 vs FP4</li>
+                    <li><strong>关键层保护：</strong>LayerNorm、Softmax等敏感层避免过度量化</li>
+                    <li><strong>硬件协同：</strong>利用硬件的混合精度矩阵乘法单元</li>
+                </ul>
+            </div>
+
+            <h4>10.5.3 量化感知训练</h4>
             <div class="code-block">
 // 量化感知训练（QAT）实现
 class QuantizationAwareTraining {

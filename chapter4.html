@@ -334,6 +334,39 @@
                 padding: 8px;
             }
         }
+
+        /* List styles for proper indentation */
+        .chapter ul, .chapter ol {
+            margin-left: 20px;
+            margin-bottom: 15px;
+        }
+        
+        .chapter li {
+            margin-bottom: 8px;
+            line-height: 1.8;
+        }
+        
+        .chapter ul ul, .chapter ol ol, .chapter ul ol, .chapter ol ul {
+            margin-left: 20px;
+            margin-top: 5px;
+        }
+        
+        .info-box ul, .warning-box ul, .answer ul {
+            margin-left: 20px;
+        }
+        
+        .info-box li, .warning-box li, .answer li {
+            margin-bottom: 10px;
+        }
+        
+        /* Keep nav-bar lists unstyled */
+        .nav-bar ul {
+            margin-left: 0;
+        }
+        
+        .nav-bar li {
+            margin-bottom: 0;
+        }
     </style>
     <script>
         // Syntax highlighting functions
@@ -1632,6 +1665,161 @@ endmodule
                             <td>batch/layer norm</td>
                             <td>乘法器+移位器</td>
                             <td>高</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <h4>4.3.3 TPU Softmax 实现深度解析</h4>
+            <p>Softmax是神经网络中的关键操作，尤其在注意力机制中。TPU采用了软硬件协同的优化策略，实现了极高效的Softmax计算。</p>
+            
+            <div class="info-box">
+                <h5>TPU Softmax 实现架构</h5>
+                
+                <p><strong>1. 算法优化：数值稳定的 Log-Sum-Exp</strong></p>
+                <div class="code-block">
+// 标准Softmax容易溢出：
+// softmax(x_i) = exp(x_i) / Σ exp(x_j)
+
+// TPU采用的数值稳定版本：
+// softmax(x_i) = exp(x_i - max(x)) / Σ exp(x_j - max(x))
+
+// 计算步骤：
+1. max_val = max(x)           // 并行规约找最大值
+2. x_shifted = x - max_val    // 广播减法
+3. exp_val = exp(x_shifted)   // 硬件加速指数运算
+4. sum_exp = sum(exp_val)     // 并行规约求和
+5. result = exp_val / sum_exp // 逐元素除法（转为乘法）
+                </div>
+                
+                <p><strong>2. 硬件实现：VPU（向量处理单元）</strong></p>
+                <table class="styled-table">
+                    <thead>
+                        <tr>
+                            <th>计算步骤</th>
+                            <th>硬件单元</th>
+                            <th>优化技术</th>
+                            <th>执行时间</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>寻找最大值</td>
+                            <td>VPU并行规约单元</td>
+                            <td>树状比较器网络</td>
+                            <td>O(log N)</td>
+                        </tr>
+                        <tr>
+                            <td>广播减法</td>
+                            <td>VPU SIMD单元</td>
+                            <td>标量广播+向量减法</td>
+                            <td>O(1)</td>
+                        </tr>
+                        <tr>
+                            <td>指数运算</td>
+                            <td>专用SFU（特殊功能单元）</td>
+                            <td>硬件LUT+多项式插值</td>
+                            <td>O(1)</td>
+                        </tr>
+                        <tr>
+                            <td>求和操作</td>
+                            <td>VPU并行规约单元</td>
+                            <td>树状加法器网络</td>
+                            <td>O(log N)</td>
+                        </tr>
+                        <tr>
+                            <td>逐元素除法</td>
+                            <td>VPU乘法单元</td>
+                            <td>倒数转乘法</td>
+                            <td>O(1)</td>
+                        </tr>
+                    </tbody>
+                </table>
+                
+                <p><strong>3. 关键硬件优化：SFU（特殊功能单元）</strong></p>
+                <div class="code-block">
+// TPU SFU 指数运算实现（简化示意）
+module ExponentialSFU #(
+    parameter DATA_WIDTH = 16,  // FP16
+    parameter LUT_DEPTH = 256   // 查找表深度
+)(
+    input wire [DATA_WIDTH-1:0] x,
+    output wire [DATA_WIDTH-1:0] exp_x
+);
+    // 步骤1：范围检测和饱和处理
+    wire in_range = (x > -10.0) && (x < 10.0);
+    
+    // 步骤2：分解 x = n*ln(2) + r，其中 |r| < ln(2)/2
+    wire [7:0] n;
+    wire [DATA_WIDTH-1:0] r;
+    
+    // 步骤3：查找表获取 exp(r) 的初值
+    wire [DATA_WIDTH-1:0] exp_r_lut;
+    LUT_256x16 exp_lut(.addr(r[15:8]), .data(exp_r_lut));
+    
+    // 步骤4：二次多项式修正
+    // exp(r) ≈ exp_r_lut * (1 + r_frac + 0.5*r_frac²)
+    wire [DATA_WIDTH-1:0] correction;
+    
+    // 步骤5：重构结果 exp(x) = 2^n * exp(r)
+    wire [DATA_WIDTH-1:0] result = shift_left(exp_r_corrected, n);
+    
+    assign exp_x = in_range ? result : 
+                   (x > 10.0) ? FP16_MAX : FP16_MIN;
+endmodule
+                </div>
+                
+                <p><strong>4. 内存优化：算子融合</strong></p>
+                <ul>
+                    <li><strong>数据局部性：</strong>Softmax输入通常来自前一层的矩阵乘法（MXU输出），直接流向VPU</li>
+                    <li><strong>片上计算：</strong>整个Softmax过程在片上SRAM完成，避免HBM访问</li>
+                    <li><strong>流水线优化：</strong>max、exp、sum等操作流水线化，隐藏延迟</li>
+                    <li><strong>批处理：</strong>多个序列的Softmax可以共享规约树硬件</li>
+                </ul>
+                
+                <p><strong>5. XLA编译器优化</strong></p>
+                <div class="code-block">
+// XLA识别并融合的Softmax模式
+// 输入：用户代码
+y = tf.nn.softmax(logits, axis=-1)
+
+// XLA编译后：融合的TPU指令序列
+TPU_VPU_MAX      vr1, logits, axis=-1    // 找最大值
+TPU_VPU_SUB      vr2, logits, vr1        // 减最大值
+TPU_SFU_EXP      vr3, vr2                // 硬件指数
+TPU_VPU_SUM      vr4, vr3, axis=-1       // 求和
+TPU_VPU_RECIP    vr5, vr4                // 倒数
+TPU_VPU_MUL      output, vr3, vr5        // 乘法归一化
+                </div>
+                
+                <p><strong>性能对比：</strong></p>
+                <table class="styled-table">
+                    <thead>
+                        <tr>
+                            <th>处理器</th>
+                            <th>Softmax实现</th>
+                            <th>1M元素耗时</th>
+                            <th>能效比</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>CPU (AVX-512)</td>
+                            <td>软件循环+数学库</td>
+                            <td>~10ms</td>
+                            <td>基准</td>
+                        </tr>
+                        <tr>
+                            <td>GPU (CUDA)</td>
+                            <td>Warp级规约+共享内存</td>
+                            <td>~0.5ms</td>
+                            <td>10x</td>
+                        </tr>
+                        <tr>
+                            <td>TPU v4</td>
+                            <td>VPU硬件+SFU+融合</td>
+                            <td>~0.05ms</td>
+                            <td>100x</td>
                         </tr>
                     </tbody>
                 </table>

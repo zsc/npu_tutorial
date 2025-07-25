@@ -334,6 +334,39 @@
                 padding: 8px;
             }
         }
+
+        /* List styles for proper indentation */
+        .chapter ul, .chapter ol {
+            margin-left: 20px;
+            margin-bottom: 15px;
+        }
+        
+        .chapter li {
+            margin-bottom: 8px;
+            line-height: 1.8;
+        }
+        
+        .chapter ul ul, .chapter ol ol, .chapter ul ol, .chapter ol ul {
+            margin-left: 20px;
+            margin-top: 5px;
+        }
+        
+        .info-box ul, .warning-box ul, .answer ul {
+            margin-left: 20px;
+        }
+        
+        .info-box li, .warning-box li, .answer li {
+            margin-bottom: 10px;
+        }
+        
+        /* Keep nav-bar lists unstyled */
+        .nav-bar ul {
+            margin-left: 0;
+        }
+        
+        .nav-bar li {
+            margin-bottom: 0;
+        }
     </style>
     <script>
         // Syntax highlighting functions
@@ -4437,57 +4470,101 @@ module Scratchpad #(
 endmodule
             </div>
 
-            <h4>5.7.3 NPU优化的混合方案</h4>
-            <div class="code-block">
-// 混合存储架构：Scratchpad + 小型Cache
-module HybridMemorySystem #(
-    parameter SCRATCHPAD_SIZE = 256*1024,  // 256KB Scratchpad
-    parameter CACHE_SIZE = 8*1024,         // 8KB Cache（用于不规则访问）
-    parameter DATA_WIDTH = 256
-)(
-    input wire clk,
-    input wire rst_n,
-    
-    // Scratchpad接口（主要数据路径）
-    input wire sp_en,
-    input wire sp_wr,
-    input wire [16:0] sp_addr,
-    input wire [DATA_WIDTH-1:0] sp_wdata,
-    output wire [DATA_WIDTH-1:0] sp_rdata,
-    
-    // Cache接口（辅助路径）
-    input wire cache_req,
-    input wire [31:0] cache_addr,
-    output wire cache_hit,
-    output wire [DATA_WIDTH-1:0] cache_data
-);
-    
-    // Scratchpad实例（用于规则的张量数据）
-    Scratchpad #(
-        .SIZE(SCRATCHPAD_SIZE),
-        .WIDTH(DATA_WIDTH)
-    ) sp_inst (
-        .clk(clk),
-        .en(sp_en),
-        .wr(sp_wr),
-        .addr(sp_addr),
-        .wdata(sp_wdata),
-        .rdata(sp_rdata)
-    );
-    
-    // 小型Cache（用于索引、表格查找等）
-    SimpleCache #(
-        .CACHE_SIZE(CACHE_SIZE),
-        .LINE_SIZE(32),
-        .WAYS(2)
-    ) cache_inst (
-        .clk(clk),
-        .rst_n(rst_n),
-        .addr(cache_addr),
-        .req_valid(cache_req),
-        .data_out(cache_data),
-        .hit(cache_hit)
-    );
+            <h4>5.7.3 CPU中的Scratchpad历史演变</h4>
+            
+            <p>在NPU广泛采用Scratchpad之前，这种可编程的片上存储已经在各种CPU架构中有着丰富的应用历史。理解这些历史案例，有助于我们更好地把握NPU存储设计的演进脉络。</p>
+            
+            <div class="info-box">
+                <h5>CPU架构中的Scratchpad应用案例</h5>
+                
+                <p><strong>1. Cell Broadband Engine (2006) - Sony/IBM/Toshiba</strong></p>
+                <p>Cell处理器是Scratchpad在通用处理器中最著名的应用案例。每个SPE（Synergistic Processing Element）配备256KB的本地存储（Local Store），完全由软件管理：</p>
+                <ul>
+                    <li><strong>架构特点：</strong>每个SPE只能访问自己的Local Store，不能直接访问主存或其他SPE的存储</li>
+                    <li><strong>数据传输：</strong>通过DMA引擎在Local Store和主存之间传输数据，支持双缓冲</li>
+                    <li><strong>编程模型：</strong>程序员需要显式管理数据布局和传输，类似今天的GPU编程</li>
+                    <li><strong>性能优势：</strong>确定性的访问延迟，无Cache miss，峰值性能达204.8 GFLOPS</li>
+                    <li><strong>应用困境：</strong>编程复杂度高，难以移植传统代码，最终限制了其广泛应用</li>
+                </ul>
+                
+                <p><strong>2. TI C6000 DSP系列</strong></p>
+                <p>德州仪器的DSP广泛使用L1/L2 Scratchpad（称为TCM - Tightly Coupled Memory）：</p>
+                <ul>
+                    <li><strong>分级设计：</strong>L1P/L1D各32KB，L2统一256KB，可配置为Cache或SRAM</li>
+                    <li><strong>灵活配置：</strong>L2可以部分配置为Cache，部分配置为Scratchpad</li>
+                    <li><strong>DMA协处理器：</strong>EDMA3支持复杂的2D/3D传输模式，自动处理数据重排</li>
+                    <li><strong>实时保证：</strong>Scratchpad模式下访问延迟固定，满足硬实时系统需求</li>
+                </ul>
+                
+                <p><strong>3. ARM TCM（Tightly Coupled Memory）</strong></p>
+                <p>ARM在Cortex-R和部分Cortex-M系列中提供TCM选项：</p>
+                <ul>
+                    <li><strong>ITCM/DTCM分离：</strong>指令TCM和数据TCM独立，避免冲突</li>
+                    <li><strong>零等待访问：</strong>单周期访问，比通过AXI总线访问快5-10倍</li>
+                    <li><strong>典型应用：</strong>中断处理程序、关键数据结构、实时控制算法</li>
+                    <li><strong>容量限制：</strong>通常较小（16KB-256KB），仅用于最关键的代码和数据</li>
+                </ul>
+            </div>
+            
+            <h4>5.7.4 NPU优化的混合方案</h4>
+            
+            <p>基于历史经验，现代NPU普遍采用混合存储架构，结合Scratchpad的确定性和Cache的灵活性：</p>
+            
+            <div class="info-box">
+                <h5>混合存储架构设计原则</h5>
+                
+                <p><strong>1. 主体采用Scratchpad（90%以上容量）</strong></p>
+                <ul>
+                    <li><strong>用途：</strong>存储可预测的张量数据（权重、激活值、中间结果）</li>
+                    <li><strong>管理：</strong>编译器静态分配，DMA预取，双缓冲或多缓冲</li>
+                    <li><strong>优势：</strong>零冲突、确定延迟、功耗最优、利用率可达100%</li>
+                    <li><strong>典型容量：</strong>256KB-4MB，取决于目标应用和工艺节点</li>
+                </ul>
+                
+                <p><strong>2. 辅助小容量Cache（5-10%容量）</strong></p>
+                <ul>
+                    <li><strong>用途：</strong>处理不规则访问模式：
+                        <ul>
+                            <li>稀疏网络的索引查找</li>
+                            <li>动态形状网络的元数据</li>
+                            <li>激活函数的查找表</li>
+                            <li>归一化层的统计量</li>
+                        </ul>
+                    </li>
+                    <li><strong>设计：</strong>通常采用简单的直接映射或2路组相联</li>
+                    <li><strong>容量：</strong>8KB-64KB，够用即可，避免复杂度</li>
+                </ul>
+                
+                <p><strong>3. 统一的地址空间和访问仲裁</strong></p>
+                <ul>
+                    <li><strong>地址划分：</strong>Scratchpad和Cache映射到不同地址范围</li>
+                    <li><strong>访问优先级：</strong>
+                        <ul>
+                            <li>计算单元访问Scratchpad：最高优先级</li>
+                            <li>DMA传输：中等优先级，可被计算抢占</li>
+                            <li>Cache访问：最低优先级，用于辅助功能</li>
+                        </ul>
+                    </li>
+                    <li><strong>带宽分配：</strong>保证Scratchpad带宽，Cache使用剩余带宽</li>
+                </ul>
+                
+                <p><strong>4. 编译器和运行时协同</strong></p>
+                <ul>
+                    <li><strong>静态分析：</strong>编译时识别规则和不规则访问模式</li>
+                    <li><strong>数据布局：</strong>将规则数据分配到Scratchpad，不规则数据通过Cache访问</li>
+                    <li><strong>预取调度：</strong>生成DMA指令序列，隐藏数据传输延迟</li>
+                    <li><strong>动态调整：</strong>运行时根据Cache命中率调整数据分配策略</li>
+                </ul>
+            </div>
+            
+            <p><strong>实践案例：NVIDIA Tensor Core的存储层次</strong></p>
+            <p>虽然NVIDIA GPU主要使用Cache层次，但在Tensor Core的设计中也体现了混合思想：</p>
+            <ul>
+                <li><strong>Register File：</strong>类似Scratchpad，由编译器完全控制</li>
+                <li><strong>Shared Memory：</strong>可配置为L1 Cache或软件管理的Scratchpad</li>
+                <li><strong>L2 Cache：</strong>统一的Cache，处理不规则访问</li>
+                <li><strong>权衡：</strong>通过配置比例，在确定性和灵活性之间平衡</li>
+            </ul>
 endmodule
 
 // 性能对比表
