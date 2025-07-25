@@ -10464,6 +10464,2274 @@ endmodule
                 </div>
             </div>
         </section>
+
+        <section id="chapter7" class="chapter">
+            <h2>第7章：验证与测试</h2>
+            
+            <p>本章深入探讨NPU芯片的验证策略、测试方法和关键技术，涵盖从RTL验证到后硅验证的完整流程。</p>
+
+            <h3>7.1 验证策略与方法学</h3>
+            
+            <h4>7.1.1 UVM验证环境</h4>
+            <p>UVM（Universal Verification Methodology）提供了标准化的验证组件和可重用的验证环境架构。</p>
+            
+            <div class="code-block">
+// NPU卷积模块的UVM测试环境
+class conv_sequence_item extends uvm_sequence_item;
+    `uvm_object_utils(conv_sequence_item)
+    
+    // 输入数据
+    rand bit [7:0] input_data[];
+    rand bit [7:0] weight_data[];
+    rand int kernel_size;
+    rand int stride;
+    rand int padding;
+    
+    // 约束
+    constraint valid_params_c {
+        kernel_size inside {1, 3, 5, 7};
+        stride inside {1, 2, 4};
+        padding inside {0, 1, 2, 3};
+        input_data.size() == 224*224*3;  // 假设输入是224x224x3
+        weight_data.size() == kernel_size*kernel_size*3*64;  // 输出64通道
+    }
+    
+    function new(string name = "conv_sequence_item");
+        super.new(name);
+    endfunction
+endclass
+
+// 卷积模块的Driver
+class conv_driver extends uvm_driver #(conv_sequence_item);
+    `uvm_component_utils(conv_driver)
+    
+    virtual conv_if vif;
+    
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    
+    task run_phase(uvm_phase phase);
+        forever begin
+            seq_item_port.get_next_item(req);
+            drive_transaction(req);
+            seq_item_port.item_done();
+        end
+    endtask
+    
+    task drive_transaction(conv_sequence_item trans);
+        // 配置卷积参数
+        vif.kernel_size <= trans.kernel_size;
+        vif.stride <= trans.stride;
+        vif.padding <= trans.padding;
+        @(posedge vif.clk);
+        
+        // 加载权重
+        vif.weight_valid <= 1'b1;
+        foreach(trans.weight_data[i]) begin
+            vif.weight_data <= trans.weight_data[i];
+            @(posedge vif.clk);
+        end
+        vif.weight_valid <= 1'b0;
+        
+        // 输入数据
+        vif.data_valid <= 1'b1;
+        foreach(trans.input_data[i]) begin
+            vif.input_data <= trans.input_data[i];
+            @(posedge vif.clk);
+        end
+        vif.data_valid <= 1'b0;
+    endtask
+endclass
+
+// Monitor和Scoreboard
+class conv_monitor extends uvm_monitor;
+    `uvm_component_utils(conv_monitor)
+    
+    virtual conv_if vif;
+    uvm_analysis_port #(conv_result_item) ap;
+    
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+        ap = new("ap", this);
+    endfunction
+    
+    task run_phase(uvm_phase phase);
+        conv_result_item res;
+        forever begin
+            wait(vif.output_valid);
+            res = conv_result_item::type_id::create("res");
+            
+            // 收集输出数据
+            while(vif.output_valid) begin
+                res.output_data.push_back(vif.output_data);
+                @(posedge vif.clk);
+            end
+            
+            ap.write(res);
+        end
+    endtask
+endclass
+
+// Scoreboard with Golden Model
+class conv_scoreboard extends uvm_scoreboard;
+    `uvm_component_utils(conv_scoreboard)
+    
+    uvm_analysis_export #(conv_result_item) analysis_export;
+    uvm_tlm_analysis_fifo #(conv_result_item) results_fifo;
+    
+    // Python Golden Model接口
+    protected int python_model;
+    
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    
+    function void build_phase(uvm_phase phase);
+        super.build_phase(phase);
+        analysis_export = new("analysis_export", this);
+        results_fifo = new("results_fifo", this);
+        
+        // 初始化Python Golden Model
+        python_model = init_python_model("conv_golden_model.py");
+    endfunction
+    
+    task run_phase(uvm_phase phase);
+        conv_result_item got, exp;
+        forever begin
+            results_fifo.get(got);
+            
+            // 调用Python golden model
+            exp = compute_expected_result(got.input_item);
+            
+            // 比较结果（考虑量化误差）
+            if (!compare_with_tolerance(got.output_data, exp.output_data, 1)) begin
+                `uvm_error("SCOREBOARD", 
+                    $sformatf("Mismatch: got=%p, exp=%p", 
+                    got.output_data, exp.output_data))
+            end else begin
+                `uvm_info("SCOREBOARD", "Result matched!", UVM_MEDIUM)
+            end
+        end
+    endtask
+endclass
+            </div>
+
+            <h4>7.1.2 形式化验证</h4>
+            <p>形式化验证通过数学方法证明设计的正确性，特别适合控制密集型逻辑。</p>
+            
+            <div class="code-block">
+// NPU指令调度单元的形式化验证属性
+module instruction_scheduler_properties (
+    input clk,
+    input rst_n,
+    input [3:0] inst_valid,
+    input [3:0] inst_ready,
+    output [3:0] inst_grant
+);
+
+    // 假设和约束
+    assume property (@(posedge clk) disable iff (!rst_n)
+        $countones(inst_grant) <= 1  // 最多授权一个指令
+    );
+    
+    // 属性1：没有饥饿（no starvation）
+    property no_starvation(int idx);
+        @(posedge clk) disable iff (!rst_n)
+        inst_valid[idx] && !inst_grant[idx] |-> 
+            ##[1:16] inst_grant[idx];  // 16周期内必须得到授权
+    endproperty
+    
+    generate
+        for (genvar i = 0; i < 4; i++) begin : starvation_check
+            assert property (no_starvation(i))
+            else $error("Instruction %0d starved", i);
+        end
+    endgenerate
+    
+    // 属性2：互斥（mutual exclusion）
+    property mutual_exclusion;
+        @(posedge clk) disable iff (!rst_n)
+        $onehot0(inst_grant);  // 最多一位为1
+    endproperty
+    
+    assert property (mutual_exclusion)
+    else $error("Multiple grants detected");
+    
+    // 属性3：有效授权（valid grant）
+    property valid_grant;
+        @(posedge clk) disable iff (!rst_n)
+        |inst_grant |-> inst_grant & inst_valid;
+    endproperty
+    
+    assert property (valid_grant)
+    else $error("Grant to invalid instruction");
+    
+    // 覆盖属性
+    covergroup scheduler_coverage @(posedge clk);
+        valid_cp: coverpoint inst_valid {
+            bins no_req = {4'b0000};
+            bins single_req[] = {4'b0001, 4'b0010, 4'b0100, 4'b1000};
+            bins multi_req = {[4'b0011:4'b1111]};
+        }
+        
+        grant_cp: coverpoint inst_grant {
+            bins no_grant = {4'b0000};
+            bins grants[] = {4'b0001, 4'b0010, 4'b0100, 4'b1000};
+        }
+        
+        valid_grant_cross: cross valid_cp, grant_cp {
+            illegal_bins invalid = binsof(valid_cp.no_req) && 
+                                  !binsof(grant_cp.no_grant);
+        }
+    endgroup
+    
+    scheduler_coverage cov_inst = new();
+
+endmodule
+            </div>
+
+            <h4>7.1.3 硬件仿真加速</h4>
+            <p>使用FPGA进行硬件仿真，实现MHz级别的验证速度。</p>
+            
+            <div class="code-block">
+// Emulation环境配置示例
+class npu_emulation_env extends uvm_env;
+    `uvm_component_utils(npu_emulation_env)
+    
+    // 仿真加速器接口
+    virtual emulator_if emu_if;
+    
+    // 软件栈组件
+    npu_driver_agent driver_agent;
+    npu_runtime_agent runtime_agent;
+    
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    
+    function void build_phase(uvm_phase phase);
+        super.build_phase(phase);
+        
+        // 配置仿真环境
+        if (!uvm_config_db#(virtual emulator_if)::get(
+            this, "", "emu_if", emu_if))
+            `uvm_fatal("CONFIG", "Cannot get emulator interface")
+        
+        // 创建软件栈代理
+        driver_agent = npu_driver_agent::type_id::create("driver_agent", this);
+        runtime_agent = npu_runtime_agent::type_id::create("runtime_agent", this);
+    endfunction
+    
+    task run_phase(uvm_phase phase);
+        // 加载NPU固件
+        load_firmware("npu_firmware.bin");
+        
+        // 运行MLPerf基准测试
+        run_mlperf_benchmark("mobilenet_v2");
+        run_mlperf_benchmark("resnet50");
+        run_mlperf_benchmark("bert");
+    endtask
+    
+    task load_firmware(string firmware_path);
+        int firmware_data[];
+        
+        // 读取固件文件
+        $readmemh(firmware_path, firmware_data);
+        
+        // 通过JTAG加载到NPU
+        foreach(firmware_data[i]) begin
+            emu_if.jtag_write(32'h1000_0000 + i*4, firmware_data[i]);
+        end
+    endtask
+    
+    task run_mlperf_benchmark(string model_name);
+        real start_time, end_time;
+        int inference_count;
+        
+        `uvm_info("EMULATION", $sformatf("Running %s benchmark", model_name), UVM_LOW)
+        
+        // 加载模型
+        runtime_agent.load_model(model_name);
+        
+        // 预热
+        repeat(10) runtime_agent.run_inference();
+        
+        // 性能测试
+        start_time = $realtime;
+        repeat(1000) begin
+            runtime_agent.run_inference();
+            inference_count++;
+        end
+        end_time = $realtime;
+        
+        // 报告性能
+        `uvm_info("EMULATION", 
+            $sformatf("%s: %0.2f inferences/sec", 
+            model_name, inference_count/(end_time-start_time)), 
+            UVM_LOW)
+    endtask
+endclass
+            </div>
+
+            <h3>7.2 功能验证层次</h3>
+            
+            <h4>7.2.1 IP级验证</h4>
+            <div class="code-block">
+// MAC单元的定向测试
+module mac_unit_test;
+    
+    parameter DATA_WIDTH = 8;
+    parameter ACC_WIDTH = 32;
+    
+    reg clk, rst_n;
+    reg signed [DATA_WIDTH-1:0] a, b;
+    reg signed [ACC_WIDTH-1:0] c_in;
+    wire signed [ACC_WIDTH-1:0] c_out;
+    
+    // DUT实例化
+    mac_unit #(
+        .DATA_WIDTH(DATA_WIDTH),
+        .ACC_WIDTH(ACC_WIDTH)
+    ) dut (
+        .clk(clk),
+        .rst_n(rst_n),
+        .a(a),
+        .b(b),
+        .c_in(c_in),
+        .c_out(c_out)
+    );
+    
+    // 时钟生成
+    initial clk = 0;
+    always #5 clk = ~clk;
+    
+    // 测试激励
+    initial begin
+        // 初始化
+        rst_n = 0;
+        a = 0; b = 0; c_in = 0;
+        #20 rst_n = 1;
+        
+        // 测试1：基本MAC操作
+        @(posedge clk);
+        a = 8'd10; b = 8'd20; c_in = 32'd100;
+        @(posedge clk);
+        assert(c_out == 300) else $error("Basic MAC failed");
+        
+        // 测试2：负数处理
+        a = -8'd50; b = 8'd4; c_in = 32'd0;
+        @(posedge clk);
+        assert(c_out == -200) else $error("Negative MAC failed");
+        
+        // 测试3：溢出处理
+        a = 8'd127; b = 8'd127; c_in = 32'd2147483640;
+        @(posedge clk);
+        check_overflow();
+        
+        // 测试4：连续累加
+        repeat(100) begin
+            a = $random; b = $random;
+            c_in = c_out;  // 累加
+            @(posedge clk);
+        end
+        
+        $finish;
+    end
+    
+    // 溢出检查
+    task check_overflow();
+        reg signed [ACC_WIDTH+8:0] expected;
+        expected = a * b + c_in;
+        
+        if (expected > $signed({1'b0, {(ACC_WIDTH-1){1'b1}}})) begin
+            assert(c_out == {1'b0, {(ACC_WIDTH-1){1'b1}}})
+            else $error("Positive overflow handling failed");
+        end else if (expected < $signed({1'b1, {(ACC_WIDTH-1){1'b0}}})) begin
+            assert(c_out == {1'b1, {(ACC_WIDTH-1){1'b0}}})
+            else $error("Negative overflow handling failed");
+        end
+    endtask
+    
+endmodule
+            </div>
+
+            <h4>7.2.2 子系统级验证</h4>
+            <div class="code-block">
+// PE阵列的随机测试
+class pe_array_test extends uvm_test;
+    `uvm_component_utils(pe_array_test)
+    
+    pe_array_env env;
+    
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    
+    function void build_phase(uvm_phase phase);
+        super.build_phase(phase);
+        env = pe_array_env::type_id::create("env", this);
+        
+        // 配置测试参数
+        uvm_config_db#(int)::set(this, "env.agent", "array_size", 16);
+        uvm_config_db#(int)::set(this, "env.agent", "data_width", 8);
+    endfunction
+    
+    task run_phase(uvm_phase phase);
+        pe_array_sequence seq;
+        
+        phase.raise_objection(this);
+        
+        // 运行不同的测试序列
+        
+        // 1. 单位矩阵测试
+        seq = identity_matrix_seq::type_id::create("seq");
+        seq.start(env.agent.sequencer);
+        
+        // 2. 稀疏矩阵测试
+        seq = sparse_matrix_seq::type_id::create("seq");
+        seq.sparsity = 0.9;  // 90%稀疏
+        seq.start(env.agent.sequencer);
+        
+        // 3. 随机矩阵测试
+        seq = random_matrix_seq::type_id::create("seq");
+        seq.num_iterations = 1000;
+        seq.start(env.agent.sequencer);
+        
+        // 4. 边界条件测试
+        seq = boundary_test_seq::type_id::create("seq");
+        seq.start(env.agent.sequencer);
+        
+        phase.drop_objection(this);
+    endtask
+    
+endclass
+
+// 覆盖率收集
+class pe_array_coverage extends uvm_subscriber #(pe_array_transaction);
+    `uvm_component_utils(pe_array_coverage)
+    
+    covergroup pe_cg;
+        // 数据模式覆盖
+        data_pattern_cp: coverpoint trans.get_data_pattern() {
+            bins zeros = {PATTERN_ZEROS};
+            bins ones = {PATTERN_ONES};
+            bins sparse = {PATTERN_SPARSE};
+            bins dense = {PATTERN_DENSE};
+            bins random = {PATTERN_RANDOM};
+        }
+        
+        // 计算模式覆盖
+        compute_mode_cp: coverpoint trans.compute_mode {
+            bins matmul = {MODE_MATMUL};
+            bins conv = {MODE_CONV};
+            bins pooling = {MODE_POOLING};
+        }
+        
+        // 精度覆盖
+        precision_cp: coverpoint trans.precision {
+            bins int8 = {PREC_INT8};
+            bins int16 = {PREC_INT16};
+            bins fp16 = {PREC_FP16};
+        }
+        
+        // 交叉覆盖
+        mode_precision_cross: cross compute_mode_cp, precision_cp;
+    endgroup
+    
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+        pe_cg = new();
+    endfunction
+    
+    function void write(pe_array_transaction t);
+        trans = t;
+        pe_cg.sample();
+    endfunction
+endclass
+            </div>
+
+            <h3>7.3 性能验证</h3>
+            
+            <h4>7.3.1 性能计数器设计</h4>
+            <div class="code-block">
+// NPU性能监控模块
+module npu_performance_monitor (
+    input wire clk,
+    input wire rst_n,
+    
+    // 监控信号
+    input wire mac_valid,
+    input wire [15:0] mac_count,
+    input wire cache_hit,
+    input wire cache_miss,
+    input wire dma_busy,
+    input wire compute_stall,
+    
+    // APB接口
+    input wire psel,
+    input wire penable,
+    input wire pwrite,
+    input wire [11:0] paddr,
+    output reg [31:0] prdata
+);
+
+    // 性能计数器
+    reg [63:0] cycle_count;
+    reg [63:0] mac_op_count;
+    reg [31:0] cache_hit_count;
+    reg [31:0] cache_miss_count;
+    reg [31:0] dma_busy_cycles;
+    reg [31:0] compute_stall_cycles;
+    
+    // 性能指标计算
+    wire [31:0] mac_utilization;
+    wire [31:0] cache_hit_rate;
+    wire [31:0] bandwidth_efficiency;
+    
+    // 计数器更新
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            cycle_count <= 64'h0;
+            mac_op_count <= 64'h0;
+            cache_hit_count <= 32'h0;
+            cache_miss_count <= 32'h0;
+            dma_busy_cycles <= 32'h0;
+            compute_stall_cycles <= 32'h0;
+        end else begin
+            cycle_count <= cycle_count + 1;
+            
+            if (mac_valid)
+                mac_op_count <= mac_op_count + mac_count;
+            
+            if (cache_hit)
+                cache_hit_count <= cache_hit_count + 1;
+                
+            if (cache_miss)
+                cache_miss_count <= cache_miss_count + 1;
+                
+            if (dma_busy)
+                dma_busy_cycles <= dma_busy_cycles + 1;
+                
+            if (compute_stall)
+                compute_stall_cycles <= compute_stall_cycles + 1;
+        end
+    end
+    
+    // 性能指标计算
+    assign mac_utilization = (mac_op_count * 100) / (cycle_count * 256); // 假设256个MAC单元
+    assign cache_hit_rate = (cache_hit_count * 100) / (cache_hit_count + cache_miss_count);
+    assign bandwidth_efficiency = ((cycle_count - dma_busy_cycles) * 100) / cycle_count;
+    
+    // APB读操作
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            prdata <= 32'h0;
+        end else if (psel && !pwrite && penable) begin
+            case (paddr[11:0])
+                12'h000: prdata <= cycle_count[31:0];
+                12'h004: prdata <= cycle_count[63:32];
+                12'h008: prdata <= mac_op_count[31:0];
+                12'h00C: prdata <= mac_op_count[63:32];
+                12'h010: prdata <= cache_hit_count;
+                12'h014: prdata <= cache_miss_count;
+                12'h018: prdata <= cache_hit_rate;
+                12'h01C: prdata <= mac_utilization;
+                12'h020: prdata <= bandwidth_efficiency;
+                12'h024: prdata <= compute_stall_cycles;
+                12'h028: prdata <= dma_busy_cycles;
+                default: prdata <= 32'h0;
+            endcase
+        end
+    end
+
+endmodule
+            </div>
+
+            <h4>7.3.2 性能测试基准</h4>
+            <div class="code-block">
+// 性能基准测试类
+class npu_performance_benchmark extends uvm_sequence;
+    `uvm_object_utils(npu_performance_benchmark)
+    
+    // 测试配置
+    int num_iterations = 100;
+    string model_name = "resnet50";
+    
+    // 性能统计
+    real total_inference_time;
+    int total_mac_operations;
+    real power_consumption;
+    
+    function new(string name = "npu_performance_benchmark");
+        super.new(name);
+    endfunction
+    
+    task body();
+        npu_model_config cfg;
+        npu_inference_seq inference_seq;
+        real start_time, end_time;
+        
+        // 加载模型配置
+        cfg = load_model_config(model_name);
+        
+        // 配置NPU
+        configure_npu(cfg);
+        
+        // 预热
+        repeat(10) begin
+            inference_seq = npu_inference_seq::type_id::create("inference_seq");
+            inference_seq.model_cfg = cfg;
+            inference_seq.start(m_sequencer);
+        end
+        
+        // 性能测试
+        start_time = $realtime;
+        repeat(num_iterations) begin
+            inference_seq = npu_inference_seq::type_id::create("inference_seq");
+            inference_seq.model_cfg = cfg;
+            inference_seq.start(m_sequencer);
+        end
+        end_time = $realtime;
+        
+        // 收集性能数据
+        collect_performance_data();
+        
+        // 报告结果
+        report_performance();
+    endtask
+    
+    function void collect_performance_data();
+        // 从性能计数器读取数据
+        total_inference_time = $realtime;
+        total_mac_operations = read_performance_counter(PERF_MAC_OPS);
+        power_consumption = read_power_monitor();
+    endfunction
+    
+    function void report_performance();
+        real throughput, efficiency, tops;
+        
+        throughput = num_iterations / total_inference_time;
+        tops = total_mac_operations / total_inference_time / 1e12;
+        efficiency = tops / power_consumption;  // TOPS/W
+        
+        `uvm_info("PERF", "=== Performance Report ===", UVM_LOW)
+        `uvm_info("PERF", $sformatf("Model: %s", model_name), UVM_LOW)
+        `uvm_info("PERF", $sformatf("Throughput: %.2f inferences/sec", throughput), UVM_LOW)
+        `uvm_info("PERF", $sformatf("Performance: %.2f TOPS", tops), UVM_LOW)
+        `uvm_info("PERF", $sformatf("Power: %.2f W", power_consumption), UVM_LOW)
+        `uvm_info("PERF", $sformatf("Efficiency: %.2f TOPS/W", efficiency), UVM_LOW)
+    endfunction
+    
+endclass
+            </div>
+
+            <div class="exercise">
+                <h4>练习 7.1-7.3</h4>
+                <div class="question">
+                    <p><strong>题目：</strong>设计一个完整的UVM验证环境来验证一个4x4 MAC阵列，要求：
+                    1) 实现完整的UVM组件（Driver、Monitor、Scoreboard）
+                    2) 使用Python golden model进行结果比较
+                    3) 实现功能覆盖率收集
+                    4) 支持随机和定向测试</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <div class="code-block">
+// MAC阵列接口定义
+interface mac_array_if(input clk);
+    logic rst_n;
+    logic enable;
+    logic [7:0] a_in[3:0];
+    logic [7:0] b_in[3:0][3:0];
+    logic [31:0] c_out[3:0][3:0];
+    logic valid_out;
+    
+    modport dut(
+        input clk, rst_n, enable, a_in, b_in,
+        output c_out, valid_out
+    );
+    
+    modport tb(
+        input clk, c_out, valid_out,
+        output rst_n, enable, a_in, b_in
+    );
+endinterface
+
+// Transaction定义
+class mac_array_trans extends uvm_sequence_item;
+    `uvm_object_utils(mac_array_trans)
+    
+    rand bit [7:0] a_matrix[3:0][3:0];
+    rand bit [7:0] b_matrix[3:0][3:0];
+    bit [31:0] c_matrix[3:0][3:0];
+    
+    constraint data_c {
+        foreach(a_matrix[i,j]) {
+            a_matrix[i][j] inside {[0:255]};
+            b_matrix[i][j] inside {[0:255]};
+        }
+    }
+    
+    function new(string name = "mac_array_trans");
+        super.new(name);
+    endfunction
+    
+    function void do_copy(uvm_object rhs);
+        mac_array_trans t;
+        super.do_copy(rhs);
+        $cast(t, rhs);
+        a_matrix = t.a_matrix;
+        b_matrix = t.b_matrix;
+        c_matrix = t.c_matrix;
+    endfunction
+endclass
+
+// Driver实现
+class mac_array_driver extends uvm_driver#(mac_array_trans);
+    `uvm_component_utils(mac_array_driver)
+    
+    virtual mac_array_if.tb vif;
+    
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    
+    function void build_phase(uvm_phase phase);
+        super.build_phase(phase);
+        if (!uvm_config_db#(virtual mac_array_if.tb)::get(
+            this, "", "vif", vif))
+            `uvm_fatal("NOVIF", "Virtual interface not found")
+    endfunction
+    
+    task run_phase(uvm_phase phase);
+        forever begin
+            seq_item_port.get_next_item(req);
+            drive_trans(req);
+            seq_item_port.item_done();
+        end
+    endtask
+    
+    task drive_trans(mac_array_trans t);
+        // 复位
+        vif.rst_n = 0;
+        vif.enable = 0;
+        repeat(5) @(posedge vif.clk);
+        vif.rst_n = 1;
+        
+        // 发送数据（脉动输入）
+        for (int cycle = 0; cycle < 7; cycle++) begin
+            @(posedge vif.clk);
+            vif.enable = 1;
+            
+            // 对角线输入模式
+            for (int i = 0; i < 4; i++) begin
+                if (cycle >= i && cycle - i < 4) begin
+                    vif.a_in[i] = t.a_matrix[i][cycle-i];
+                    for (int j = 0; j < 4; j++) begin
+                        if (i == 0)
+                            vif.b_in[j][i] = t.b_matrix[cycle-j][j];
+                    end
+                end else begin
+                    vif.a_in[i] = 0;
+                end
+            end
+        end
+        
+        vif.enable = 0;
+        
+        // 等待计算完成
+        wait(vif.valid_out);
+        repeat(2) @(posedge vif.clk);
+    endtask
+endclass
+
+// Monitor实现
+class mac_array_monitor extends uvm_monitor;
+    `uvm_component_utils(mac_array_monitor)
+    
+    virtual mac_array_if.tb vif;
+    uvm_analysis_port#(mac_array_trans) ap;
+    
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+        ap = new("ap", this);
+    endfunction
+    
+    function void build_phase(uvm_phase phase);
+        super.build_phase(phase);
+        if (!uvm_config_db#(virtual mac_array_if.tb)::get(
+            this, "", "vif", vif))
+            `uvm_fatal("NOVIF", "Virtual interface not found")
+    endfunction
+    
+    task run_phase(uvm_phase phase);
+        mac_array_trans t;
+        
+        forever begin
+            // 监控输入
+            t = mac_array_trans::type_id::create("t");
+            collect_input(t);
+            
+            // 等待输出
+            wait(vif.valid_out);
+            @(posedge vif.clk);
+            
+            // 收集输出
+            for (int i = 0; i < 4; i++) begin
+                for (int j = 0; j < 4; j++) begin
+                    t.c_matrix[i][j] = vif.c_out[i][j];
+                end
+            end
+            
+            ap.write(t);
+        end
+    endtask
+    
+    task collect_input(mac_array_trans t);
+        // 收集输入矩阵（简化版）
+        @(posedge vif.clk iff vif.enable);
+        // 实际实现需要根据脉动输入模式重建完整矩阵
+    endtask
+endclass
+
+// Scoreboard with Python Golden Model
+class mac_array_scoreboard extends uvm_scoreboard;
+    `uvm_component_utils(mac_array_scoreboard)
+    
+    uvm_analysis_export#(mac_array_trans) analysis_export;
+    
+    // Python接口
+    int python_fd;
+    
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    
+    function void build_phase(uvm_phase phase);
+        super.build_phase(phase);
+        analysis_export = new("analysis_export", this);
+        
+        // 启动Python进程
+        python_fd = $system("python3 mac_golden_model.py &");
+    endfunction
+    
+    function void write(mac_array_trans t);
+        bit [31:0] expected[3:0][3:0];
+        
+        // 调用Python计算期望结果
+        compute_expected(t.a_matrix, t.b_matrix, expected);
+        
+        // 比较结果
+        for (int i = 0; i < 4; i++) begin
+            for (int j = 0; j < 4; j++) begin
+                if (t.c_matrix[i][j] !== expected[i][j]) begin
+                    `uvm_error("SCOREBOARD", 
+                        $sformatf("Mismatch at [%0d][%0d]: got=%0d, exp=%0d",
+                        i, j, t.c_matrix[i][j], expected[i][j]))
+                end
+            end
+        end
+        
+        `uvm_info("SCOREBOARD", "Matrix multiplication passed", UVM_MEDIUM)
+    endfunction
+    
+    function void compute_expected(
+        bit [7:0] a[3:0][3:0], 
+        bit [7:0] b[3:0][3:0],
+        ref bit [31:0] c[3:0][3:0]
+    );
+        // 与Python通信计算结果
+        // 简化示例：直接计算
+        for (int i = 0; i < 4; i++) begin
+            for (int j = 0; j < 4; j++) begin
+                c[i][j] = 0;
+                for (int k = 0; k < 4; k++) begin
+                    c[i][j] += a[i][k] * b[k][j];
+                end
+            end
+        end
+    endfunction
+endclass
+
+// 覆盖率收集
+class mac_array_coverage extends uvm_subscriber#(mac_array_trans);
+    `uvm_component_utils(mac_array_coverage)
+    
+    mac_array_trans t;
+    
+    covergroup mac_cg;
+        // 输入数据模式
+        a_pattern: coverpoint get_pattern(t.a_matrix) {
+            bins zero = {0};
+            bins identity = {1};
+            bins sparse = {2};
+            bins dense = {3};
+        }
+        
+        b_pattern: coverpoint get_pattern(t.b_matrix) {
+            bins zero = {0};
+            bins identity = {1};
+            bins sparse = {2};
+            bins dense = {3};
+        }
+        
+        // 交叉覆盖
+        pattern_cross: cross a_pattern, b_pattern;
+        
+        // 数值范围覆盖
+        a_values: coverpoint t.a_matrix[0][0] {
+            bins low = {[0:63]};
+            bins mid = {[64:191]};
+            bins high = {[192:255]};
+        }
+    endgroup
+    
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+        mac_cg = new();
+    endfunction
+    
+    function void write(mac_array_trans tr);
+        t = tr;
+        mac_cg.sample();
+    endfunction
+    
+    function int get_pattern(bit [7:0] matrix[3:0][3:0]);
+        int zero_count = 0;
+        
+        // 检查零矩阵
+        foreach(matrix[i,j]) if (matrix[i][j] == 0) zero_count++;
+        if (zero_count == 16) return 0;
+        
+        // 检查单位矩阵
+        bit is_identity = 1;
+        foreach(matrix[i,j]) begin
+            if (i == j && matrix[i][j] != 1) is_identity = 0;
+            if (i != j && matrix[i][j] != 0) is_identity = 0;
+        end
+        if (is_identity) return 1;
+        
+        // 稀疏/稠密
+        if (zero_count > 12) return 2;
+        else return 3;
+    endfunction
+endclass
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <h3>7.4 可测试性设计（DFT）</h3>
+            
+            <h4>7.4.1 扫描链设计</h4>
+            <p>扫描链将设计中的触发器连接成移位寄存器，实现可控性和可观测性。</p>
+            
+            <div class="code-block">
+// 扫描触发器实现
+module scan_ff (
+    input wire clk,
+    input wire rst_n,
+    input wire d,          // 功能数据输入
+    input wire si,         // 扫描输入
+    input wire se,         // 扫描使能
+    output reg q,          // 数据输出
+    output wire so         // 扫描输出
+);
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            q <= 1'b0;
+        end else begin
+            q <= se ? si : d;  // 扫描模式时选择扫描输入
+        end
+    end
+    
+    assign so = q;  // 扫描输出连接到Q
+
+endmodule
+
+// NPU控制器的扫描链插入
+module npu_controller_with_scan (
+    input wire clk,
+    input wire rst_n,
+    
+    // 功能接口
+    input wire [31:0] instruction,
+    input wire inst_valid,
+    output reg inst_ready,
+    output reg [7:0] control_signals,
+    
+    // DFT接口
+    input wire scan_enable,
+    input wire scan_in,
+    output wire scan_out
+);
+
+    // 状态机寄存器（使用扫描触发器）
+    wire [2:0] state_d, state_q;
+    wire [2:0] state_scan_chain;
+    
+    scan_ff state_ff[2:0] (
+        .clk(clk),
+        .rst_n(rst_n),
+        .d(state_d),
+        .si({state_scan_chain[1:0], scan_in}),
+        .se(scan_enable),
+        .q(state_q),
+        .so(state_scan_chain)
+    );
+    
+    // 指令寄存器（使用扫描触发器）
+    wire [31:0] inst_reg_d, inst_reg_q;
+    wire [31:0] inst_scan_chain;
+    
+    genvar i;
+    generate
+        for (i = 0; i < 32; i = i + 1) begin : inst_scan_gen
+            scan_ff inst_ff (
+                .clk(clk),
+                .rst_n(rst_n),
+                .d(inst_reg_d[i]),
+                .si(i == 0 ? state_scan_chain[2] : inst_scan_chain[i-1]),
+                .se(scan_enable),
+                .q(inst_reg_q[i]),
+                .so(inst_scan_chain[i])
+            );
+        end
+    endgenerate
+    
+    // 控制逻辑
+    always @(*) begin
+        // 状态机逻辑
+        case (state_q)
+            3'b000: begin  // IDLE
+                if (inst_valid) begin
+                    state_d = 3'b001;  // DECODE
+                    inst_reg_d = instruction;
+                end else begin
+                    state_d = state_q;
+                    inst_reg_d = inst_reg_q;
+                end
+            end
+            // ... 其他状态
+        endcase
+    end
+    
+    assign scan_out = inst_scan_chain[31];
+
+endmodule
+
+// ATPG测试模式生成
+module atpg_controller (
+    input wire clk,
+    input wire rst_n,
+    
+    // ATPG控制
+    input wire test_mode,
+    input wire scan_enable,
+    input wire [3:0] test_pattern_sel,
+    
+    // 扫描链接口
+    output reg [7:0] scan_in_ports,
+    input wire [7:0] scan_out_ports,
+    
+    // 测试结果
+    output reg test_done,
+    output reg test_pass
+);
+
+    // 测试向量ROM
+    reg [7:0] test_vectors [0:1023];
+    reg [7:0] expected_responses [0:1023];
+    
+    // 测试状态机
+    localparam TEST_IDLE = 2'b00;
+    localparam TEST_SHIFT = 2'b01;
+    localparam TEST_CAPTURE = 2'b10;
+    localparam TEST_COMPARE = 2'b11;
+    
+    reg [1:0] test_state;
+    reg [9:0] vector_cnt;
+    reg [7:0] shift_cnt;
+    reg [7:0] captured_data [0:127];
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            test_state <= TEST_IDLE;
+            test_done <= 1'b0;
+            test_pass <= 1'b1;
+        end else if (test_mode) begin
+            case (test_state)
+                TEST_IDLE: begin
+                    if (scan_enable) begin
+                        test_state <= TEST_SHIFT;
+                        vector_cnt <= 0;
+                        shift_cnt <= 0;
+                    end
+                end
+                
+                TEST_SHIFT: begin
+                    // 移入测试向量
+                    scan_in_ports <= test_vectors[vector_cnt];
+                    shift_cnt <= shift_cnt + 1;
+                    
+                    if (shift_cnt == 127) begin  // 假设链长128
+                        test_state <= TEST_CAPTURE;
+                    end
+                end
+                
+                TEST_CAPTURE: begin
+                    // 捕获响应
+                    captured_data[shift_cnt] <= scan_out_ports;
+                    shift_cnt <= shift_cnt + 1;
+                    
+                    if (shift_cnt == 127) begin
+                        test_state <= TEST_COMPARE;
+                    end
+                end
+                
+                TEST_COMPARE: begin
+                    // 比较结果
+                    for (int i = 0; i < 128; i++) begin
+                        if (captured_data[i] != expected_responses[vector_cnt + i]) begin
+                            test_pass <= 1'b0;
+                        end
+                    end
+                    
+                    vector_cnt <= vector_cnt + 128;
+                    if (vector_cnt >= 1024) begin
+                        test_done <= 1'b1;
+                        test_state <= TEST_IDLE;
+                    end else begin
+                        test_state <= TEST_SHIFT;
+                        shift_cnt <= 0;
+                    end
+                end
+            endcase
+        end
+    end
+
+endmodule
+            </div>
+
+            <h4>7.4.2 内建自测试（BIST）</h4>
+            <div class="code-block">
+// 存储器BIST控制器
+module mbist_controller #(
+    parameter ADDR_WIDTH = 10,
+    parameter DATA_WIDTH = 32
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // BIST控制
+    input wire bist_en,
+    input wire bist_mode,  // 0: March C-, 1: Checkerboard
+    
+    // 存储器接口
+    output reg mem_en,
+    output reg mem_we,
+    output reg [ADDR_WIDTH-1:0] mem_addr,
+    output reg [DATA_WIDTH-1:0] mem_wdata,
+    input wire [DATA_WIDTH-1:0] mem_rdata,
+    
+    // BIST状态
+    output reg bist_done,
+    output reg bist_fail,
+    output reg [ADDR_WIDTH-1:0] fail_addr,
+    output reg [DATA_WIDTH-1:0] fail_data
+);
+
+    // March C- 算法状态
+    localparam IDLE = 4'b0000;
+    localparam W0_UP = 4'b0001;    // 写0，地址递增
+    localparam R0W1_UP = 4'b0010;  // 读0写1，地址递增
+    localparam R1W0_UP = 4'b0011;  // 读1写0，地址递增
+    localparam R0W1_DN = 4'b0100;  // 读0写1，地址递减
+    localparam R1W0_DN = 4'b0101;  // 读1写0，地址递减
+    localparam R0_UP = 4'b0110;    // 读0，地址递增
+    localparam DONE = 4'b0111;
+    
+    reg [3:0] state, next_state;
+    reg [ADDR_WIDTH-1:0] addr_cnt;
+    reg addr_dir;  // 0: up, 1: down
+    reg [DATA_WIDTH-1:0] expected_data;
+    
+    // 状态机
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state <= IDLE;
+            bist_done <= 1'b0;
+            bist_fail <= 1'b0;
+        end else begin
+            state <= next_state;
+            
+            // 错误检测
+            if (mem_en && !mem_we && state != IDLE) begin
+                if (mem_rdata !== expected_data) begin
+                    bist_fail <= 1'b1;
+                    fail_addr <= mem_addr;
+                    fail_data <= mem_rdata;
+                end
+            end
+        end
+    end
+    
+    // 下一状态逻辑
+    always @(*) begin
+        next_state = state;
+        
+        case (state)
+            IDLE: begin
+                if (bist_en) begin
+                    if (bist_mode == 0)  // March C-
+                        next_state = W0_UP;
+                    else  // 其他算法
+                        next_state = W0_UP;
+                end
+            end
+            
+            W0_UP: begin
+                if (addr_cnt == {ADDR_WIDTH{1'b1}})
+                    next_state = R0W1_UP;
+            end
+            
+            R0W1_UP: begin
+                if (addr_cnt == {ADDR_WIDTH{1'b1}})
+                    next_state = R1W0_UP;
+            end
+            
+            R1W0_UP: begin
+                if (addr_cnt == {ADDR_WIDTH{1'b1}})
+                    next_state = R0W1_DN;
+            end
+            
+            R0W1_DN: begin
+                if (addr_cnt == 0)
+                    next_state = R1W0_DN;
+            end
+            
+            R1W0_DN: begin
+                if (addr_cnt == 0)
+                    next_state = R0_UP;
+            end
+            
+            R0_UP: begin
+                if (addr_cnt == {ADDR_WIDTH{1'b1}})
+                    next_state = DONE;
+            end
+            
+            DONE: begin
+                next_state = IDLE;
+            end
+        endcase
+    end
+    
+    // 地址和数据生成
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            addr_cnt <= 0;
+            mem_en <= 1'b0;
+            mem_we <= 1'b0;
+            mem_addr <= 0;
+            mem_wdata <= 0;
+            expected_data <= 0;
+        end else begin
+            case (state)
+                W0_UP: begin  // 写0
+                    mem_en <= 1'b1;
+                    mem_we <= 1'b1;
+                    mem_addr <= addr_cnt;
+                    mem_wdata <= 0;
+                    addr_cnt <= addr_cnt + 1;
+                end
+                
+                R0W1_UP: begin  // 读0写1
+                    mem_en <= 1'b1;
+                    if (mem_we) begin  // 写周期
+                        mem_we <= 1'b0;
+                        expected_data <= 0;
+                    end else begin  // 读周期
+                        mem_we <= 1'b1;
+                        mem_wdata <= {DATA_WIDTH{1'b1}};
+                        addr_cnt <= addr_cnt + 1;
+                    end
+                    mem_addr <= addr_cnt;
+                end
+                
+                // 类似处理其他状态...
+                
+                DONE: begin
+                    bist_done <= 1'b1;
+                    mem_en <= 1'b0;
+                end
+            endcase
+        end
+    end
+
+endmodule
+
+// 逻辑BIST（LBIST）
+module lbist_controller (
+    input wire clk,
+    input wire rst_n,
+    
+    // LBIST控制
+    input wire lbist_en,
+    input wire [15:0] pattern_count,
+    
+    // PRPG（伪随机图形生成器）
+    output reg [31:0] prpg_out,
+    
+    // MISR（多输入特征寄存器）
+    input wire [31:0] response_in,
+    output reg [31:0] signature,
+    
+    // 状态输出
+    output reg lbist_done,
+    output reg signature_valid
+);
+
+    // LFSR用于PRPG
+    reg [31:0] lfsr;
+    wire feedback = lfsr[31] ^ lfsr[21] ^ lfsr[1] ^ lfsr[0];
+    
+    // MISR寄存器
+    reg [31:0] misr;
+    
+    // 模式计数器
+    reg [15:0] pattern_cnt;
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            lfsr <= 32'h12345678;  // 非零种子
+            misr <= 32'h0;
+            pattern_cnt <= 0;
+            lbist_done <= 1'b0;
+            signature_valid <= 1'b0;
+        end else if (lbist_en) begin
+            // PRPG: LFSR更新
+            lfsr <= {lfsr[30:0], feedback};
+            prpg_out <= lfsr;
+            
+            // MISR: 特征压缩
+            misr <= {misr[30:0], misr[31]} ^ response_in;
+            
+            // 模式计数
+            pattern_cnt <= pattern_cnt + 1;
+            if (pattern_cnt == pattern_count - 1) begin
+                lbist_done <= 1'b1;
+                signature <= misr;
+                signature_valid <= 1'b1;
+            end
+        end
+    end
+
+endmodule
+            </div>
+
+            <h3>7.5 后硅验证</h3>
+            
+            <h4>7.5.1 芯片带起（Bring-up）</h4>
+            <div class="code-block">
+// JTAG调试接口
+module jtag_debug_interface (
+    // JTAG接口
+    input wire tck,
+    input wire tms,
+    input wire tdi,
+    output reg tdo,
+    input wire trst_n,
+    
+    // 内部调试接口
+    output reg [31:0] debug_addr,
+    output reg [31:0] debug_wdata,
+    output reg debug_wen,
+    output reg debug_ren,
+    input wire [31:0] debug_rdata,
+    input wire debug_ready
+);
+
+    // TAP状态机
+    localparam TEST_LOGIC_RESET = 4'h0;
+    localparam RUN_TEST_IDLE = 4'h1;
+    localparam SELECT_DR_SCAN = 4'h2;
+    localparam CAPTURE_DR = 4'h3;
+    localparam SHIFT_DR = 4'h4;
+    localparam EXIT1_DR = 4'h5;
+    localparam PAUSE_DR = 4'h6;
+    localparam EXIT2_DR = 4'h7;
+    localparam UPDATE_DR = 4'h8;
+    localparam SELECT_IR_SCAN = 4'h9;
+    localparam CAPTURE_IR = 4'hA;
+    localparam SHIFT_IR = 4'hB;
+    localparam EXIT1_IR = 4'hC;
+    localparam PAUSE_IR = 4'hD;
+    localparam EXIT2_IR = 4'hE;
+    localparam UPDATE_IR = 4'hF;
+    
+    reg [3:0] tap_state;
+    reg [4:0] ir_reg;  // 指令寄存器
+    reg [63:0] dr_reg;  // 数据寄存器
+    
+    // 指令定义
+    localparam IDCODE = 5'b00001;
+    localparam ADDR = 5'b00010;
+    localparam DATA = 5'b00011;
+    localparam CONTROL = 5'b00100;
+    
+    // TAP控制器状态机
+    always @(posedge tck or negedge trst_n) begin
+        if (!trst_n) begin
+            tap_state <= TEST_LOGIC_RESET;
+        end else begin
+            case (tap_state)
+                TEST_LOGIC_RESET: tap_state <= tms ? TEST_LOGIC_RESET : RUN_TEST_IDLE;
+                RUN_TEST_IDLE: tap_state <= tms ? SELECT_DR_SCAN : RUN_TEST_IDLE;
+                SELECT_DR_SCAN: tap_state <= tms ? SELECT_IR_SCAN : CAPTURE_DR;
+                CAPTURE_DR: tap_state <= tms ? EXIT1_DR : SHIFT_DR;
+                SHIFT_DR: tap_state <= tms ? EXIT1_DR : SHIFT_DR;
+                EXIT1_DR: tap_state <= tms ? UPDATE_DR : PAUSE_DR;
+                PAUSE_DR: tap_state <= tms ? EXIT2_DR : PAUSE_DR;
+                EXIT2_DR: tap_state <= tms ? UPDATE_DR : SHIFT_DR;
+                UPDATE_DR: tap_state <= tms ? SELECT_DR_SCAN : RUN_TEST_IDLE;
+                SELECT_IR_SCAN: tap_state <= tms ? TEST_LOGIC_RESET : CAPTURE_IR;
+                CAPTURE_IR: tap_state <= tms ? EXIT1_IR : SHIFT_IR;
+                SHIFT_IR: tap_state <= tms ? EXIT1_IR : SHIFT_IR;
+                EXIT1_IR: tap_state <= tms ? UPDATE_IR : PAUSE_IR;
+                PAUSE_IR: tap_state <= tms ? EXIT2_IR : PAUSE_IR;
+                EXIT2_IR: tap_state <= tms ? UPDATE_IR : SHIFT_IR;
+                UPDATE_IR: tap_state <= tms ? SELECT_DR_SCAN : RUN_TEST_IDLE;
+            endcase
+        end
+    end
+    
+    // IR和DR操作
+    always @(posedge tck) begin
+        case (tap_state)
+            SHIFT_IR: begin
+                ir_reg <= {tdi, ir_reg[4:1]};
+                tdo <= ir_reg[0];
+            end
+            
+            CAPTURE_DR: begin
+                case (ir_reg)
+                    IDCODE: dr_reg[31:0] <= 32'h12345678;  // 芯片ID
+                    DATA: dr_reg[31:0] <= debug_rdata;
+                endcase
+            end
+            
+            SHIFT_DR: begin
+                dr_reg <= {tdi, dr_reg[63:1]};
+                tdo <= dr_reg[0];
+            end
+            
+            UPDATE_DR: begin
+                case (ir_reg)
+                    ADDR: debug_addr <= dr_reg[31:0];
+                    DATA: begin
+                        debug_wdata <= dr_reg[31:0];
+                        debug_wen <= dr_reg[32];
+                        debug_ren <= dr_reg[33];
+                    end
+                endcase
+            end
+        endcase
+    end
+
+endmodule
+
+// 片上调试监控器
+module on_chip_debug_monitor (
+    input wire clk,
+    input wire rst_n,
+    
+    // 监控信号
+    input wire [31:0] pc,
+    input wire [31:0] instruction,
+    input wire inst_valid,
+    input wire [31:0] npu_status,
+    
+    // 触发控制
+    input wire [31:0] trigger_pc,
+    input wire trigger_en,
+    
+    // Trace缓冲区接口
+    output reg trace_wen,
+    output reg [63:0] trace_data,
+    output reg [9:0] trace_addr
+);
+
+    // 触发检测
+    wire trigger_hit = trigger_en && (pc == trigger_pc);
+    reg triggered;
+    reg [9:0] trace_cnt;
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            triggered <= 1'b0;
+            trace_cnt <= 0;
+            trace_wen <= 1'b0;
+        end else begin
+            if (trigger_hit) begin
+                triggered <= 1'b1;
+                trace_cnt <= 0;
+            end
+            
+            if (triggered && inst_valid) begin
+                trace_wen <= 1'b1;
+                trace_data <= {pc, instruction};
+                trace_addr <= trace_cnt;
+                trace_cnt <= trace_cnt + 1;
+                
+                if (trace_cnt == 1023) begin  // Trace buffer满
+                    triggered <= 1'b0;
+                end
+            end else begin
+                trace_wen <= 1'b0;
+            end
+        end
+    end
+
+endmodule
+            </div>
+
+            <h4>7.5.2 性能调优与Shmoo测试</h4>
+            <div class="code-block">
+// Shmoo测试控制器
+module shmoo_test_controller (
+    input wire clk,
+    input wire rst_n,
+    
+    // 测试控制
+    input wire shmoo_start,
+    input wire [7:0] vdd_start,      // 起始电压（单位：10mV）
+    input wire [7:0] vdd_end,        // 结束电压
+    input wire [7:0] vdd_step,       // 电压步进
+    input wire [9:0] freq_start,     // 起始频率（单位：MHz）
+    input wire [9:0] freq_end,       // 结束频率
+    input wire [9:0] freq_step,      // 频率步进
+    
+    // 电源和时钟控制
+    output reg [7:0] vdd_ctrl,
+    output reg [9:0] freq_ctrl,
+    output reg pll_reconfig,
+    
+    // 测试执行
+    output reg test_trigger,
+    input wire test_done,
+    input wire test_pass,
+    
+    // 结果存储
+    output reg result_wen,
+    output reg [17:0] result_addr,   // [17:10]=VDD, [9:0]=Freq
+    output reg result_data,          // Pass/Fail
+    
+    // 状态输出
+    output reg shmoo_done
+);
+
+    // 状态机
+    localparam IDLE = 3'b000;
+    localparam SET_VDD = 3'b001;
+    localparam SET_FREQ = 3'b010;
+    localparam RUN_TEST = 3'b011;
+    localparam STORE_RESULT = 3'b100;
+    localparam NEXT_POINT = 3'b101;
+    localparam DONE = 3'b110;
+    
+    reg [2:0] state;
+    reg [7:0] current_vdd;
+    reg [9:0] current_freq;
+    reg [15:0] settle_cnt;
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state <= IDLE;
+            shmoo_done <= 1'b0;
+        end else begin
+            case (state)
+                IDLE: begin
+                    if (shmoo_start) begin
+                        state <= SET_VDD;
+                        current_vdd <= vdd_start;
+                        current_freq <= freq_start;
+                    end
+                end
+                
+                SET_VDD: begin
+                    vdd_ctrl <= current_vdd;
+                    settle_cnt <= 16'hFFFF;  // 电压稳定时间
+                    state <= SET_FREQ;
+                end
+                
+                SET_FREQ: begin
+                    if (settle_cnt == 0) begin
+                        freq_ctrl <= current_freq;
+                        pll_reconfig <= 1'b1;
+                        settle_cnt <= 16'hFFFF;  // PLL锁定时间
+                        state <= RUN_TEST;
+                    end else begin
+                        settle_cnt <= settle_cnt - 1;
+                        pll_reconfig <= 1'b0;
+                    end
+                end
+                
+                RUN_TEST: begin
+                    if (settle_cnt == 0) begin
+                        test_trigger <= 1'b1;
+                        if (test_done) begin
+                            test_trigger <= 1'b0;
+                            state <= STORE_RESULT;
+                        end
+                    end else begin
+                        settle_cnt <= settle_cnt - 1;
+                    end
+                end
+                
+                STORE_RESULT: begin
+                    result_wen <= 1'b1;
+                    result_addr <= {current_vdd, current_freq};
+                    result_data <= test_pass;
+                    state <= NEXT_POINT;
+                end
+                
+                NEXT_POINT: begin
+                    result_wen <= 1'b0;
+                    
+                    if (current_freq < freq_end) begin
+                        current_freq <= current_freq + freq_step;
+                        state <= SET_FREQ;
+                    end else if (current_vdd < vdd_end) begin
+                        current_vdd <= current_vdd + vdd_step;
+                        current_freq <= freq_start;
+                        state <= SET_VDD;
+                    end else begin
+                        state <= DONE;
+                    end
+                end
+                
+                DONE: begin
+                    shmoo_done <= 1'b1;
+                    state <= IDLE;
+                end
+            endcase
+        end
+    end
+
+endmodule
+            </div>
+
+            <h3>7.6 测试向量生成</h3>
+            
+            <h4>7.6.1 基于模型的向量生成</h4>
+            <div class="code-block">
+// Python脚本：从神经网络模型生成测试向量
+"""
+npu_test_vector_generator.py
+从PyTorch/TensorFlow模型生成NPU测试向量
+"""
+
+import numpy as np
+import torch
+import struct
+
+class NPUTestVectorGenerator:
+    def __init__(self, model, quantization_bits=8):
+        self.model = model
+        self.quant_bits = quantization_bits
+        self.test_vectors = []
+        
+    def quantize(self, tensor, scale, zero_point):
+        """量化浮点张量到定点"""
+        q_min = -(2**(self.quant_bits-1))
+        q_max = 2**(self.quant_bits-1) - 1
+        
+        q_tensor = np.round(tensor / scale + zero_point)
+        q_tensor = np.clip(q_tensor, q_min, q_max)
+        return q_tensor.astype(np.int8)
+    
+    def generate_conv_test(self, layer_name, input_shape):
+        """生成卷积层测试向量"""
+        # 创建测试输入
+        test_input = torch.randn(input_shape)
+        
+        # 获取层参数
+        conv_layer = getattr(self.model, layer_name)
+        weight = conv_layer.weight.detach().numpy()
+        bias = conv_layer.bias.detach().numpy() if conv_layer.bias is not None else None
+        
+        # 执行前向传播获取golden输出
+        with torch.no_grad():
+            golden_output = conv_layer(test_input).numpy()
+        
+        # 量化参数计算
+        input_scale = np.max(np.abs(test_input.numpy())) / 127
+        weight_scale = np.max(np.abs(weight)) / 127
+        output_scale = input_scale * weight_scale
+        
+        # 量化
+        q_input = self.quantize(test_input.numpy(), input_scale, 0)
+        q_weight = self.quantize(weight, weight_scale, 0)
+        q_output = self.quantize(golden_output, output_scale, 0)
+        
+        # 生成测试向量
+        test_vector = {
+            'layer': layer_name,
+            'operation': 'conv2d',
+            'input_shape': input_shape,
+            'kernel_size': conv_layer.kernel_size,
+            'stride': conv_layer.stride,
+            'padding': conv_layer.padding,
+            'input_data': q_input.flatten().tolist(),
+            'weight_data': q_weight.flatten().tolist(),
+            'bias_data': bias.tolist() if bias is not None else None,
+            'expected_output': q_output.flatten().tolist(),
+            'scales': {
+                'input': input_scale,
+                'weight': weight_scale,
+                'output': output_scale
+            }
+        }
+        
+        self.test_vectors.append(test_vector)
+        return test_vector
+    
+    def generate_corner_cases(self):
+        """生成边界测试用例"""
+        corner_cases = []
+        
+        # 全零输入
+        zero_input = np.zeros((1, 3, 224, 224), dtype=np.int8)
+        corner_cases.append({
+            'name': 'all_zeros',
+            'input': zero_input,
+            'expected_behavior': 'zero_output'
+        })
+        
+        # 最大值输入
+        max_input = np.full((1, 3, 224, 224), 127, dtype=np.int8)
+        corner_cases.append({
+            'name': 'max_values',
+            'input': max_input,
+            'expected_behavior': 'saturation_check'
+        })
+        
+        # 稀疏输入（90%零值）
+        sparse_input = np.random.choice([0, 1], size=(1, 3, 224, 224), p=[0.9, 0.1])
+        sparse_input = sparse_input.astype(np.int8) * 127
+        corner_cases.append({
+            'name': 'sparse_input',
+            'input': sparse_input,
+            'expected_behavior': 'sparse_optimization'
+        })
+        
+        return corner_cases
+    
+    def export_to_npu_format(self, filename):
+        """导出为NPU可读的二进制格式"""
+        with open(filename, 'wb') as f:
+            # 文件头
+            f.write(struct.pack('I', 0x4E505554))  # 'NPUT' magic
+            f.write(struct.pack('I', len(self.test_vectors)))
+            
+            for vector in self.test_vectors:
+                # 向量头
+                layer_name = vector['layer'].encode('utf-8')
+                f.write(struct.pack('I', len(layer_name)))
+                f.write(layer_name)
+                
+                # 操作类型
+                op_type = vector['operation'].encode('utf-8')
+                f.write(struct.pack('I', len(op_type)))
+                f.write(op_type)
+                
+                # 数据
+                input_data = vector['input_data']
+                f.write(struct.pack('I', len(input_data)))
+                for val in input_data:
+                    f.write(struct.pack('b', val))
+                
+                # 权重
+                weight_data = vector['weight_data']
+                f.write(struct.pack('I', len(weight_data)))
+                for val in weight_data:
+                    f.write(struct.pack('b', val))
+                
+                # 期望输出
+                output_data = vector['expected_output']
+                f.write(struct.pack('I', len(output_data)))
+                for val in output_data:
+                    f.write(struct.pack('b', val))
+
+# 使用示例
+if __name__ == "__main__":
+    # 加载模型
+    model = torch.load('mobilenet_v2.pth')
+    model.eval()
+    
+    # 创建测试向量生成器
+    generator = NPUTestVectorGenerator(model)
+    
+    # 生成各层测试向量
+    generator.generate_conv_test('features.0.0', (1, 3, 224, 224))
+    generator.generate_conv_test('features.1.conv.0', (1, 32, 112, 112))
+    
+    # 生成边界测试
+    corner_cases = generator.generate_corner_cases()
+    
+    # 导出测试向量
+    generator.export_to_npu_format('npu_test_vectors.bin')
+            </div>
+
+            <h4>7.6.2 测试向量验证框架</h4>
+            <div class="code-block">
+// SystemVerilog测试向量加载和验证框架
+class test_vector_loader extends uvm_component;
+    `uvm_component_utils(test_vector_loader)
+    
+    // 测试向量数据结构
+    typedef struct {
+        string layer_name;
+        string operation;
+        int input_size;
+        int weight_size;
+        int output_size;
+        byte input_data[];
+        byte weight_data[];
+        byte expected_output[];
+        real input_scale;
+        real weight_scale;
+        real output_scale;
+    } test_vector_t;
+    
+    test_vector_t test_vectors[$];
+    
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    
+    // 从文件加载测试向量
+    function void load_vectors(string filename);
+        int fd;
+        bit [31:0] magic, num_vectors;
+        
+        fd = $fopen(filename, "rb");
+        if (fd == 0) begin
+            `uvm_fatal("LOADER", $sformatf("Cannot open file %s", filename))
+        end
+        
+        // 读取文件头
+        $fread(magic, fd);
+        if (magic != 32'h4E505554) begin  // 'NPUT'
+            `uvm_fatal("LOADER", "Invalid file format")
+        end
+        
+        $fread(num_vectors, fd);
+        `uvm_info("LOADER", $sformatf("Loading %0d test vectors", num_vectors), UVM_LOW)
+        
+        // 读取每个测试向量
+        for (int i = 0; i < num_vectors; i++) begin
+            test_vector_t vec;
+            int name_len, op_len;
+            
+            // 读取层名称
+            $fread(name_len, fd);
+            vec.layer_name = "";
+            for (int j = 0; j < name_len; j++) begin
+                byte ch;
+                $fread(ch, fd);
+                vec.layer_name = {vec.layer_name, ch};
+            end
+            
+            // 读取操作类型
+            $fread(op_len, fd);
+            vec.operation = "";
+            for (int j = 0; j < op_len; j++) begin
+                byte ch;
+                $fread(ch, fd);
+                vec.operation = {vec.operation, ch};
+            end
+            
+            // 读取数据
+            $fread(vec.input_size, fd);
+            vec.input_data = new[vec.input_size];
+            for (int j = 0; j < vec.input_size; j++) begin
+                $fread(vec.input_data[j], fd);
+            end
+            
+            $fread(vec.weight_size, fd);
+            vec.weight_data = new[vec.weight_size];
+            for (int j = 0; j < vec.weight_size; j++) begin
+                $fread(vec.weight_data[j], fd);
+            end
+            
+            $fread(vec.output_size, fd);
+            vec.expected_output = new[vec.output_size];
+            for (int j = 0; j < vec.output_size; j++) begin
+                $fread(vec.expected_output[j], fd);
+            end
+            
+            test_vectors.push_back(vec);
+        end
+        
+        $fclose(fd);
+    endfunction
+    
+    // 获取下一个测试向量
+    function test_vector_t get_next_vector();
+        if (test_vectors.size() > 0) begin
+            return test_vectors.pop_front();
+        end else begin
+            `uvm_warning("LOADER", "No more test vectors")
+            return null;
+        end
+    endfunction
+    
+endclass
+
+// 测试执行序列
+class npu_test_vector_sequence extends uvm_sequence;
+    `uvm_object_utils(npu_test_vector_sequence)
+    
+    test_vector_loader loader;
+    
+    function new(string name = "npu_test_vector_sequence");
+        super.new(name);
+    endfunction
+    
+    task body();
+        test_vector_loader::test_vector_t vec;
+        npu_layer_config_seq config_seq;
+        npu_data_load_seq data_seq;
+        npu_compute_seq compute_seq;
+        npu_result_check_seq check_seq;
+        
+        // 加载测试向量
+        loader = test_vector_loader::type_id::create("loader");
+        loader.load_vectors("npu_test_vectors.bin");
+        
+        // 执行每个测试向量
+        while (1) begin
+            vec = loader.get_next_vector();
+            if (vec == null) break;
+            
+            `uvm_info("TEST", $sformatf("Testing layer: %s", vec.layer_name), UVM_LOW)
+            
+            // 配置NPU层参数
+            config_seq = npu_layer_config_seq::type_id::create("config_seq");
+            config_seq.layer_name = vec.layer_name;
+            config_seq.operation = vec.operation;
+            config_seq.start(m_sequencer);
+            
+            // 加载输入数据和权重
+            data_seq = npu_data_load_seq::type_id::create("data_seq");
+            data_seq.input_data = vec.input_data;
+            data_seq.weight_data = vec.weight_data;
+            data_seq.start(m_sequencer);
+            
+            // 执行计算
+            compute_seq = npu_compute_seq::type_id::create("compute_seq");
+            compute_seq.start(m_sequencer);
+            
+            // 检查结果
+            check_seq = npu_result_check_seq::type_id::create("check_seq");
+            check_seq.expected_output = vec.expected_output;
+            check_seq.tolerance = 1;  // INT8量化容差
+            check_seq.start(m_sequencer);
+        end
+    endtask
+    
+endclass
+            </div>
+
+            <div class="exercise">
+                <h4>练习 7.4-7.6</h4>
+                <div class="question">
+                    <p><strong>题目：</strong>设计一个完整的MBIST控制器用于测试NPU中的SRAM，要求：
+                    1) 支持March C-和Checkerboard算法
+                    2) 支持多个SRAM并行测试
+                    3) 实现故障诊断和修复
+                    4) 提供测试结果统计</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <div class="code-block">
+module npu_mbist_top #(
+    parameter NUM_SRAMS = 4,
+    parameter ADDR_WIDTH = 10,
+    parameter DATA_WIDTH = 32,
+    parameter REPAIR_WIDTH = 4  // 修复行数
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // MBIST控制
+    input wire mbist_en,
+    input wire [1:0] mbist_mode,  // 00: March C-, 01: Checkerboard, 10: Walking 1/0
+    input wire repair_en,
+    
+    // SRAM接口（简化）
+    output wire [NUM_SRAMS-1:0] sram_en,
+    output wire [NUM_SRAMS-1:0] sram_we,
+    output wire [ADDR_WIDTH-1:0] sram_addr [NUM_SRAMS-1:0],
+    output wire [DATA_WIDTH-1:0] sram_wdata [NUM_SRAMS-1:0],
+    input wire [DATA_WIDTH-1:0] sram_rdata [NUM_SRAMS-1:0],
+    
+    // 测试结果
+    output reg mbist_done,
+    output reg [NUM_SRAMS-1:0] mbist_fail,
+    output reg [31:0] total_faults,
+    output reg [31:0] repaired_faults,
+    
+    // 诊断接口
+    output reg diag_valid,
+    output reg [7:0] diag_sram_id,
+    output reg [ADDR_WIDTH-1:0] diag_addr,
+    output reg [DATA_WIDTH-1:0] diag_expected,
+    output reg [DATA_WIDTH-1:0] diag_actual
+);
+
+    // MBIST FSM状态
+    localparam IDLE = 4'h0;
+    localparam INIT = 4'h1;
+    localparam MARCH_W0 = 4'h2;
+    localparam MARCH_R0W1_UP = 4'h3;
+    localparam MARCH_R1W0_UP = 4'h4;
+    localparam MARCH_R0W1_DN = 4'h5;
+    localparam MARCH_R1W0_DN = 4'h6;
+    localparam MARCH_R0 = 4'h7;
+    localparam CHECKER_W0 = 4'h8;
+    localparam CHECKER_W1 = 4'h9;
+    localparam CHECKER_R = 4'hA;
+    localparam DIAGNOSE = 4'hB;
+    localparam REPAIR = 4'hC;
+    localparam DONE = 4'hD;
+    
+    reg [3:0] state, next_state;
+    reg [ADDR_WIDTH-1:0] addr_cnt;
+    reg addr_dir;  // 0: up, 1: down
+    reg [1:0] phase;
+    
+    // 每个SRAM的独立控制
+    reg [NUM_SRAMS-1:0] sram_fail_flag;
+    reg [ADDR_WIDTH-1:0] fail_addr [NUM_SRAMS-1:0];
+    reg [DATA_WIDTH-1:0] fail_data [NUM_SRAMS-1:0];
+    
+    // 修复信息
+    reg [ADDR_WIDTH-1:0] repair_rows [NUM_SRAMS-1:0][REPAIR_WIDTH-1:0];
+    reg [REPAIR_WIDTH-1:0] repair_used [NUM_SRAMS-1:0];
+    
+    // 生成期望数据
+    function [DATA_WIDTH-1:0] generate_pattern;
+        input [1:0] mode;
+        input [ADDR_WIDTH-1:0] addr;
+        input [1:0] phase;
+        
+        case (mode)
+            2'b00: begin  // March C-
+                case (phase)
+                    2'b00: generate_pattern = {DATA_WIDTH{1'b0}};
+                    2'b01: generate_pattern = {DATA_WIDTH{1'b1}};
+                    default: generate_pattern = {DATA_WIDTH{1'b0}};
+                endcase
+            end
+            
+            2'b01: begin  // Checkerboard
+                generate_pattern = {DATA_WIDTH/2{addr[0] ? 2'b10 : 2'b01}};
+            end
+            
+            2'b10: begin  // Walking 1/0
+                generate_pattern = phase[0] ? (1 << (addr % DATA_WIDTH)) : 
+                                             ~(1 << (addr % DATA_WIDTH));
+            end
+            
+            default: generate_pattern = {DATA_WIDTH{1'b0}};
+        endcase
+    endfunction
+    
+    // 主状态机
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state <= IDLE;
+            mbist_done <= 1'b0;
+            total_faults <= 0;
+        end else begin
+            state <= next_state;
+        end
+    end
+    
+    // 下一状态逻辑
+    always @(*) begin
+        next_state = state;
+        
+        case (state)
+            IDLE: begin
+                if (mbist_en) begin
+                    case (mbist_mode)
+                        2'b00: next_state = MARCH_W0;
+                        2'b01: next_state = CHECKER_W0;
+                        2'b10: next_state = INIT;
+                    endcase
+                end
+            end
+            
+            MARCH_W0: begin
+                if (addr_cnt == {ADDR_WIDTH{1'b1}})
+                    next_state = MARCH_R0W1_UP;
+            end
+            
+            MARCH_R0W1_UP: begin
+                if (addr_cnt == {ADDR_WIDTH{1'b1}} && phase == 2'b01)
+                    next_state = MARCH_R1W0_UP;
+            end
+            
+            MARCH_R1W0_UP: begin
+                if (addr_cnt == {ADDR_WIDTH{1'b1}} && phase == 2'b01)
+                    next_state = MARCH_R0W1_DN;
+            end
+            
+            MARCH_R0W1_DN: begin
+                if (addr_cnt == 0 && phase == 2'b01)
+                    next_state = MARCH_R1W0_DN;
+            end
+            
+            MARCH_R1W0_DN: begin
+                if (addr_cnt == 0 && phase == 2'b01)
+                    next_state = MARCH_R0;
+            end
+            
+            MARCH_R0: begin
+                if (addr_cnt == {ADDR_WIDTH{1'b1}})
+                    next_state = repair_en ? DIAGNOSE : DONE;
+            end
+            
+            DIAGNOSE: begin
+                if (total_faults == 0)
+                    next_state = DONE;
+                else
+                    next_state = REPAIR;
+            end
+            
+            REPAIR: begin
+                next_state = DONE;
+            end
+            
+            DONE: begin
+                next_state = IDLE;
+            end
+        endcase
+    end
+    
+    // 地址生成和SRAM控制
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            addr_cnt <= 0;
+            phase <= 0;
+            for (int i = 0; i < NUM_SRAMS; i++) begin
+                sram_fail_flag[i] <= 1'b0;
+                repair_used[i] <= 0;
+            end
+        end else begin
+            case (state)
+                MARCH_W0: begin
+                    // 所有SRAM并行写0
+                    for (int i = 0; i < NUM_SRAMS; i++) begin
+                        sram_en[i] <= 1'b1;
+                        sram_we[i] <= 1'b1;
+                        sram_addr[i] <= addr_cnt;
+                        sram_wdata[i] <= {DATA_WIDTH{1'b0}};
+                    end
+                    addr_cnt <= addr_cnt + 1;
+                end
+                
+                MARCH_R0W1_UP: begin
+                    for (int i = 0; i < NUM_SRAMS; i++) begin
+                        sram_en[i] <= 1'b1;
+                        if (phase == 0) begin  // 读阶段
+                            sram_we[i] <= 1'b0;
+                            // 检查读出数据
+                            if (sram_rdata[i] !== {DATA_WIDTH{1'b0}}) begin
+                                sram_fail_flag[i] <= 1'b1;
+                                fail_addr[i] <= addr_cnt;
+                                fail_data[i] <= sram_rdata[i];
+                                total_faults <= total_faults + 1;
+                            end
+                        end else begin  // 写阶段
+                            sram_we[i] <= 1'b1;
+                            sram_wdata[i] <= {DATA_WIDTH{1'b1}};
+                        end
+                        sram_addr[i] <= addr_cnt;
+                    end
+                    
+                    if (phase == 1) begin
+                        addr_cnt <= addr_cnt + 1;
+                        phase <= 0;
+                    end else begin
+                        phase <= 1;
+                    end
+                end
+                
+                // 类似处理其他状态...
+                
+                DIAGNOSE: begin
+                    // 输出诊断信息
+                    for (int i = 0; i < NUM_SRAMS; i++) begin
+                        if (sram_fail_flag[i]) begin
+                            diag_valid <= 1'b1;
+                            diag_sram_id <= i;
+                            diag_addr <= fail_addr[i];
+                            diag_expected <= {DATA_WIDTH{1'b0}};  // 根据状态确定
+                            diag_actual <= fail_data[i];
+                            break;
+                        end
+                    end
+                end
+                
+                REPAIR: begin
+                    // 简单的行修复策略
+                    for (int i = 0; i < NUM_SRAMS; i++) begin
+                        if (sram_fail_flag[i] && repair_used[i] < REPAIR_WIDTH) begin
+                            repair_rows[i][repair_used[i]] <= fail_addr[i];
+                            repair_used[i] <= repair_used[i] + 1;
+                            repaired_faults <= repaired_faults + 1;
+                            sram_fail_flag[i] <= 1'b0;
+                        end
+                    end
+                end
+                
+                DONE: begin
+                    mbist_done <= 1'b1;
+                    mbist_fail <= sram_fail_flag;
+                    diag_valid <= 1'b0;
+                end
+            endcase
+        end
+    end
+    
+    // 地址重映射（修复后）
+    function [ADDR_WIDTH-1:0] remap_address;
+        input [7:0] sram_id;
+        input [ADDR_WIDTH-1:0] addr;
+        
+        remap_address = addr;
+        
+        // 检查是否需要重映射
+        for (int i = 0; i < REPAIR_WIDTH; i++) begin
+            if (repair_used[sram_id] > i && 
+                repair_rows[sram_id][i] == addr) begin
+                // 重映射到备用行
+                remap_address = {ADDR_WIDTH{1'b1}} - i;
+                break;
+            end
+        end
+    endfunction
+
+endmodule
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
         
     </div>
 
