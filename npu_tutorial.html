@@ -323,6 +323,18 @@
         }
     </style>
     <script>
+        // Helper function to escape HTML
+        function escapeHtml(text) {
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return text.replace(/[&<>"']/g, m => map[m]);
+        }
+        
         // Simple syntax highlighting
         function highlightSyntax() {
             const codeBlocks = document.querySelectorAll('.code-block');
@@ -360,54 +372,125 @@
         }
         
         function highlightVerilog(code) {
-            // Verilog keywords
+            // First, protect comments and strings from further processing
+            const placeholders = [];
+            let placeholderIndex = 0;
+            
+            // Replace comments with placeholders
+            code = code.replace(/(\/\/.*$|\/\*[\s\S]*?\*\/)/gm, (match) => {
+                const placeholder = `__COMMENT_${placeholderIndex}__`;
+                placeholders[placeholderIndex] = `<span class="comment">${escapeHtml(match)}</span>`;
+                placeholderIndex++;
+                return placeholder;
+            });
+            
+            // Replace strings with placeholders
+            code = code.replace(/("[^"]*")/g, (match) => {
+                const placeholder = `__STRING_${placeholderIndex}__`;
+                placeholders[placeholderIndex] = `<span class="string">${escapeHtml(match)}</span>`;
+                placeholderIndex++;
+                return placeholder;
+            });
+            
+            // Now apply other highlights
             const keywords = /\b(module|endmodule|input|output|wire|reg|always|assign|begin|end|if|else|for|while|parameter|localparam|posedge|negedge|case|endcase|default|function|endfunction|task|endtask|initial|forever|repeat)\b/g;
             const types = /\b(bit|logic|byte|shortint|int|longint|integer|time|real|shortreal|chandle|string|event|signed|unsigned)\b/g;
             const numbers = /\b(\d+'[hbdo][\da-fA-F_]+|\d+)\b/g;
-            const comments = /(\/\/.*$|\/\*[\s\S]*?\*\/)/gm;
-            const strings = /("[^"]*")/g;
             
-            code = code.replace(comments, '<span class="comment">$1</span>');
-            code = code.replace(strings, '<span class="string">$1</span>');
             code = code.replace(keywords, '<span class="keyword">$1</span>');
             code = code.replace(types, '<span class="type">$1</span>');
             code = code.replace(numbers, '<span class="number">$1</span>');
+            
+            // Restore placeholders
+            for (let i = 0; i < placeholderIndex; i++) {
+                code = code.replace(new RegExp(`__COMMENT_${i}__`, 'g'), placeholders[i]);
+                code = code.replace(new RegExp(`__STRING_${i}__`, 'g'), placeholders[i]);
+            }
             
             return code;
         }
         
         function highlightPython(code) {
-            // Python keywords
+            const placeholders = [];
+            let placeholderIndex = 0;
+            
+            // Replace comments with placeholders
+            code = code.replace(/(#.*$)/gm, (match) => {
+                const placeholder = `__COMMENT_${placeholderIndex}__`;
+                placeholders[placeholderIndex] = `<span class="comment">${escapeHtml(match)}</span>`;
+                placeholderIndex++;
+                return placeholder;
+            });
+            
+            // Replace strings with placeholders
+            code = code.replace(/("[^"]*"|'[^']*')/g, (match) => {
+                const placeholder = `__STRING_${placeholderIndex}__`;
+                placeholders[placeholderIndex] = `<span class="string">${escapeHtml(match)}</span>`;
+                placeholderIndex++;
+                return placeholder;
+            });
+            
+            // Apply other highlights
             const keywords = /\b(and|as|assert|break|class|continue|def|del|elif|else|except|False|finally|for|from|global|if|import|in|is|lambda|None|nonlocal|not|or|pass|raise|return|True|try|while|with|yield|async|await)\b/g;
             const builtins = /\b(abs|all|any|ascii|bin|bool|breakpoint|bytearray|bytes|callable|chr|classmethod|compile|complex|delattr|dict|dir|divmod|enumerate|eval|exec|filter|float|format|frozenset|getattr|globals|hasattr|hash|help|hex|id|input|int|isinstance|issubclass|iter|len|list|locals|map|max|memoryview|min|next|object|oct|open|ord|pow|print|property|range|repr|reversed|round|set|setattr|slice|sorted|staticmethod|str|sum|super|tuple|type|vars|zip)\b/g;
             const numbers = /\b(\d+\.?\d*)\b/g;
-            const comments = /(#.*$)/gm;
-            const strings = /("[^"]*"|'[^']*')/g;
             
-            code = code.replace(comments, '<span class="comment">$1</span>');
-            code = code.replace(strings, '<span class="string">$1</span>');
             code = code.replace(keywords, '<span class="keyword">$1</span>');
             code = code.replace(builtins, '<span class="function">$1</span>');
             code = code.replace(numbers, '<span class="number">$1</span>');
+            
+            // Restore placeholders
+            for (let i = 0; i < placeholderIndex; i++) {
+                code = code.replace(new RegExp(`__COMMENT_${i}__`, 'g'), placeholders[i]);
+                code = code.replace(new RegExp(`__STRING_${i}__`, 'g'), placeholders[i]);
+            }
             
             return code;
         }
         
         function highlightC(code) {
-            // C/C++ keywords
+            const placeholders = [];
+            let placeholderIndex = 0;
+            
+            // Replace comments with placeholders
+            code = code.replace(/(\/\/.*$|\/\*[\s\S]*?\*\/)/gm, (match) => {
+                const placeholder = `__COMMENT_${placeholderIndex}__`;
+                placeholders[placeholderIndex] = `<span class="comment">${escapeHtml(match)}</span>`;
+                placeholderIndex++;
+                return placeholder;
+            });
+            
+            // Replace strings with placeholders
+            code = code.replace(/("[^"]*")/g, (match) => {
+                const placeholder = `__STRING_${placeholderIndex}__`;
+                placeholders[placeholderIndex] = `<span class="string">${escapeHtml(match)}</span>`;
+                placeholderIndex++;
+                return placeholder;
+            });
+            
+            // Replace preprocessor with placeholders
+            code = code.replace(/(#\s*\w+.*$)/gm, (match) => {
+                const placeholder = `__PREPROC_${placeholderIndex}__`;
+                placeholders[placeholderIndex] = `<span class="keyword">${escapeHtml(match)}</span>`;
+                placeholderIndex++;
+                return placeholder;
+            });
+            
+            // Apply other highlights
             const keywords = /\b(auto|break|case|char|const|continue|default|do|double|else|enum|extern|float|for|goto|if|int|long|register|return|short|signed|sizeof|static|struct|switch|typedef|union|unsigned|void|volatile|while|class|namespace|template|public|private|protected|virtual|override|new|delete|try|catch|throw)\b/g;
             const types = /\b(bool|true|false|NULL|nullptr)\b/g;
             const numbers = /\b(\d+\.?\d*[fFlLuU]?)\b/g;
-            const comments = /(\/\/.*$|\/\*[\s\S]*?\*\/)/gm;
-            const strings = /("[^"]*")/g;
-            const preprocessor = /(#\s*\w+.*$)/gm;
             
-            code = code.replace(comments, '<span class="comment">$1</span>');
-            code = code.replace(strings, '<span class="string">$1</span>');
-            code = code.replace(preprocessor, '<span class="keyword">$1</span>');
             code = code.replace(keywords, '<span class="keyword">$1</span>');
             code = code.replace(types, '<span class="type">$1</span>');
             code = code.replace(numbers, '<span class="number">$1</span>');
+            
+            // Restore placeholders
+            for (let i = 0; i < placeholderIndex; i++) {
+                code = code.replace(new RegExp(`__COMMENT_${i}__`, 'g'), placeholders[i]);
+                code = code.replace(new RegExp(`__STRING_${i}__`, 'g'), placeholders[i]);
+                code = code.replace(new RegExp(`__PREPROC_${i}__`, 'g'), placeholders[i]);
+            }
             
             return code;
         }
