@@ -1733,6 +1733,268 @@ endmodule
                 </table>
             </div>
 
+            <h3>8.11 NPU定制库单元设计</h3>
+            
+            <p>虽然标准单元库提供了大部分基础逻辑门，但NPU的特殊需求往往需要定制化的库单元。这些定制单元可以显著提升性能、降低功耗或减小面积。本节探讨NPU中常见的定制库单元类型及其设计考虑。</p>
+
+            <h4>8.11.1 为什么需要定制库单元</h4>
+            
+            <p>NPU的计算模式与通用处理器有本质区别，这导致标准单元库往往不是最优选择：</p>
+            
+            <div class="info-box">
+                <p><strong>NPU对库单元的特殊需求：</strong></p>
+                <ul>
+                    <li><strong>超高并行度：</strong>数千个MAC单元同时工作，需要优化的乘法器和加法器</li>
+                    <li><strong>特定位宽：</strong>INT8、INT4等非标准位宽运算单元</li>
+                    <li><strong>低功耗要求：</strong>移动端NPU需要极致的能效比</li>
+                    <li><strong>规则布局：</strong>脉动阵列需要高度规则的物理布局</li>
+                    <li><strong>特殊功能：</strong>如饱和运算、舍入模式等AI特定操作</li>
+                </ul>
+            </div>
+
+            <h4>8.11.2 常见的NPU定制库单元</h4>
+            
+            <div class="code-block">
+// 1. 定制MAC单元
+// 标准库：面积大，功耗高
+// 定制库：针对特定位宽优化，面积减少30-40%
+module custom_mac_int8 (
+    input  [7:0]  a,
+    input  [7:0]  b,
+    input  [31:0] c,
+    output [31:0] result
+);
+    // 使用Booth编码优化的乘法器
+    // 定制的Wallace树加法器
+    // 优化的流水线寄存器布局
+endmodule
+
+// 2. 定制SRAM单元
+// 特点：高密度、低功耗、适合NPU访问模式
+定制SRAM特性：
+- 单端口/伪双端口设计
+- 优化的位线摆幅（降低功耗）
+- 定制的灵敏放大器
+- 支持低电压操作（近阈值）
+
+// 3. 专用激活函数单元
+// ReLU、Sigmoid、Tanh的硬件实现
+module custom_activation_unit (
+    input  [15:0] x,
+    input  [2:0]  func_sel,  // 选择激活函数
+    output [15:0] y
+);
+    // 查找表（LUT）实现
+    // 分段线性逼近
+    // CORDIC算法（用于复杂函数）
+endmodule
+
+// 4. 定制数据格式转换器
+// INT8 <-> FP16, INT4 <-> INT8等
+module custom_format_converter (
+    input  [31:0] data_in,
+    input  [3:0]  src_format,
+    input  [3:0]  dst_format,
+    output [31:0] data_out
+);
+    // 优化的移位器
+    // 饱和处理逻辑
+    // 舍入模式选择
+endmodule
+            </div>
+
+            <h4>8.11.3 定制MAC单元深度设计</h4>
+            
+            <p>MAC单元是NPU的核心，其优化对整体性能影响巨大。以INT8 MAC为例，展示定制设计的关键技术：</p>
+            
+            <div class="code-block">
+定制INT8 MAC单元设计要点：
+
+1. Booth编码乘法器
+   - 将8×8乘法转换为4个部分积
+   - 减少部分积数量，降低加法器复杂度
+   - 面积减少约25%
+
+2. Wallace树加法器
+   - 并行压缩部分积
+   - 相比串行加法，延迟降低40%
+   - 适合高频设计（>2GHz）
+
+3. 饱和处理优化
+   - 硬件检测溢出
+   - 自动饱和到最大/最小值
+   - 避免软件检查开销
+
+4. 流水线优化
+   - 2级流水线：乘法+加法
+   - 平衡各级延迟
+   - 插入优化的锁存器
+
+5. 物理设计考虑
+   - 规则的位切片布局
+   - 最小化布线长度
+   - 共享电源轨设计
+            </div>
+
+            <h4>8.11.4 定制SRAM设计</h4>
+            
+            <p>NPU需要大量片上存储，定制SRAM可以显著提升存储密度和能效：</p>
+            
+            <div class="info-box">
+                <p><strong>NPU定制SRAM特性对比：</strong></p>
+                <table>
+                    <tr>
+                        <th>特性</th>
+                        <th>标准SRAM</th>
+                        <th>NPU定制SRAM</th>
+                        <th>优势</th>
+                    </tr>
+                    <tr>
+                        <td>位单元面积</td>
+                        <td>0.16 μm²</td>
+                        <td>0.12 μm²</td>
+                        <td>密度提升25%</td>
+                    </tr>
+                    <tr>
+                        <td>工作电压</td>
+                        <td>0.8V</td>
+                        <td>0.6V</td>
+                        <td>功耗降低50%</td>
+                    </tr>
+                    <tr>
+                        <td>访问模式</td>
+                        <td>随机访问</td>
+                        <td>流式访问优化</td>
+                        <td>带宽提升2x</td>
+                    </tr>
+                    <tr>
+                        <td>错误保护</td>
+                        <td>ECC</td>
+                        <td>轻量级奇偶校验</td>
+                        <td>面积开销减少</td>
+                    </tr>
+                </table>
+            </div>
+
+            <h4>8.11.5 激活函数硬件加速单元</h4>
+            
+            <p>激活函数是神经网络的关键组件，硬件实现可以大幅提升性能：</p>
+            
+            <div class="code-block">
+// 分段线性逼近实现Sigmoid
+// 将输入范围分成8段，每段用线性函数逼近
+module sigmoid_piecewise_linear (
+    input  signed [15:0] x,      // Q8.8定点数
+    output signed [15:0] y       // Q0.16定点数
+);
+    
+    // 分段点和斜率（预计算）
+    localparam signed [15:0] BREAK_POINTS[7:0] = {
+        -16'h0600,  // -6.0
+        -16'h0400,  // -4.0
+        -16'h0200,  // -2.0
+         16'h0000,  //  0.0
+         16'h0200,  //  2.0
+         16'h0400,  //  4.0
+         16'h0600   //  6.0
+    };
+    
+    // 查找表实现的优势：
+    // 1. 单周期完成
+    // 2. 精度可配置
+    // 3. 面积可预测
+    
+    // CORDIC实现的优势：
+    // 1. 高精度
+    // 2. 适合多种函数
+    // 3. 资源共享
+endmodule
+            </div>
+
+            <h4>8.11.6 定制库单元的验证</h4>
+            
+            <p>定制库单元需要严格的验证流程，确保功能正确性和时序特性：</p>
+            
+            <div class="warning-box">
+                <p><strong>定制库验证要点：</strong></p>
+                <ol>
+                    <li><strong>功能验证：</strong>覆盖所有输入组合和边界条件</li>
+                    <li><strong>时序特征化：</strong>在不同PVT条件下提取延迟/功耗</li>
+                    <li><strong>物理验证：</strong>DRC、LVS、天线检查</li>
+                    <li><strong>可靠性分析：</strong>电迁移、热载流子、NBTI等</li>
+                    <li><strong>良率分析：</strong>考虑工艺偏差的影响</li>
+                </ol>
+            </div>
+
+            <h4>8.11.7 定制库的设计流程</h4>
+            
+            <div class="code-block">
+NPU定制库单元设计流程：
+
+1. 需求分析
+   ├── 性能目标（频率、延迟）
+   ├── 功耗预算
+   ├── 面积约束
+   └── 工艺节点选择
+
+2. 架构设计
+   ├── 算法优化（Booth、Wallace等）
+   ├── 微架构定义
+   ├── 流水线划分
+   └── 时序预算
+
+3. 电路设计
+   ├── 晶体管级设计
+   ├── SPICE仿真
+   ├── 功耗优化
+   └── 噪声分析
+
+4. 版图设计
+   ├── 全定制版图
+   ├── 匹配和对称性
+   ├── 寄生参数优化
+   └── 密度优化
+
+5. 特征化
+   ├── Liberty文件生成
+   ├── LEF/DEF生成
+   ├── 时序模型
+   └── 功耗模型
+
+6. 集成验证
+   ├── 与标准单元混合使用
+   ├── 时序签核
+   ├── 功耗分析
+   └── 可靠性验证
+            </div>
+
+            <h4>8.11.8 案例分析：Google TPU的定制单元</h4>
+            
+            <div class="info-box">
+                <p><strong>TPU v1定制库单元实例：</strong></p>
+                <ul>
+                    <li><strong>定制INT8 MAC阵列：</strong>
+                        <ul>
+                            <li>256×256 MAC单元阵列</li>
+                            <li>相比标准库实现，功耗降低35%</li>
+                            <li>面积效率提升40%</li>
+                        </ul>
+                    </li>
+                    <li><strong>定制激活单元：</strong>
+                        <ul>
+                            <li>硬件ReLU、ReLU6实现</li>
+                            <li>单周期完成，零额外延迟</li>
+                        </ul>
+                    </li>
+                    <li><strong>定制数据通路：</strong>
+                        <ul>
+                            <li>优化的移位器和多路选择器</li>
+                            <li>减少30%的布线资源</li>
+                        </ul>
+                    </li>
+                </ul>
+            </div>
+
             <div class="exercise">
                 <h4>练习题集 8</h4>
                 
