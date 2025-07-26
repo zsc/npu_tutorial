@@ -3989,6 +3989,20 @@ class ShiftRegister[T <: Data](gen: T, depth: Int) extends Module {
                     </div>
                 </div>
             </div>
+            
+            <div class="section">
+                <h4>本章小结</h4>
+                <ul>
+                    <li><strong>RTL设计是NPU实现的关键环节，</strong>将抽象架构转化为可综合的硬件描述，直接决定芯片的最终性能</li>
+                    <li><strong>规范的设计流程确保项目成功，</strong>从需求分析到RTL编码、验证、综合，每个阶段都有明确的输入输出和检查点</li>
+                    <li><strong>良好的编码规范提升设计质量，</strong>包括命名规则、同步设计、组合逻辑优化等，减少后期调试和优化的工作量</li>
+                    <li><strong>时钟域设计影响系统稳定性，</strong>通过合理的时钟规划、同步器设计、亚稳态处理确保跨时钟域数据传输的可靠性</li>
+                    <li><strong>复位策略需要全局考虑，</strong>同步复位简化时序分析，异步复位响应快速，混合复位结合两者优点</li>
+                    <li><strong>低功耗设计贯穿RTL全流程，</strong>时钟门控、电源门控、多阈值设计等技术可将功耗降低50%以上</li>
+                    <li><strong>面积优化需要算法级创新，</strong>资源共享、运算器复用、存储压缩等技术在保持性能的同时减小芯片面积</li>
+                    <li><strong>时序收敛是RTL设计的终极挑战，</strong>通过流水线优化、逻辑重构、物理感知设计等技术满足目标频率要求</li>
+                </ul>
+            </div>
         </section>
         </div>
         

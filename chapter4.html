@@ -3893,6 +3893,10 @@ endmodule
                     2) 关键层（注意力）使用FP16，其他层使用INT8
                     3) 实现动态精度切换
                     4) 优化不同精度间的数据转换开销</p>
+                    <details class="hint">
+                        <summary>💡 提示</summary>
+                        <p>思考方向：考虑不同精度计算单元的复用策略。FP16和INT8计算可以共享某些硬件资源吗？精度转换应该在哪里进行最高效？如何设计数据通路以支持动态切换？注意力层为什么需要更高精度？考虑softmax计算的数值稳定性。</p>
+                    </details>
                     <button class="toggle-answer">显示答案</button>
                     <div class="answer">
                         <div class="code-block">
@@ -4102,6 +4106,19 @@ endmodule
                         </ul>
                     </div>
                 </div>
+            </div>
+            
+            <div class="section">
+                <h4>本章小结</h4>
+                <ul>
+                    <li><strong>MAC单元是NPU的基本计算单元，</strong>通过大规模并行MAC阵列实现高效的矩阵运算，是AI加速的核心</li>
+                    <li><strong>脉动阵列通过规则的数据流动实现高效计算，</strong>每个PE只与相邻PE通信，减少了全局互连的复杂度和功耗</li>
+                    <li><strong>三种数据流模式各有优劣：</strong>Weight Stationary适合大批量推理，Output Stationary简化累加逻辑，Row Stationary平衡了各种权衡</li>
+                    <li><strong>向量处理单元负责非线性运算，</strong>通过SIMD架构、查找表、分段线性逼近等技术高效实现激活函数</li>
+                    <li><strong>特殊功能单元提升系统灵活性，</strong>包括量化/反量化、归一化、池化等操作，避免了数据在CPU和NPU间的频繁搬运</li>
+                    <li><strong>计算精度与效率需要权衡，</strong>INT8量化可以在保持精度的同时将计算效率提升4倍，是边缘部署的关键技术</li>
+                    <li><strong>未来的计算核心将更加灵活和智能，</strong>支持动态精度、稀疏计算、混合精度等高级特性，适应不断演进的AI模型需求</li>
+                </ul>
             </div>
         </div>
 

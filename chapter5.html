@@ -4895,6 +4895,20 @@ endmodule
                     </ol>
                 </div>
             </div>
+            
+            <div class="section">
+                <h4>本章小结</h4>
+                <ul>
+                    <li><strong>存储系统是NPU性能的决定性因素，</strong>数据搬运的能耗是计算的10-100倍，优化存储访问是提升能效的关键</li>
+                    <li><strong>片上SRAM设计需要精细权衡，</strong>通过Banking、多端口、定制单元等技术在容量、带宽、功耗间找到最优解</li>
+                    <li><strong>Memory Banking是实现高带宽的核心技术，</strong>通过交织访问、冲突避免、动态仲裁等机制支持多个计算单元并行访问</li>
+                    <li><strong>数据预取隐藏访存延迟，</strong>硬件预取器通过模式识别自动预测访问地址，软件预取通过编译器插入预取指令</li>
+                    <li><strong>缓存一致性在NPU中可以简化，</strong>通过软件管理的Scratchpad、单向数据流等设计避免复杂的硬件一致性协议</li>
+                    <li><strong>DMA设计是高效数据搬运的关键，</strong>多通道、描述符链、2D/3D传输模式支持复杂的数据布局转换</li>
+                    <li><strong>内存压缩技术大幅提升有效带宽，</strong>权重压缩、激活值压缩、稀疏压缩等技术可将带宽提升2-10倍</li>
+                    <li><strong>未来的存储系统将更加智能，</strong>近数据计算、存算一体等新技术有望从根本上解决存储墙问题</li>
+                </ul>
+            </div>
         </section>
 
         <!-- Chapter 6: RTL设计实现 -->

@@ -3511,6 +3511,21 @@ class LayoutAwareConvolution {
                     </div>
                 </div>
             </div>
+            
+            <div class="section">
+                <h4>本章小结</h4>
+                <ul>
+                    <li><strong>软件栈是NPU性能发挥的关键，</strong>优秀的编译器可以在相同硬件上实现2-3倍的性能提升</li>
+                    <li><strong>分层架构提供灵活性和可维护性，</strong>从高层框架接口到底层指令生成，每层都有明确的职责和接口</li>
+                    <li><strong>图优化是编译器的核心技术，</strong>算子融合、常量折叠、死代码消除等优化可减少50%以上的计算量</li>
+                    <li><strong>指令调度决定硬件利用率，</strong>通过依赖分析、资源分配、流水线优化实现计算和访存的重叠</li>
+                    <li><strong>内存管理是性能瓶颈的关键，</strong>静态分配、内存池、数据布局优化可将带宽利用率提升数倍</li>
+                    <li><strong>算子库是性能优化的基础，</strong>手工优化的GEMM、卷积等核心算子比自动生成代码快5-10倍</li>
+                    <li><strong>运行时系统提供执行环境，</strong>任务调度、内存管理、同步机制确保NPU资源的高效利用</li>
+                    <li><strong>性能分析工具指导优化方向，</strong>通过profiling识别瓶颈，通过可视化理解执行流程</li>
+                    <li><strong>未来的软件栈将更加智能，</strong>自动调优、机器学习驱动的优化、自适应调度等技术不断涌现</li>
+                </ul>
+            </div>
         </section>
         
         <!-- Chapter 11: Performance Optimization Techniques -->

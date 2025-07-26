@@ -2565,6 +2565,19 @@ endmodule
                     </div>
                 </div>
             </div>
+            
+            <div class="section">
+                <h4>本章小结</h4>
+                <ul>
+                    <li><strong>NPU系统架构是一个精心设计的数据处理工厂，</strong>通过计算集群、存储系统、DMA引擎和互连网络的协同工作实现高效的AI计算</li>
+                    <li><strong>层次化存储是NPU性能的关键，</strong>通过L0寄存器、L1 SRAM、L2缓存和外部DRAM的合理设计，最大化数据复用并最小化数据搬运开销</li>
+                    <li><strong>数据流管理决定了NPU的效率，</strong>Double Buffering、数据预取、同步机制等技术确保计算单元持续满负荷运行</li>
+                    <li><strong>DMA引擎是数据搬运的主力军，</strong>通过多通道设计、描述符链表、地址生成单元等技术实现高带宽低延迟的数据传输</li>
+                    <li><strong>调度器是NPU的大脑，</strong>负责任务分解、资源分配、依赖管理，确保硬件资源得到充分利用</li>
+                    <li><strong>片上互连（NoC）提供灵活的通信架构，</strong>Mesh、Torus等拓扑结构支持大规模并行计算的扩展</li>
+                    <li><strong>系统集成需要软硬件协同设计，</strong>ISA定义、编译器优化、运行时管理共同决定了NPU的实际性能表现</li>
+                </ul>
+            </div>
         </div>
         </div>
         
