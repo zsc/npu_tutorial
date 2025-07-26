@@ -239,6 +239,34 @@
         tr:hover {
             background: #f5f5f5;
         }
+        
+        /* Sortable table styles */
+        .sortable th {
+            cursor: pointer;
+            user-select: none;
+            position: relative;
+            padding-right: 25px;
+        }
+        
+        .sortable th:hover {
+            background: #2c3e50;
+        }
+        
+        .sortable th.sorted {
+            background: #2c3e50;
+        }
+        
+        .sortable th.sorted-asc::after {
+            content: ' ↑';
+            position: absolute;
+            right: 8px;
+        }
+        
+        .sortable th.sorted-desc::after {
+            content: ' ↓';
+            position: absolute;
+            right: 8px;
+        }
 
         .info-box {
             background: #e3f2fd;
@@ -492,6 +520,68 @@
                     this.textContent = answer.classList.contains('show') ? '隐藏答案' : '显示答案';
                 });
             });
+        });
+        
+        // Table sorting function
+        function sortTable(n, tableId) {
+            var table, rows, switching, i, x, y, shouldSwitch, dir, switchcount = 0;
+            table = document.getElementById(tableId);
+            switching = true;
+            dir = "asc";
+            
+            // Remove sorted class from all headers
+            var headers = table.getElementsByTagName("TH");
+            for (i = 0; i < headers.length; i++) {
+                headers[i].classList.remove("sorted", "sorted-asc", "sorted-desc");
+            }
+            
+            while (switching) {
+                switching = false;
+                rows = table.getElementsByTagName("TR");
+                
+                for (i = 1; i < (rows.length - 1); i++) {
+                    shouldSwitch = false;
+                    x = rows[i].getElementsByTagName("TD")[n];
+                    y = rows[i + 1].getElementsByTagName("TD")[n];
+                    
+                    // Get text content, removing HTML tags
+                    var xContent = x.textContent || x.innerText;
+                    var yContent = y.textContent || y.innerText;
+                    
+                    if (dir == "asc") {
+                        if (xContent.toLowerCase() > yContent.toLowerCase()) {
+                            shouldSwitch = true;
+                            break;
+                        }
+                    } else if (dir == "desc") {
+                        if (xContent.toLowerCase() < yContent.toLowerCase()) {
+                            shouldSwitch = true;
+                            break;
+                        }
+                    }
+                }
+                
+                if (shouldSwitch) {
+                    rows[i].parentNode.insertBefore(rows[i + 1], rows[i]);
+                    switching = true;
+                    switchcount++;
+                } else {
+                    if (switchcount == 0 && dir == "asc") {
+                        dir = "desc";
+                        switching = true;
+                    }
+                }
+            }
+            
+            // Add sorted class to current header
+            headers[n].classList.add("sorted", dir == "asc" ? "sorted-asc" : "sorted-desc");
+        }
+        
+        // Sort by architecture paradigm on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            setTimeout(function() {
+                sortTable(2, 'npu-summary-table');
+            }, 100);
         });
     </script>
 </head>
@@ -1020,6 +1110,16 @@ HostMemoryWrite   output_addr, UB[1]      // 写回结果
                         <li>边缘推理：本地决策，减少云端依赖</li>
                     </ul>
                 </li>
+                
+                <li><strong>边缘LLM应用：</strong>随着大语言模型的兴起，边缘NPU开始支持本地LLM推理：
+                    <ul>
+                        <li>离线智能助手：在设备本地运行小型语言模型，实现隐私保护的对话AI</li>
+                        <li>代码补全：IDE和编程工具中的本地代码生成和补全</li>
+                        <li>文档处理：本地文档摘要、翻译、问答系统</li>
+                        <li>个人助理：基于用户习惯的个性化LLM推理，无需上传数据到云端</li>
+                        <li>移动办公：手机和平板上的智能写作、邮件生成、会议纪要等应用</li>
+                    </ul>
+                </li>
             </ul>
 
             <h4>数据中心应用</h4>
@@ -1050,6 +1150,19 @@ HostMemoryWrite   output_addr, UB[1]      // 写回结果
                         <li>科学计算：蛋白质折叠、气象预测、分子动力学</li>
                         <li>强化学习：大规模并行环境模拟</li>
                         <li>联邦学习：分布式隐私保护学习</li>
+                    </ul>
+                </li>
+                
+                <li><strong>大语言模型服务：</strong>NPU在LLM训练和推理中发挥重要作用：
+                    <ul>
+                        <li>LLM推理服务：为ChatGPT、Claude等大模型提供高效推理加速</li>
+                        <li>多模态模型：支持文本-图像、文本-视频等多模态大模型</li>
+                        <li>模型预训练：大规模语料库上的Transformer模型训练</li>
+                        <li>指令微调：基于人类反馈的强化学习（RLHF）训练</li>
+                        <li>实时对话：低延迟的对话生成和上下文理解</li>
+                        <li>代码生成：GitHub Copilot等编程助手的后端推理</li>
+                        <li>内容创作：文章生成、摘要提取、语言翻译等创意应用</li>
+                        <li>企业智能：基于企业数据的专用LLM训练和部署</li>
                     </ul>
                 </li>
             </ul>
@@ -1828,6 +1941,155 @@ class IPUMemoryAccess {
             <p>IPU在某些特定应用上展现出了独特的优势。例如，在处理图神经网络（GNN）时，IPU的MIMD架构可以高效处理不规则的图结构。在BERT等需要频繁all-reduce操作的模型上，IPU的硬件集合通信也表现出色。然而，IPU也面临挑战：有限的片上内存限制了模型大小；新的编程模型需要开发者适应；生态系统相比CUDA还需要时间成熟。</p>
             
             <p>Graphcore的IPU代表了AI处理器设计的一个重要方向：针对AI工作负载的特点，从根本上重新思考处理器架构。虽然市场接受度还在培育中，但IPU的创新设计为未来的AI芯片发展提供了宝贵的探索经验。随着AI模型越来越多样化，我们可能会看到更多像IPU这样的专用架构出现。</p>
+            
+            <h3>主流NPU架构总结</h3>
+            <p>通过对上述主流NPU架构的分析，我们可以看到NPU设计主要遵循两种范式：<strong>脉动阵列（Systolic Array）</strong>和<strong>数据流架构（Dataflow Architecture）</strong>。这两种设计范式代表了不同的设计哲学，各有其优势和适用场景，贯穿本书的技术讨论。</p>
+            
+            <div class="table-wrapper">
+                <table id="npu-summary-table" class="sortable">
+                    <thead>
+                        <tr>
+                            <th onclick="sortTable(0, 'npu-summary-table')">NPU产品 ↕</th>
+                            <th onclick="sortTable(1, 'npu-summary-table')">公司 ↕</th>
+                            <th onclick="sortTable(2, 'npu-summary-table')" class="sorted">架构范式 ↕</th>
+                            <th onclick="sortTable(3, 'npu-summary-table')">核心技术特点 ↕</th>
+                            <th onclick="sortTable(4, 'npu-summary-table')">典型性能 ↕</th>
+                            <th onclick="sortTable(5, 'npu-summary-table')">制程 ↕</th>
+                            <th onclick="sortTable(6, 'npu-summary-table')">年份 ↕</th>
+                            <th onclick="sortTable(7, 'npu-summary-table')">主要应用场景 ↕</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>TPU v4</strong></td>
+                            <td>Google</td>
+                            <td>脉动阵列</td>
+                            <td>256×256 MAC阵列<br>HBM内存<br>光互连</td>
+                            <td>275 TOPS (INT8)<br>90 TFLOPS (BF16)</td>
+                            <td>7nm</td>
+                            <td>2021</td>
+                            <td>数据中心训练/推理</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Ascend 910</strong></td>
+                            <td>华为</td>
+                            <td>混合架构</td>
+                            <td>达芬奇架构<br>Cube Unit<br>Vector Unit</td>
+                            <td>512 TOPS (INT8)<br>256 TFLOPS (FP16)</td>
+                            <td>7nm+</td>
+                            <td>2019</td>
+                            <td>训练/推理全场景</td>
+                        </tr>
+                        <tr>
+                            <td><strong>MLU370</strong></td>
+                            <td>寒武纪</td>
+                            <td>数据流架构</td>
+                            <td>MLUv02架构<br>张量计算核心<br>智能内存管理</td>
+                            <td>256 TOPS (INT8)<br>22.3 TFLOPS (FP32)</td>
+                            <td>7nm</td>
+                            <td>2020</td>
+                            <td>云端推理加速</td>
+                        </tr>
+                        <tr>
+                            <td><strong>TSP</strong></td>
+                            <td>Groq</td>
+                            <td>数据流架构</td>
+                            <td>确定性执行<br>无缓存架构<br>软件定义硬件</td>
+                            <td>750 TOPS (INT8)<br>188 TFLOPS (FP16)</td>
+                            <td>14nm</td>
+                            <td>2019</td>
+                            <td>低延迟推理</td>
+                        </tr>
+                        <tr>
+                            <td><strong>DPU</strong></td>
+                            <td>Wave Computing</td>
+                            <td>异步数据流</td>
+                            <td>粗粒度可重构<br>异步执行<br>自时钟设计</td>
+                            <td>181 TOPS (INT8)</td>
+                            <td>16nm</td>
+                            <td>2018</td>
+                            <td>边缘到数据中心</td>
+                        </tr>
+                        <tr>
+                            <td><strong>RDU</strong></td>
+                            <td>SambaNova</td>
+                            <td>可重构数据流</td>
+                            <td>软件定义硬件<br>三层内存架构<br>模式化执行</td>
+                            <td>未公开<br>(专注大模型)</td>
+                            <td>7nm</td>
+                            <td>2020</td>
+                            <td>大模型训练</td>
+                        </tr>
+                        <tr>
+                            <td><strong>AX650N</strong></td>
+                            <td>爱芯元智</td>
+                            <td>混合架构</td>
+                            <td>ISP+NPU融合<br>低功耗设计<br>混合精度</td>
+                            <td>43.2 TOPS (INT4)<br>10.8 TOPS (INT8)</td>
+                            <td>12nm</td>
+                            <td>2022</td>
+                            <td>边缘视觉AI</td>
+                        </tr>
+                        <tr>
+                            <td><strong>FSD</strong></td>
+                            <td>Tesla</td>
+                            <td>脉动阵列</td>
+                            <td>双核NPU<br>车规级设计<br>安全冗余</td>
+                            <td>73.7 TOPS</td>
+                            <td>14nm</td>
+                            <td>2019</td>
+                            <td>自动驾驶</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Dojo D1</strong></td>
+                            <td>Tesla</td>
+                            <td>混合架构</td>
+                            <td>分布式架构<br>片上网络<br>训练优化</td>
+                            <td>362 TFLOPS (BF16)<br>per chip</td>
+                            <td>7nm</td>
+                            <td>2021</td>
+                            <td>自动驾驶训练</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Wormhole</strong></td>
+                            <td>Tenstorrent</td>
+                            <td>数据流架构</td>
+                            <td>Tensix核心<br>条件执行<br>RISC-V控制</td>
+                            <td>147 TFLOPS (FP8)</td>
+                            <td>7nm</td>
+                            <td>2022</td>
+                            <td>AI推理加速</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Journey 5</strong></td>
+                            <td>地平线</td>
+                            <td>混合架构</td>
+                            <td>BPU架构<br>Matrix ISA<br>多级缓存</td>
+                            <td>128 TOPS (INT8)</td>
+                            <td>7nm</td>
+                            <td>2021</td>
+                            <td>智能驾驶</td>
+                        </tr>
+                        <tr>
+                            <td><strong>IPU Mk2</strong></td>
+                            <td>Graphcore</td>
+                            <td>MIMD架构</td>
+                            <td>1472个核心<br>BSP执行<br>片上内存</td>
+                            <td>250 TFLOPS (FP16)</td>
+                            <td>7nm</td>
+                            <td>2020</td>
+                            <td>AI研究/训练</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <div class="info-box">
+                <p><strong>两种NPU设计范式的核心区别：</strong></p>
+                <p><strong>1. 脉动阵列（Systolic Array）：</strong>数据在处理单元间有节奏地流动，每个单元执行相同的操作。特点是结构规则、控制简单、数据复用率高，特别适合矩阵运算。代表：Google TPU、Tesla FSD。</p>
+                <p><strong>2. 数据流架构（Dataflow Architecture）：</strong>计算由数据的可用性驱动，而非程序计数器。特点是并行度高、延迟可预测、能效优秀，适合流式处理。代表：Groq TSP、Wave DPU、SambaNova RDU。</p>
+                <p>这两种范式将贯穿本书的技术讨论，在后续章节中我们将深入分析它们的设计原理、实现细节和优化技术。理解这两种范式是掌握NPU设计精髓的关键。</p>
+            </div>
 
             <div class="exercise">
                 <h4>第1章 练习题</h4>

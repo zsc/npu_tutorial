@@ -1288,12 +1288,12 @@ endmodule
                 <li><strong>可配置设计：</strong>支持不同的池化窗口大小和步长，提高硬件灵活性</li>
             </ul>
 
-            <h3>2.3 数据流与并行计算</h3>
+            <h3>2.3 脉动阵列中的数据流与并行计算</h3>
             
-            <p>数据流架构是NPU设计的核心，它决定了数据如何在计算单元间流动、如何被复用，以及如何实现计算与数据传输的重叠。良好的数据流设计可以最大化硬件利用率，最小化内存访问，从而实现高性能和高能效。本节将深入探讨NPU中的数据流模式和并行计算策略。</p>
+            <p>在脉动阵列架构中，数据流模式是决定性能和效率的关键因素。脉动阵列通过让数据在处理单元间有节奏地流动，实现了计算与数据传输的完美重叠。本节将深入探讨脉动阵列架构下的数据流模式，包括权重固定（Weight Stationary）、输出固定（Output Stationary）和行固定（Row Stationary）等经典设计，以及它们如何实现高效的并行计算。</p>
             
-            <h4>2.3.1 数据流架构</h4>
-            <p>在NPU设计中，数据流架构定义了数据在处理单元阵列中的移动模式。不同的数据流架构有不同的优缺点，适用于不同的应用场景。理解这些架构的特点，对于选择合适的NPU设计方案至关重要。</p>
+            <h4>2.3.1 脉动阵列的数据流模式</h4>
+            <p>在脉动阵列架构中，数据流模式定义了输入数据、权重和部分和如何在PE（Processing Element）阵列中传播。不同于数据流架构（如Groq TSP）中的异步执行，脉动阵列采用同步的、有节奏的数据传输方式。每种数据流模式都有其独特的优缺点，适用于不同的计算场景。</p>
             
             <p><strong>数据流架构的设计目标：</strong></p>
             <ul>
@@ -1406,9 +1406,194 @@ for (n = 0; n < N; n++)         // Batch
 // 3. 批处理并行：在N维度展开
             </div>
 
-            <h3>2.4 量化与数据格式</h3>
+            <h3>2.4 数据流架构中的并行计算</h3>
             
-            <h4>2.4.1 量化原理</h4>
+            <p>与脉动阵列的同步数据流不同，数据流架构（Dataflow Architecture）采用了完全不同的设计理念。在数据流架构中，计算由数据的可用性驱动，而非时钟或程序计数器。这种架构在Groq TSP、Wave DPU等现代NPU中得到了创新性的应用，展现出了独特的优势。</p>
+            
+            <h4>2.4.1 数据流架构的基本原理</h4>
+            <p>数据流架构的核心思想是"数据驱动执行"。当一个运算的所有输入数据都准备就绪时，该运算自动触发执行，无需等待全局时钟或控制信号。这种方式天然支持高度并行化，因为不同的运算可以在各自数据准备好时独立执行。</p>
+            
+            <div class="info-box">
+                <p><strong>数据流架构 vs 脉动阵列：核心区别</strong></p>
+                <ul>
+                    <li><strong>执行模式：</strong>数据流是异步的、数据驱动的；脉动阵列是同步的、时钟驱动的</li>
+                    <li><strong>数据传输：</strong>数据流中数据按需流动；脉动阵列中数据有节奏地传播</li>
+                    <li><strong>控制复杂度：</strong>数据流需要复杂的调度和同步机制；脉动阵列控制简单规则</li>
+                    <li><strong>灵活性：</strong>数据流更适合不规则计算；脉动阵列更适合规则的矩阵运算</li>
+                </ul>
+            </div>
+            
+            <h4>2.4.2 Groq TSP的创新设计</h4>
+            <p>Groq的Tensor Streaming Processor (TSP)是数据流架构的杰出代表。TSP通过软件定义的方式实现了确定性的数据流执行，这在传统数据流架构中是前所未有的创新。</p>
+            
+            <p><strong>TSP的关键创新：</strong></p>
+            
+            <p><strong>1. 确定性执行模型</strong></p>
+            <p>TSP最大的创新是实现了完全确定性的执行。编译器在编译时就能精确知道每个操作在哪个周期执行，数据在哪个周期到达。这种确定性使得TSP可以：</p>
+            <ul>
+                <li>完全消除缓存和分支预测的需求</li>
+                <li>实现100%的硬件利用率</li>
+                <li>提供可预测的、一致的性能</li>
+            </ul>
+            
+            <div class="code-block">
+// TSP的确定性调度示例
+// 编译器生成的指令流（伪代码）
+Cycle 0:  Load A[0] → FU0     // 加载第一个输入
+Cycle 1:  Load B[0] → FU1     // 加载第二个输入
+Cycle 2:  FU0 * FU1 → FU2     // 执行乘法
+Cycle 3:  FU2 + Acc → Acc     // 累加
+// 每个操作的执行时间在编译时完全确定
+            </div>
+            
+            <p><strong>2. 无缓存架构</strong></p>
+            <p>TSP完全抛弃了传统的缓存层次结构，采用软件管理的片上SRAM。这种设计的优势包括：</p>
+            <ul>
+                <li><strong>零缓存未命中：</strong>所有数据访问都是可预测的</li>
+                <li><strong>最大化片上存储：</strong>不需要缓存标签和控制逻辑</li>
+                <li><strong>简化硬件设计：</strong>降低了功耗和面积开销</li>
+            </ul>
+            
+            <p><strong>3. 流式执行模型</strong></p>
+            <p>TSP将计算组织成流（Stream），数据像流水一样通过计算单元。每个计算单元只需要知道何时接收输入、何时产生输出，无需复杂的控制逻辑。</p>
+            
+            <div class="code-block">
+// TSP流式计算示例
+Stream<float> input_stream;
+Stream<float> weight_stream;
+Stream<float> output_stream;
+
+// 计算单元配置（编译时确定）
+ComputeUnit MAC {
+    input: {input_stream, weight_stream}
+    output: output_stream
+    operation: multiply_accumulate
+    timing: {latency: 3, throughput: 1}
+}
+
+// 数据自动在流之间传输，无需显式控制
+            </div>
+            
+            <h4>2.4.3 数据流架构的并行计算策略</h4>
+            
+            <p><strong>1. 流水线并行（Pipeline Parallelism）</strong></p>
+            <p>数据流架构天然支持深度流水线。不同的计算阶段可以同时处理不同的数据批次，实现高吞吐量。</p>
+            
+            <div class="code-block">
+// 流水线并行示例
+Stage1: Input → Convolution → S1_output
+Stage2: S1_output → BatchNorm → S2_output  
+Stage3: S2_output → ReLU → S3_output
+Stage4: S3_output → Pooling → Output
+
+// 时刻T：
+// Stage1 处理 Batch[N+3]
+// Stage2 处理 Batch[N+2]
+// Stage3 处理 Batch[N+1]
+// Stage4 处理 Batch[N]
+            </div>
+            
+            <p><strong>2. 空间并行（Spatial Parallelism）</strong></p>
+            <p>TSP的超长指令字（VLIW）架构支持大规模的空间并行。单条指令可以同时控制数百个功能单元，实现极高的并行度。</p>
+            
+            <p><strong>3. 数据并行（Data Parallelism）</strong></p>
+            <p>通过将大矩阵分解成多个小块，TSP可以在多个计算单元上并行处理不同的数据块。编译器负责优化数据分割和调度策略。</p>
+            
+            <h4>2.4.4 数据流架构的优势与挑战</h4>
+            
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>方面</th>
+                            <th>优势</th>
+                            <th>挑战</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>性能</strong></td>
+                            <td>
+                                • 极低延迟<br>
+                                • 确定性性能<br>
+                                • 高硬件利用率
+                            </td>
+                            <td>
+                                • 需要精确的编译时调度<br>
+                                • 对不规则负载适应性有限
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>功耗</strong></td>
+                            <td>
+                                • 无缓存开销<br>
+                                • 简化的控制逻辑<br>
+                                • 优秀的能效比
+                            </td>
+                            <td>
+                                • 大规模SRAM的静态功耗<br>
+                                • 需要精细的功耗管理
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>编程模型</strong></td>
+                            <td>
+                                • 编译器自动优化<br>
+                                • 隐藏硬件复杂性
+                            </td>
+                            <td>
+                                • 需要专门的编译器<br>
+                                • 调试和分析较困难
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>可扩展性</strong></td>
+                            <td>
+                                • 模块化设计<br>
+                                • 易于扩展计算单元
+                            </td>
+                            <td>
+                                • 全局同步的复杂性<br>
+                                • 片上网络设计挑战
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <h4>2.4.5 数据流架构的应用场景</h4>
+            
+            <p>数据流架构特别适合以下应用场景：</p>
+            <ul>
+                <li><strong>实时推理：</strong>确定性延迟对于自动驾驶、机器人等实时应用至关重要</li>
+                <li><strong>大规模语言模型：</strong>LLM推理需要处理长序列，数据流架构的流式处理非常合适</li>
+                <li><strong>视频处理：</strong>连续的帧数据天然适合流式处理模型</li>
+                <li><strong>科学计算：</strong>规则的数值计算可以充分利用确定性调度</li>
+            </ul>
+            
+            <div class="info-box">
+                <p><strong>设计启示：</strong>数据流架构和脉动阵列代表了NPU设计的两种基本范式。脉动阵列通过规则的结构和简单的控制实现高效率；数据流架构通过灵活的执行模型和软件定义实现高性能。理解这两种架构的本质区别，对于选择合适的NPU设计方案至关重要。在后续章节中，我们将看到如何在实际设计中权衡这两种方案。</p>
+            </div>
+
+            <h3>2.5 量化与数据格式</h3>
+            
+            <p>量化技术的历史远比深度学习古老。早在1960年代的电话系统中，工程师们就面临着如何用有限的带宽传输高质量语音的挑战。这个挑战催生了μ-law（北美和日本）和A-law（欧洲）编码标准——这是人类历史上最早的大规模商用量化技术之一。</p>
+            
+            <p>μ-law和A-law的核心洞察是：人耳对声音的感知是对数的，而非线性的。因此，与其均匀量化整个动态范围，不如对小信号使用更密集的量化级别，对大信号使用更稀疏的量化级别。这种非均匀量化将12-14位的线性PCM压缩到8位，却保持了可接受的语音质量。这个看似简单的想法，为后来的量化技术奠定了理论基础：<strong>量化的本质是在精度和效率之间找到最优平衡点</strong>。</p>
+            
+            <div class="info-box">
+                <p><strong>历史视角：早期芯片中的数值表示</strong></p>
+                <p>Intel 4004（1971年）——世界上第一个商用微处理器——仅支持4位BCD（二进制编码十进制）运算。尽管如此简陋，它成功驱动了计算器和其他简单设备。这告诉我们一个重要道理：<strong>针对特定应用选择合适的数值精度，比盲目追求高精度更重要</strong>。</p>
+                <p>早期的数字信号处理器（DSP）如TI的TMS32010（1982年）采用16位定点运算，通过精心设计的定标（scaling）策略处理音频信号。这些芯片的成功证明了：在了解应用特性的前提下，低精度计算完全可以满足实际需求。</p>
+            </div>
+            
+            <p>进入AI时代，量化技术迎来了新的春天。深度学习模型的一个惊人特性是对数值精度的鲁棒性——这与早期语音编码发现的人耳感知特性有异曲同工之妙。研究表明，神经网络的权重和激活值分布通常呈现钟形曲线，大部分数值集中在零附近，这为aggressive quantization提供了理论基础。</p>
+            
+            <p>从INT32到INT8，甚至到INT4和二值网络，每一次精度的降低都伴随着硬件效率的指数级提升。一个INT8乘法器的面积仅为FP32乘法器的1/16，功耗降低更是超过20倍。这种巨大的效率提升，使得在边缘设备上部署复杂的神经网络成为可能。</p>
+            
+            <p>本节将深入探讨现代NPU中的量化技术，从基本原理到硬件实现，从静态量化到动态量化，从对称量化到非对称量化。我们将看到，量化不仅仅是简单的数值截断，而是一门融合了信息论、统计学和硬件设计的精妙艺术。</p>
+            
+            <h4>2.5.1 量化原理</h4>
             <p>量化是将高精度浮点数转换为低精度定点数的过程，是NPU提升效率的关键技术。</p>
             
             <div class="code-block">
@@ -1425,7 +1610,7 @@ scale = (max_val - min_val) / (2^bits - 1)
 zero_point = round(-min_val / scale)
             </div>
 
-            <h4>2.4.2 不同精度的硬件开销对比</h4>
+            <h4>2.5.2 不同精度的硬件开销对比</h4>
             <div class="table-wrapper">
                 <table>
                     <thead>
@@ -1507,6 +1692,248 @@ zero_point = round(-min_val / scale)
                     <li><strong>选择策略：</strong>训练和微调倾向FP8（E5M2用于梯度），推理倾向INT8；大模型推理开始采用FP8</li>
                     <li><strong>FP4应用：</strong>主要用于极限模型压缩，如量化LLM的权重，但激活值仍需更高精度</li>
                 </ul>
+            </div>
+
+            <h3>2.5.5 Flash Attention：算法与硬件协同设计</h3>
+            
+            <p>Flash Attention是算法与硬件协同设计的典范，它通过重新思考Attention机制的计算方式，实现了内存访问的大幅优化。这个案例完美诠释了如何通过算法创新来适应硬件特性，而非简单地用硬件暴力加速既有算法。</p>
+            
+            <h4>背景：Attention的内存瓶颈</h4>
+            
+            <p>在Transformer模型中，Self-Attention的计算复杂度为O(N²)，其中N是序列长度。更严重的是内存访问模式：传统实现需要存储N×N的注意力矩阵，这在长序列场景下会导致严重的内存瓶颈。</p>
+            
+            <div class="code-block">
+// 传统Attention实现（简化版）
+// 输入：Q, K, V 矩阵，维度为 [N, d]
+// 输出：Attention输出，维度为 [N, d]
+
+// Step 1: 计算注意力分数
+S = Q @ K.T  // [N, N] 矩阵，内存开销 O(N²)
+
+// Step 2: Softmax归一化
+P = softmax(S)  // [N, N] 矩阵，需要额外 O(N²) 内存
+
+// Step 3: 加权求和
+O = P @ V  // [N, d] 输出
+            </div>
+            
+            <p>这种实现的问题在于：即使最终输出只有[N, d]维度，中间却需要存储[N, N]的巨大矩阵。当N=16K（GPT-3的上下文长度）时，仅存储FP16的注意力矩阵就需要512MB内存！</p>
+            
+            <h4>Softmax算法的演进</h4>
+            
+            <p>Flash Attention的核心创新在于重新设计了Softmax的计算方式。让我们追踪Softmax算法的演进历程：</p>
+            
+            <p><strong>版本1：朴素Softmax实现</strong></p>
+            
+            <div class="code-block">
+// 朴素Softmax：需要两次遍历
+def softmax_v1(x):
+    # Pass 1: 计算分母
+    sum_exp = 0
+    for i in range(len(x)):
+        sum_exp += exp(x[i])
+    
+    # Pass 2: 归一化
+    output = []
+    for i in range(len(x)):
+        output[i] = exp(x[i]) / sum_exp
+    
+    return output
+            </div>
+            
+            <p>这个版本有两个问题：(1) 需要两次遍历数据；(2) exp(x[i])可能溢出。第二个问题通过引入"稳定Softmax"解决。</p>
+            
+            <p><strong>版本2：稳定Softmax（数值稳定版本）</strong></p>
+            
+            <div class="code-block">
+// 稳定Softmax：减去最大值避免溢出
+def softmax_v2(x):
+    # Pass 1: 找到最大值
+    max_val = max(x)
+    
+    # Pass 2: 计算分母
+    sum_exp = 0
+    for i in range(len(x)):
+        sum_exp += exp(x[i] - max_val)
+    
+    # Pass 3: 归一化
+    output = []
+    for i in range(len(x)):
+        output[i] = exp(x[i] - max_val) / sum_exp
+    
+    return output
+            </div>
+            
+            <p>稳定版本解决了数值溢出问题，但现在需要三次遍历！这在处理大规模数据时会成为性能瓶颈。</p>
+            
+            <p><strong>版本3：在线Softmax（Online Softmax）</strong></p>
+            
+            <p>Flash Attention的关键洞察是：我们可以增量式地计算Softmax，无需存储完整的中间结果。这就是"在线算法"的思想。</p>
+            
+            <div class="code-block">
+// 在线Softmax：单次遍历，增量更新
+def online_softmax(x_stream):
+    m = -inf  # 当前最大值
+    d = 0     # 当前分母
+    
+    for x_i in x_stream:
+        m_new = max(m, x_i)
+        # 更新分母，调整旧值
+        d = d * exp(m - m_new) + exp(x_i - m_new)
+        m = m_new
+    
+    # 现在可以计算任意位置的softmax值
+    # softmax(x_i) = exp(x_i - m) / d
+            </div>
+            
+            <p>这个算法的精妙之处在于：当遇到新的最大值时，它会调整之前累积的分母值。这种设计使得我们可以在单次遍历中完成计算，且只需要O(1)的额外存储空间。</p>
+            
+            <h4>Flash Attention的分块计算</h4>
+            
+            <p>基于在线Softmax的思想，Flash Attention将注意力计算分解为多个小块，每块都可以在GPU的SRAM中完成计算，避免了频繁的HBM访问。</p>
+            
+            <div class="code-block">
+// Flash Attention核心思想（伪代码）
+def flash_attention(Q, K, V, block_size):
+    N = Q.shape[0]
+    output = zeros([N, d])
+    
+    # 将Q分块
+    for q_block in range(0, N, block_size):
+        # 对于每个Q块，遍历所有K,V块
+        block_output = zeros([block_size, d])
+        m_block = -inf * ones([block_size])  # 块内最大值
+        l_block = zeros([block_size])       # 块内分母
+        
+        for kv_block in range(0, N, block_size):
+            # 加载K,V块到SRAM
+            K_tile = K[kv_block:kv_block+block_size]
+            V_tile = V[kv_block:kv_block+block_size]
+            
+            # 计算注意力分数
+            S_tile = Q[q_block:q_block+block_size] @ K_tile.T
+            
+            # 更新在线softmax统计量
+            m_tile = max(S_tile, dim=1)
+            m_new = max(m_block, m_tile)
+            
+            # 调整旧的统计量
+            l_block = l_block * exp(m_block - m_new)
+            m_block = m_new
+            
+            # 累加新的贡献
+            P_tile = exp(S_tile - m_new)
+            l_block += sum(P_tile, dim=1)
+            
+            # 更新输出
+            block_output = block_output * exp(m_block - m_new)
+            block_output += P_tile @ V_tile
+        
+        # 最终归一化
+        output[q_block:q_block+block_size] = block_output / l_block
+    
+    return output
+            </div>
+            
+            <h4>硬件友好的设计考量</h4>
+            
+            <p>Flash Attention的设计充分考虑了GPU的内存层次结构：</p>
+            
+            <div class="info-box">
+                <p><strong>GPU内存层次与带宽（以A100为例）</strong></p>
+                <ul>
+                    <li><strong>寄存器：</strong>~20TB/s带宽，每个SM 256KB</li>
+                    <li><strong>共享内存/L1：</strong>~19TB/s带宽，每个SM 192KB</li>
+                    <li><strong>L2缓存：</strong>~4TB/s带宽，全芯片40MB</li>
+                    <li><strong>HBM：</strong>~1.5TB/s带宽，40GB或80GB</li>
+                </ul>
+                <p>Flash Attention通过将计算限制在SRAM（共享内存）中，访问带宽提升了10倍以上！</p>
+            </div>
+            
+            <p><strong>关键优化技术：</strong></p>
+            
+            <p><strong>1. 内存访问模式优化</strong></p>
+            <ul>
+                <li>传统方法：需要O(N²)的HBM读写</li>
+                <li>Flash Attention：只需O(N²/M)的HBM访问，其中M是SRAM大小</li>
+                <li>实际加速：在长序列上可达2-4倍</li>
+            </ul>
+            
+            <p><strong>2. 计算与访存重叠</strong></p>
+            <div class="code-block">
+// 使用异步内存传输隐藏延迟
+__global__ void flash_attention_kernel() {
+    // 双缓冲技术
+    __shared__ float sram_buffer[2][BLOCK_SIZE];
+    int current_buffer = 0;
+    
+    // 预取第一个块
+    async_load(sram_buffer[0], global_memory);
+    
+    for (int block = 1; block < num_blocks; block++) {
+        // 在计算当前块时，预取下一个块
+        async_load(sram_buffer[1-current_buffer], global_memory);
+        
+        // 计算当前块
+        compute_block(sram_buffer[current_buffer]);
+        
+        // 切换缓冲区
+        current_buffer = 1 - current_buffer;
+        __syncthreads();
+    }
+}
+            </div>
+            
+            <p><strong>3. 向后兼容性设计</strong></p>
+            <p>Flash Attention的另一个亮点是保持了与标准Attention完全相同的数学语义，这意味着：</p>
+            <ul>
+                <li>可以直接替换现有实现，无需修改模型</li>
+                <li>支持所有Attention变体（因果注意力、相对位置编码等）</li>
+                <li>梯度计算也是精确的，不影响训练稳定性</li>
+            </ul>
+            
+            <h4>Flash Attention v2的进一步优化</h4>
+            
+            <p>Flash Attention v2在v1的基础上进行了更激进的优化：</p>
+            
+            <div class="code-block">
+// Flash Attention v2的关键改进
+// 1. 减少非矩阵乘法运算
+// v1: 每个块都要计算max和sum
+// v2: 将这些运算向量化，利用Tensor Core
+
+// 2. 更好的并行策略
+// v1: 在batch和head维度并行
+// v2: 在序列长度维度也进行并行分解
+
+// 3. 优化的块大小选择
+// v1: 固定块大小
+// v2: 根据问题规模动态调整
+if (seq_len < 1024) {
+    block_size = 64;  // 小序列用小块
+} else if (seq_len < 4096) {
+    block_size = 128; // 中等序列
+} else {
+    block_size = 256; // 长序列用大块
+}
+            </div>
+            
+            <h4>算法-硬件协同设计的启示</h4>
+            
+            <p>Flash Attention的成功给NPU设计带来了重要启示：</p>
+            
+            <div class="warning-box">
+                <p><strong>设计原则：</strong></p>
+                <ol>
+                    <li><strong>算法必须适应硬件特性：</strong>不是所有数学等价的算法在硬件上都有相同性能</li>
+                    <li><strong>内存带宽往往比计算更重要：</strong>现代硬件的计算能力过剩，瓶颈在数据移动</li>
+                    <li><strong>局部性原则依然是王道：</strong>将计算限制在快速存储器中是优化的关键</li>
+                    <li><strong>编译器与算法协同：</strong>好的算法设计要考虑编译器的优化能力</li>
+                </ol>
+            </div>
+            
+            <p>Flash Attention不仅仅是一个优化技巧，它代表了一种新的思维方式：在设计AI算法时，必须深入理解目标硬件的特性。这种算法-硬件协同设计的理念，正在成为高性能AI系统设计的核心方法论。在NPU设计中，我们也应该思考：如何设计硬件来更好地支持这类内存高效的算法？这种双向的优化思路，将推动AI计算系统向更高效的方向发展。</p>
+
             </div>
 
             <div class="exercise">
