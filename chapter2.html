@@ -3737,17 +3737,291 @@ endmodule
             
             </div>
             
-            <div class="section-summary">
-                <h4>本章小结</h4>
+            <h3>2.7 Diffusion模型对NPU支持的要求</h3>
+            
+            <p>Diffusion模型作为生成式AI的重要分支，在图像生成、视频合成、分子设计等领域展现出惊人的能力。从Stable Diffusion到DALL-E，从文生图到图生图，Diffusion模型正在重塑创意产业。然而，其独特的计算模式对NPU设计提出了新的挑战。</p>
+            
+            <p>与Transformer的单次前向传播不同，Diffusion模型需要进行数十甚至上百次的去噪迭代。每次迭代都涉及U-Net或DiT（Diffusion Transformer）架构的完整计算，这种反复迭代的特性使得延迟优化变得尤为关键。同时，模型中大量的卷积操作、注意力机制和归一化层交织，要求NPU具备灵活的算子支持能力。</p>
+            
+            <h4>2.7.1 Diffusion模型的计算特征</h4>
+            
+            <p>理解Diffusion模型的计算需求，首先要了解其独特的推理过程。不同于其他神经网络的单次前向传播，Diffusion模型通过迭代去噪过程生成高质量样本：</p>
+            
+            <div class="code-block">
+// Diffusion模型推理流程（DDPM为例）
+x_T ~ N(0, I)                    // 从纯噪声开始
+for t in T, T-1, ..., 1:
+    noise = model(x_t, t, cond)  // 预测噪声
+    x_{t-1} = denoise(x_t, noise, t)  // 去噪步骤
+return x_0                       // 最终生成结果
+
+// 典型配置
+// T = 50-1000 (推理步数)
+// model: U-Net或DiT架构
+// cond: 文本/图像条件
+            </div>
+            
+            <div class="info-box">
+                <h5>Diffusion模型的三大计算挑战</h5>
+                
+                <p><strong>1. 迭代计算密集</strong></p>
                 <ul>
-                    <li><strong>神经网络的核心计算是MAC运算，</strong>这决定了NPU以MAC阵列为计算核心</li>
-                    <li><strong>量化技术是NPU效率提升的关键，</strong>INT8相比FP32可带来16倍面积效率和30倍功耗效率的提升</li>
-                    <li><strong>卷积实现有三种主要方法：</strong>Im2Col适合复用GEMM硬件但内存开销大，直接卷积内存效率高但控制复杂，Winograd减少乘法但增加加法</li>
-                    <li><strong>Transformer带来新的计算模式：</strong>自注意力的O(n²)复杂度需要精心的分块策略，Flash Attention通过算法创新大幅降低内存带宽需求</li>
-                    <li><strong>数据流架构决定了NPU的效率：</strong>权重固定流最小化权重访问，输出固定流简化控制逻辑，行固定流平衡各种数据复用</li>
-                    <li><strong>硬件设计需要考虑多种权衡：</strong>计算密度vs灵活性、内存带宽vs计算能力、功耗vs性能</li>
+                    <li>DDPM：1000步去噪迭代</li>
+                    <li>DDIM：50-100步加速采样</li>
+                    <li>DPM-Solver：20-30步高效采样</li>
+                    <li>每步都是完整的神经网络前向传播</li>
+                </ul>
+                
+                <p><strong>2. 混合算子需求</strong></p>
+                <ul>
+                    <li>卷积：特征提取backbone</li>
+                    <li>注意力：全局依赖建模</li>
+                    <li>GroupNorm：训练稳定性保证</li>
+                    <li>SiLU/GELU：非线性激活</li>
+                </ul>
+                
+                <p><strong>3. 内存带宽压力</strong></p>
+                <ul>
+                    <li>高分辨率：1024×1024及以上</li>
+                    <li>多尺度特征：U-Net的skip connection</li>
+                    <li>中间激活值：需要大量临时存储</li>
                 </ul>
             </div>
+            
+            <h4>2.7.2 U-Net架构的硬件映射挑战</h4>
+            
+            <p>U-Net是Diffusion模型的经典backbone，其编码器-解码器结构带来了独特的硬件映射挑战：</p>
+            
+            <div class="code-block">
+// U-Net架构特点
+class UNet:
+    def __init__(self):
+        # 编码器路径
+        self.down_blocks = [
+            ResBlock(64, 128),    # 1/2分辨率
+            ResBlock(128, 256),   # 1/4分辨率
+            ResBlock(256, 512),   # 1/8分辨率
+            ResBlock(512, 512)    # 1/16分辨率
+        ]
+        
+        # 解码器路径
+        self.up_blocks = [
+            ResBlock(512, 512),   # 1/16→1/8
+            ResBlock(512, 256),   # 1/8→1/4
+            ResBlock(256, 128),   # 1/4→1/2
+            ResBlock(128, 64)     # 1/2→1
+        ]
+        
+        # 关键：skip connections
+        # 需要保存所有编码器的中间特征！
+            </div>
+            
+            <p>U-Net的skip connection机制要求NPU必须：</p>
+            <ul>
+                <li><strong>多级缓存设计：</strong>存储不同分辨率的特征图</li>
+                <li><strong>灵活的数据搬运：</strong>支持跨层的特征传递</li>
+                <li><strong>动态内存管理：</strong>根据分辨率调整存储策略</li>
+            </ul>
+            
+            <h4>2.7.3 Diffusion Transformer (DiT) 的新需求</h4>
+            
+            <p>随着Sora等模型的成功，DiT架构逐渐成为新趋势。DiT将Diffusion与Transformer结合，带来了新的硬件需求：</p>
+            
+            <div class="table-wrapper">
+                <table class="styled-table">
+                    <thead>
+                        <tr>
+                            <th>架构特征</th>
+                            <th>U-Net</th>
+                            <th>DiT</th>
+                            <th>NPU设计影响</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>基础算子</td>
+                            <td>卷积为主</td>
+                            <td>注意力为主</td>
+                            <td>需要高效的attention引擎</td>
+                        </tr>
+                        <tr>
+                            <td>计算模式</td>
+                            <td>局部计算</td>
+                            <td>全局计算</td>
+                            <td>更大的片上缓存需求</td>
+                        </tr>
+                        <tr>
+                            <td>参数规模</td>
+                            <td>~1B参数</td>
+                            <td>~7B参数</td>
+                            <td>需要模型并行支持</td>
+                        </tr>
+                        <tr>
+                            <td>扩展性</td>
+                            <td>分辨率受限</td>
+                            <td>易于扩展</td>
+                            <td>支持动态序列长度</td>
+                        </tr>
+                        <tr>
+                            <td>条件机制</td>
+                            <td>Cross-attention</td>
+                            <td>Adaptive LayerNorm</td>
+                            <td>灵活的归一化单元</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <h4>2.7.4 NPU优化策略：时间与空间的权衡</h4>
+            
+            <p>针对Diffusion模型的特点，NPU需要在多个维度进行优化：</p>
+            
+            <div class="code-block">
+// 1. 时间步并行优化
+// 利用不同时间步之间的独立性
+module DiffusionTimeParallel {
+    // 多个时间步同时计算
+    parallel for t in [t1, t2, t3, t4]:
+        noise[t] = model(x[t], t, cond)
+    
+    // 优势：提高吞吐量
+    // 挑战：需要4倍的计算资源
+}
+
+// 2. 空间分块策略
+// 将高分辨率图像分块处理
+module SpatialTiling {
+    // 1024×1024 → 4个512×512块
+    tiles = split_image(x, tile_size=512)
+    
+    parallel for tile in tiles:
+        tile_out = process_tile(tile)
+    
+    // 关键：处理块间的边界
+    output = merge_tiles_with_blending(tile_outs)
+}
+
+// 3. 算子融合优化
+// 减少内存访问开销
+module FusedDiffusionOps {
+    // 传统实现：多次内存读写
+    x1 = conv(x)
+    x2 = norm(x1)  
+    x3 = activation(x2)
+    
+    // 融合实现：一次内存读写
+    output = fused_conv_norm_act(x)
+}
+            </div>
+            
+            <h4>2.7.5 内存层次优化：应对大模型挑战</h4>
+            
+            <p>Diffusion模型的内存需求远超传统CNN，需要精心设计的内存层次：</p>
+            
+            <div class="info-box">
+                <h5>Diffusion模型内存需求分析</h5>
+                
+                <p><strong>以Stable Diffusion XL为例：</strong></p>
+                <ul>
+                    <li>模型参数：~6.6GB (FP16)</li>
+                    <li>单次推理激活值峰值：~8GB (1024×1024)</li>
+                    <li>KV Cache（使用注意力时）：~2GB</li>
+                    <li>总需求：~16GB+</li>
+                </ul>
+                
+                <p><strong>NPU内存优化策略：</strong></p>
+                <div class="code-block">
+// 1. 激活值checkpointing
+// 只保存关键激活值，其他按需重算
+checkpoint_layers = [4, 8, 12, 16]
+for i, layer in enumerate(model.layers):
+    output = layer(input)
+    if i in checkpoint_layers:
+        save_to_dram(output)
+    else:
+        keep_in_sram(output)  // 临时保存
+
+// 2. Flash Diffusion
+// 类似Flash Attention的思想
+// 分块计算，减少HBM访问
+for block in image_blocks:
+    load_to_sram(block)
+    for t in timesteps:
+        process_in_sram(block, t)
+    store_to_hbm(result)
+
+// 3. 量化感知推理
+// INT8推理 + FP16累加
+weights_int8 = quantize(model.weights)
+for layer in model:
+    out_int32 = matmul_int8(input, weights_int8)
+    output = dequantize_to_fp16(out_int32)
+                </div>
+            </div>
+            
+            <h4>2.7.6 能效优化：绿色AI的挑战</h4>
+            
+            <p>Diffusion模型的迭代特性带来了巨大的能耗挑战。生成一张高质量图像可能需要数十瓦时的能量，这促使我们必须在NPU设计中考虑能效优化：</p>
+            
+            <div class="table-wrapper">
+                <table class="styled-table">
+                    <thead>
+                        <tr>
+                            <th>优化技术</th>
+                            <th>原理</th>
+                            <th>能效提升</th>
+                            <th>实现复杂度</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>动态步数调整</td>
+                            <td>根据生成质量动态调整迭代次数</td>
+                            <td>30-50%</td>
+                            <td>中</td>
+                        </tr>
+                        <tr>
+                            <td>混合精度推理</td>
+                            <td>关键层FP16，其他层INT8</td>
+                            <td>40-60%</td>
+                            <td>高</td>
+                        </tr>
+                        <tr>
+                            <td>稀疏激活</td>
+                            <td>跳过接近零的计算</td>
+                            <td>20-30%</td>
+                            <td>中</td>
+                        </tr>
+                        <tr>
+                            <td>层间复用</td>
+                            <td>相似层共享计算结果</td>
+                            <td>15-25%</td>
+                            <td>高</td>
+                        </tr>
+                        <tr>
+                            <td>时钟门控</td>
+                            <td>空闲单元动态关闭</td>
+                            <td>10-20%</td>
+                            <td>低</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <div class="section-summary">
+            <h4>本章小结</h4>
+            <ul>
+                <li><strong>神经网络的核心计算是MAC运算，</strong>这决定了NPU以MAC阵列为计算核心，每个MAC单元执行乘累加操作是NPU的基本计算单元</li>
+                <li><strong>卷积实现有三种主要方法：</strong>Im2Col适合复用GEMM硬件但内存开销大，直接卷积内存效率高但控制复杂，Winograd减少乘法但增加加法和精度损失</li>
+                <li><strong>脉动阵列中的数据流模式决定NPU效率：</strong>权重固定（WS）最小化权重访问，输出固定（OS）简化控制逻辑，行固定（RS）平衡各种数据复用</li>
+                <li><strong>数据流架构（如Groq TSP）提供确定性执行：</strong>完全消除缓存和动态调度，通过编译时确定所有数据移动，实现超低延迟和高吞吐量</li>
+                <li><strong>量化技术是NPU效率提升的关键：</strong>从电话时代的μ-law到现代的INT8/INT4，量化将计算和存储需求降低4-32倍，是边缘部署的必要技术</li>
+                <li><strong>Transformer带来新的计算挑战：</strong>自注意力的O(n²)复杂度需要创新优化，Flash Attention通过分块计算和在线softmax将内存需求从O(n²)降至O(n)</li>
+                <li><strong>Mamba架构开辟线性复杂度新路径：</strong>通过选择性状态空间模型实现O(n)复杂度，为处理超长序列（百万级token）提供了可行方案</li>
+                <li><strong>Diffusion模型的迭代特性带来独特挑战：</strong>需要数十次去噪迭代、混合算子支持、大容量片上存储，推动NPU向更通用和灵活的方向发展</li>
+                <li><strong>算法-硬件协同设计成为主流：</strong>Flash Attention、Flash Diffusion等创新证明，深入理解硬件特性的算法设计可带来数量级的性能提升</li>
+            </ul>
         </div>
         </div>
         
