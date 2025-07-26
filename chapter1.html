@@ -534,7 +534,7 @@
                 <ul>
                     <li><strong>专用硬件加速器：</strong>NPU内部集成了专门为神经网络运算优化的硬件单元。最典型的是脉动阵列（Systolic Array），它通过规律的数据流动模式，实现了计算和数据传输的完美重叠。每个处理单元（PE）只与相邻单元通信，大大简化了互连复杂度。</li>
                     <li><strong>高效的矩阵运算单元（MAC阵列）：</strong>MAC（Multiply-Accumulate）运算占据了神经网络计算的90%以上。NPU通过大规模并行的MAC阵列（如Google TPU的256×256阵列），可以在单个时钟周期内完成数万次乘累加运算。这种设计将芯片面积的大部分用于计算，而非控制逻辑。</li>
-                    <li><strong>专门的数据流架构：</strong>NPU采用了多种数据流优化策略，如权重固定（Weight Stationary）、输出固定（Output Stationary）和行固定（Row Stationary）等。这些策略通过最大化数据复用，将外部内存访问降到最低。例如，在权重固定模式下，卷积核参数可以在PE中驻留数千个周期，极大地减少了数据移动开销。</li>
+                    <li><strong>专门的数据流架构：</strong>以NPU中流行的脉动阵列架构为例，NPU采用了多种数据流优化策略，如权重固定（Weight Stationary）、输出固定（Output Stationary）和行固定（Row Stationary）等。这些策略通过最大化数据复用，将外部内存访问降到最低。例如，在权重固定模式下，卷积核参数可以在PE中驻留数千个周期，极大地减少了数据移动开销。</li>
                     <li><strong>支持低精度计算：</strong>研究表明，神经网络具有很强的数值鲁棒性，推理阶段使用INT8甚至INT4精度几乎不影响准确率。NPU原生支持这些低精度格式，相比FP32可以实现4-8倍的吞吐量提升和能效改善。更重要的是，低精度计算大幅减少了存储需求和内存带宽压力。</li>
                     <li><strong>多级存储层次：</strong>NPU通常集成了大容量的片上SRAM（如TPU v3的32MB），配合精心设计的多级缓存结构（L0寄存器文件、L1局部缓存、L2全局缓存），有效缓解了"内存墙"问题。片上存储的访问能耗仅为片外DRAM的1/100。</li>
                 </ul>
@@ -575,6 +575,18 @@ Intel Xeon (28核): ~100 GFLOPS (FP32)
             
             <h4>GPU：并行计算的先驱</h4>
             <p>GPU（Graphics Processing Unit）最初为图形渲染设计，后来演化为通用并行计算平台。GPU拥有数千个简单的计算核心，非常适合数据并行任务。在深度学习早期，GPU成为了训练神经网络的主力。</p>
+            
+            <div class="info-box">
+                <p><strong>FAQ: GPGPU是什么？</strong></p>
+                <p><strong>Q：GPGPU与GPU有什么区别？</strong></p>
+                <p><strong>A：</strong>GPGPU（General-Purpose computing on Graphics Processing Units）是指将GPU用于非图形计算的技术。传统GPU专门用于图形渲染，而GPGPU则将GPU的并行计算能力扩展到科学计算、机器学习等通用领域。</p>
+                
+                <p><strong>Q：GPGPU如何实现通用计算？</strong></p>
+                <p><strong>A：</strong>早期通过将计算问题"伪装"成图形问题（如将数据存储为纹理），后来通过CUDA、OpenCL等专用编程框架直接访问GPU的计算资源。现代GPU专门增加了通用计算单元，如NVIDIA的CUDA核心和AMD的流处理器。</p>
+                
+                <p><strong>Q：为什么GPGPU适合深度学习？</strong></p>
+                <p><strong>A：</strong>深度学习中的矩阵运算具有高度并行性，GPU的数千个核心可以同时处理不同的数据元素。例如，一个卷积操作可以同时在图像的不同区域并行执行，这与GPU的SIMD（单指令多数据）架构完美匹配。此外，GPU的高内存带宽也有利于处理大规模数据集。</p>
+            </div>
             
             <div class="code-block">
 // GPU架构特征分析（以NVIDIA A100为例）
@@ -948,6 +960,21 @@ HostMemoryWrite   output_addr, UB[1]      // 写回结果
             
             <div class="warning-box">
                 <p><strong>重要提示：</strong>NPU并不是要取代CPU或GPU，而是作为协处理器与它们协同工作。在典型的AI系统中，CPU负责控制和预处理，GPU负责训练，NPU负责推理，三者各司其职，共同构建高效的计算平台。</p>
+            </div>
+            
+            <div class="info-box">
+                <p><strong>FAQ: Nvidia Tensor Cores 是 NPU 吗？</strong></p>
+                <p><strong>Q：Nvidia的Tensor Cores算是NPU吗？</strong></p>
+                <p><strong>A：</strong>严格来说，Tensor Cores不是独立的NPU，而是集成在GPU内部的专用AI计算单元。它们是GPU架构的一部分，专门用于加速深度学习中的混合精度矩阵运算（如FP16、BF16、INT8等）。</p>
+                
+                <p><strong>Q：Tensor Cores与传统NPU有什么区别？</strong></p>
+                <p><strong>A：</strong>主要区别在于：<br>
+                1. <strong>集成方式：</strong>Tensor Cores集成在GPU的SM（Streaming Multiprocessor）中，共享GPU的控制逻辑和内存系统；而NPU通常是独立的处理器<br>
+                2. <strong>编程模型：</strong>Tensor Cores使用CUDA编程，需要GPU开发者显式调用；NPU通常有专门的编译器和运行时<br>
+                3. <strong>优化目标：</strong>Tensor Cores主要优化训练中的混合精度计算；NPU更多针对推理场景进行端到端优化</p>
+                
+                <p><strong>Q：为什么Nvidia选择这种设计？</strong></p>
+                <p><strong>A：</strong>这体现了Nvidia"统一架构"的设计哲学。通过在GPU中集成专用AI单元，既保持了CUDA生态的连续性，又获得了AI加速能力。这种设计使得同一块芯片既能高效处理传统GPU计算，又能加速AI工作负载，特别适合需要GPU和AI混合计算的场景，如自动驾驶、科学计算等。</p>
             </div>
 
             <h3>1.3 NPU的应用场景</h3>
