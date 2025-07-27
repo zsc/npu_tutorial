@@ -1,0 +1,4015 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>第6章：RTL设计实现 - NPU设计教程</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f5f5f5;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
+            color: white;
+            padding: 40px 0;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .nav-bar {
+            background: #34495e;
+            padding: 15px 0;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .nav-bar ul {
+            list-style: none;
+            display: flex;
+            justify-content: center;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0;
+        }
+
+        .nav-bar li {
+            margin: 0 15px;
+        }
+
+        .nav-bar a {
+            color: white;
+            text-decoration: none;
+            padding: 5px 10px;
+            border-radius: 4px;
+            transition: background 0.3s;
+        }
+
+        .nav-bar a:hover {
+            background: #2c3e50;
+        }
+
+        .nav-bar .current {
+            background: #2c3e50;
+            font-weight: bold;
+        }
+
+        .chapter {
+            background: white;
+            margin: 20px 0;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .chapter h2 {
+            color: #2c3e50;
+            font-size: 2em;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 3px solid #3498db;
+        }
+
+        .chapter h3 {
+            color: #34495e;
+            font-size: 1.5em;
+            margin: 25px 0 15px 0;
+        }
+
+        .chapter h4 {
+            color: #7f8c8d;
+            font-size: 1.2em;
+            margin: 20px 0 10px 0;
+        }
+
+        .code-block {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 20px;
+            border-radius: 5px;
+            margin: 15px 0;
+            overflow-x: auto;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            position: relative;
+        }
+        
+        /* Language label */
+        .code-block::before {
+            content: attr(data-language);
+            position: absolute;
+            top: 5px;
+            right: 10px;
+            font-size: 12px;
+            color: #95a5a6;
+            text-transform: uppercase;
+        }
+        
+        /* Syntax highlighting classes */
+        .code-block .keyword { color: #e74c3c; font-weight: bold; }
+        .code-block .type { color: #3498db; }
+        .code-block .comment { color: #95a5a6; font-style: italic; }
+        .code-block .number { color: #e67e22; }
+        .code-block .string { color: #2ecc71; }
+        .code-block .function { color: #3498db; }
+
+        .exercise {
+            background: #ecf0f1;
+            padding: 20px;
+            border-radius: 5px;
+            margin: 20px 0;
+            border-left: 5px solid #3498db;
+        }
+
+        .exercise h4 {
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+
+        .question {
+            margin: 15px 0;
+            padding: 15px;
+            background: white;
+            border-radius: 5px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .answer {
+            margin-top: 10px;
+            padding: 15px;
+            background: #e8f5e9;
+            border-radius: 5px;
+            display: none;
+            border-left: 4px solid #4caf50;
+        }
+
+        .answer.show {
+            display: block;
+        }
+        
+        .hint {
+            margin: 10px 0;
+            padding: 10px 15px;
+            background: #fff8dc;
+            border-left: 4px solid #ffa500;
+            border-radius: 5px;
+            font-size: 0.95em;
+        }
+        
+        .hint summary {
+            cursor: pointer;
+            font-weight: bold;
+            color: #ff8c00;
+            outline: none;
+        }
+        
+        .hint summary:hover {
+            color: #ff6347;
+        }
+        
+        .hint p {
+            margin-top: 10px;
+            color: #666;
+        }
+
+        .toggle-answer {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-top: 10px;
+            transition: background 0.3s;
+        }
+
+        .toggle-answer:hover {
+            background: #2980b9;
+        }
+
+        .table-wrapper {
+            overflow-x: auto;
+            margin: 20px 0;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+
+        th {
+            background: #34495e;
+            color: white;
+            font-weight: bold;
+        }
+
+        tr:hover {
+            background: #f5f5f5;
+        }
+
+        .info-box {
+            background: #e3f2fd;
+            border-left: 5px solid #2196f3;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+
+        .warning-box {
+            background: #fff3cd;
+            border-left: 5px solid #ff9800;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+
+        .chapter-nav {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 2px solid #ecf0f1;
+        }
+
+        .chapter-nav a {
+            background: #3498db;
+            color: white;
+            padding: 10px 20px;
+            text-decoration: none;
+            border-radius: 5px;
+            transition: background 0.3s;
+        }
+
+        .chapter-nav a:hover {
+            background: #2980b9;
+        }
+
+        .chapter-nav .prev::before {
+            content: "← ";
+        }
+
+        .chapter-nav .next::after {
+            content: " →";
+        }
+
+        /* Mobile Responsive Design */
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+            
+            header {
+                padding: 20px 10px;
+            }
+            
+            header h1 {
+                font-size: 1.5em;
+            }
+            
+            .chapter {
+                padding: 15px;
+                margin: 10px 0;
+            }
+            
+            .chapter h2 {
+                font-size: 1.5em;
+            }
+            
+            .chapter h3 {
+                font-size: 1.2em;
+            }
+            
+            .nav-bar ul {
+                flex-wrap: wrap;
+                justify-content: center;
+            }
+            
+            .nav-bar li {
+                margin: 5px;
+            }
+            
+            .code-block {
+                padding: 10px;
+                font-size: 12px;
+            }
+            
+            table {
+                font-size: 14px;
+            }
+            
+            th, td {
+                padding: 8px;
+            }
+        }
+
+        /* List styles for proper indentation */
+        .chapter ul, .chapter ol {
+            margin-left: 20px;
+            margin-bottom: 15px;
+        }
+        
+        .chapter li {
+            margin-bottom: 8px;
+            line-height: 1.8;
+        }
+        
+        .chapter ul ul, .chapter ol ol, .chapter ul ol, .chapter ol ul {
+            margin-left: 20px;
+            margin-top: 5px;
+        }
+        
+        .info-box ul, .warning-box ul, .answer ul {
+            margin-left: 20px;
+        }
+        
+        .info-box li, .warning-box li, .answer li {
+            margin-bottom: 10px;
+        }
+        
+        /* Keep nav-bar lists unstyled */
+        .nav-bar ul {
+            margin-left: 0;
+        }
+        
+        .nav-bar li {
+            margin-bottom: 0;
+        }
+    </style>
+    <script>
+        // Syntax highlighting functions
+        function escapeHtml(text) {
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return text.replace(/[&<>"']/g, m => map[m]);
+        }
+        
+        function highlightSyntax() {
+            const codeBlocks = document.querySelectorAll('.code-block');
+            
+            codeBlocks.forEach(block => {
+                const content = block.textContent;
+                let language = 'text';
+                let highlighted = content;
+                
+                // Auto-detect language based on content
+                if (content.includes('module ') || content.includes('always @') || content.includes('wire ') || content.includes('reg ')) {
+                    language = 'verilog';
+                    highlighted = highlightVerilog(content);
+                } else if (content.includes('import ') || content.includes('def ') || content.includes('class ')) {
+                    language = 'python';
+                    highlighted = highlightPython(content);
+                }
+                
+                block.innerHTML = highlighted;
+                block.classList.add(language);
+                block.setAttribute('data-language', language);
+            });
+        }
+        
+        function highlightVerilog(code) {
+            const placeholders = [];
+            let placeholderIndex = 0;
+            
+            // Replace comments with placeholders
+            code = code.replace(/(\/\/.*$|\/\*[\s\S]*?\*\/)/gm, (match) => {
+                const placeholder = `__COMMENT_${placeholderIndex}__`;
+                placeholders[placeholderIndex] = `<span class="comment">${escapeHtml(match)}</span>`;
+                placeholderIndex++;
+                return placeholder;
+            });
+            
+            // Replace strings with placeholders
+            code = code.replace(/("[^"]*")/g, (match) => {
+                const placeholder = `__STRING_${placeholderIndex}__`;
+                placeholders[placeholderIndex] = `<span class="string">${escapeHtml(match)}</span>`;
+                placeholderIndex++;
+                return placeholder;
+            });
+            
+            // Apply highlights
+            const keywords = /\b(module|endmodule|input|output|wire|reg|always|assign|begin|end|if|else|for|while|parameter|posedge|negedge)\b/g;
+            const types = /\b(bit|logic|byte|shortint|int|longint|integer|time|real)\b/g;
+            const numbers = /\b(\d+'[hbdo][\da-fA-F_]+|\d+)\b/g;
+            
+            code = code.replace(keywords, '<span class="keyword">$1</span>');
+            code = code.replace(types, '<span class="type">$1</span>');
+            code = code.replace(numbers, '<span class="number">$1</span>');
+            
+            // Restore placeholders
+            for (let i = 0; i < placeholderIndex; i++) {
+                code = code.replace(new RegExp(`__COMMENT_${i}__`, 'g'), placeholders[i]);
+                code = code.replace(new RegExp(`__STRING_${i}__`, 'g'), placeholders[i]);
+            }
+            
+            return code;
+        }
+        
+        function highlightPython(code) {
+            const placeholders = [];
+            let placeholderIndex = 0;
+            
+            // Replace comments
+            code = code.replace(/(#.*$)/gm, (match) => {
+                const placeholder = `__COMMENT_${placeholderIndex}__`;
+                placeholders[placeholderIndex] = `<span class="comment">${escapeHtml(match)}</span>`;
+                placeholderIndex++;
+                return placeholder;
+            });
+            
+            // Replace strings
+            code = code.replace(/("[^"]*"|'[^']*')/g, (match) => {
+                const placeholder = `__STRING_${placeholderIndex}__`;
+                placeholders[placeholderIndex] = `<span class="string">${escapeHtml(match)}</span>`;
+                placeholderIndex++;
+                return placeholder;
+            });
+            
+            // Apply highlights
+            const keywords = /\b(and|as|assert|break|class|continue|def|del|elif|else|except|False|finally|for|from|global|if|import|in|is|lambda|None|not|or|pass|raise|return|True|try|while|with|yield)\b/g;
+            const builtins = /\b(abs|all|any|bin|bool|dict|float|format|hex|input|int|len|list|map|max|min|open|print|range|round|set|sorted|str|sum|tuple|type|zip)\b/g;
+            const numbers = /\b(\d+\.?\d*)\b/g;
+            
+            code = code.replace(keywords, '<span class="keyword">$1</span>');
+            code = code.replace(builtins, '<span class="function">$1</span>');
+            code = code.replace(numbers, '<span class="number">$1</span>');
+            
+            // Restore placeholders
+            for (let i = 0; i < placeholderIndex; i++) {
+                code = code.replace(new RegExp(`__COMMENT_${i}__`, 'g'), placeholders[i]);
+                code = code.replace(new RegExp(`__STRING_${i}__`, 'g'), placeholders[i]);
+            }
+            
+            return code;
+        }
+        
+        // Toggle answer visibility
+        document.addEventListener('DOMContentLoaded', function() {
+            highlightSyntax();
+            
+            const toggleButtons = document.querySelectorAll('.toggle-answer');
+            toggleButtons.forEach(button => {
+                button.addEventListener('click', function() {
+                    const answer = this.nextElementSibling;
+                    answer.classList.toggle('show');
+                    this.textContent = answer.classList.contains('show') ? '隐藏答案' : '显示答案';
+                });
+            });
+        });
+    </script>
+</head>
+<body>
+    <header>
+        <h1>第6章：RTL设计实现</h1>
+    </header>
+    
+    <nav class="nav-bar">
+        <ul>
+            <li><a href="index.html">首页</a></li>
+            <li><a href="chapter1.html">第1章</a></li>
+            <li><a href="chapter2.html">第2章</a></li>
+            <li><a href="chapter3.html">第3章</a></li>
+            <li><a href="chapter4.html">第4章</a></li>
+            <li><a href="chapter5.html">第5章</a></li>
+            <li><a href="chapter6.html" class="current">第6章</a></li>
+            <li><a href="chapter7.html">第7章</a></li>
+            <li><a href="chapter8.html">第8章</a></li>
+            <li><a href="chapter9.html">第9章</a></li>
+            <li><a href="chapter10.html">第10章</a></li>
+            <li><a href="chapter11.html">第11章</a></li>
+            <li><a href="chapter12.html">第12章</a></li>
+        </ul>
+    </nav>
+    
+    <div class="container">
+        <div class="chapter">
+            <h2>第6章：RTL设计实现</h2>
+            
+            <p>本章详细介绍NPU从架构设计到RTL实现的完整流程，涵盖编码规范、时钟域设计、复位策略、低功耗设计、面积优化和时序收敛等关键技术。</p>
+            
+            <p>RTL（Register Transfer Level）设计是将抽象的NPU架构转化为可综合硬件的关键步骤。如果说架构设计是绘制蓝图，那么RTL设计就是将蓝图转化为精确的工程图纸。在这个阶段，每一个时钟周期、每一个触发器、每一条数据通路都必须被精确定义。一个优秀的RTL设计不仅要实现功能正确，还要考虑时序收敛、功耗优化、面积效率等多个维度的约束。</p>
+            
+            <p>为什么RTL设计如此重要？因为它直接决定了芯片的最终性能。同样的架构，不同的RTL实现可能导致2-3倍的性能差异。举个例子，NVIDIA的工程师曾经通过优化Tensor Core的RTL设计，在不改变架构的情况下将性能提升了40%，同时功耗降低了20%。这种"榨干每一个时钟周期"的精神，正是顶级芯片公司的核心竞争力。</p>
+            
+            <p>本章将带你深入NPU RTL设计的各个环节。我们将从设计流程和方法论开始，学习如何编写高质量的Verilog/SystemVerilog代码，掌握时钟域交叉、复位策略等关键技术，并通过实际的脉动阵列RTL实现案例，将理论知识转化为实践能力。无论你是初学者还是有经验的工程师，本章都将帮助你提升RTL设计水平，向着成为顶级芯片设计师的目标迈进。</p>
+
+            <h3>6.1 设计流程</h3>
+            
+            <p>NPU的RTL设计是连接算法架构与物理实现的关键环节，需要遵循严格的设计流程。想象RTL设计就像是建筑师将概念草图转化为详细施工图纸的过程——我们需要将抽象的算法和架构转换成精确的硬件描述，每一个信号、每一个时钟周期都必须准确定义。</p>
+            
+            <p>与传统的CPU或GPU设计不同，NPU的RTL设计面临着独特的挑战：极高的并行度（数千个MAC单元同时工作）、复杂的数据流模式（需要支持各种神经网络拓扑）、严格的功耗约束（移动设备可能只有几瓦的功耗预算）。这些挑战要求我们在设计之初就建立系统化的方法论。</p>
+            
+            <p>现代NPU项目的RTL设计周期通常为6-12个月，涉及10-50人的工程团队。一个典型的例子是Google TPU v1的开发，从概念到tape-out仅用了15个月，这在芯片设计领域是极快的速度。能够实现这样的效率，很大程度上归功于规范化的设计流程和高度的设计复用。</p>
+
+            <h4>6.1.1 设计流程概览</h4>
+            <p>NPU的RTL设计流程可以类比为汽车制造的流程：从概念设计（定义性能目标）到详细设计（每个零部件的规格），再到制造（综合和物理实现），最后是质量检验（验证和签核）。每个阶段都有明确的输入、输出和验收标准。</p>
+            
+            <p>一个关键的认识是：越早发现问题，修复成本越低。在RTL阶段发现的bug修复成本是1x，到了综合阶段是10x，到了流片后就是1000x甚至更高。因此，我们需要在每个阶段都建立严格的检查点和验证流程。</p>
+            <div class="code-block">
+NPU RTL设计流程：
+
+1. 系统级设计
+   └── 定义性能指标：TOPS、精度、功耗
+   └── 算法映射：支持的算子、数据流
+
+2. 微架构设计
+   └── 计算阵列规模：8×8、16×16等
+   └── 存储层次：L0/L1/L2容量和带宽
+   └── 数据通路：位宽、流水线级数
+   └── 控制架构：指令集、调度器
+
+3. RTL编码
+   └── 模块划分和接口定义
+   └── 功能实现和时序设计
+   └── 参数化和可配置设计
+
+4. 验证与仿真
+   └── 功能验证：UVM测试平台
+   └── 性能验证：周期精确模型
+   └── 形式验证：等价性检查
+
+5. 逻辑综合
+   └── 约束定义：时序、面积、功耗
+   └── 工艺映射：标准单元库
+   └── 优化策略：时序/面积/功耗权衡
+
+6. 物理实现
+   └── 布局规划：模块摆放
+   └── 时钟树综合：时钟偏斜控制
+   └── 布线优化：拥塞和串扰
+
+7. 签核验证
+   └── STA：静态时序分析
+   └── 功耗分析：IR Drop
+   └── DRC/LVS：物理验证
+            </div>
+
+            <h4>6.1.2 设计迭代与优化</h4>
+            <p>RTL设计很少能一次成功，通常需要多轮迭代优化。这就像雕刻家创作雕塑，需要不断地切削、打磨，直到达到理想的形态。在NPU设计中，我们主要关注三个维度的优化：时序（能跑多快）、面积（芯片多大）、功耗（耗电多少），业界称之为PPA（Performance, Power, Area）。</p>
+            
+            <p>实际项目中的权衡案例：NVIDIA的Tensor Core在设计时面临一个选择——是追求更高的频率还是更大的计算阵列？最终他们选择了适中的频率（约1.5GHz）配合更大的阵列（8x8 FP16 MAC），因为对于深度学习工作负载，吞吐量比峰值频率更重要。这个决策通过大量的设计空间探索（Design Space Exploration）和原型验证得出。</p>
+            
+            <p>设计质量的评估不能只看单一指标。例如，一个设计可能达到了目标频率，但功耗超标50%，这在移动设备上是不可接受的。因此需要建立综合评分体系，下面的代码展示了一个实用的设计质量监控框架：</p>
+            <div class="code-block">
+// 设计质量评估框架
+module DesignQualityMonitor #(
+    parameter DESIGN_NAME = "NPU_TOP"
+)(
+    // 综合报告输入
+    input real target_freq_mhz,
+    input real actual_freq_mhz,
+    input real target_area_mm2,
+    input real actual_area_mm2,
+    input real target_power_mw,
+    input real actual_power_mw,
+    
+    // 质量指标输出
+    output reg timing_met,
+    output reg area_met,
+    output reg power_met,
+    output reg [7:0] overall_score
+);
+
+    // 评估逻辑
+    always @(*) begin
+        timing_met = (actual_freq_mhz >= target_freq_mhz);
+        area_met = (actual_area_mm2 <= target_area_mm2);
+        power_met = (actual_power_mw <= target_power_mw);
+        
+        // 计算综合得分
+        real timing_score = (actual_freq_mhz / target_freq_mhz) * 100;
+        real area_score = (target_area_mm2 / actual_area_mm2) * 100;
+        real power_score = (target_power_mw / actual_power_mw) * 100;
+        
+        overall_score = (timing_score * 0.4 + 
+                        area_score * 0.3 + 
+                        power_score * 0.3) / 100 * 255;
+    end
+    
+    // 生成优化建议
+    always @(*) begin
+        if (!timing_met) begin
+            $display("[%s] Timing not met. Suggestions:", DESIGN_NAME);
+            $display("  - Increase pipeline stages");
+            $display("  - Reduce logic levels");
+            $display("  - Optimize critical paths");
+        end
+        
+        if (!area_met) begin
+            $display("[%s] Area exceeded. Suggestions:", DESIGN_NAME);
+            $display("  - Enable resource sharing");
+            $display("  - Reduce data width where possible");
+            $display("  - Use memory instead of registers");
+        end
+        
+        if (!power_met) begin
+            $display("[%s] Power exceeded. Suggestions:", DESIGN_NAME);
+            $display("  - Add more clock gating");
+            $display("  - Reduce switching activity");
+            $display("  - Consider voltage scaling");
+        end
+    end
+endmodule
+            </div>
+
+            <h3>6.2 编码规范</h3>
+            
+            <p>统一的编码规范是保证代码质量、可读性和可维护性的基础。想象一下，如果一个拥有50名工程师的NPU项目中，每个人都按照自己的风格编写RTL代码，那将是一场灾难——代码审查会变得困难，模块集成会出现各种意想不到的问题，后期维护更是噩梦。</p>
+            
+            <p>良好的编码规范就像是一种通用语言，让团队成员能够快速理解彼此的代码。在Apple的神经引擎（Neural Engine）团队，新加入的工程师通常需要花费两周时间学习和适应团队的编码规范，这个投资在后续的项目开发中会得到巨大的回报——代码审查时间减少50%，集成问题减少70%。</p>
+            
+            <p>更重要的是，规范的代码对EDA工具更友好。综合工具、静态时序分析工具、形式验证工具都有其偏好的编码模式。遵循这些模式不仅能获得更好的QoR（Quality of Results），还能避免工具的各种警告和错误。例如，Synopsys的Design Compiler对某些编码模式的优化效果可以相差20%以上。</p>
+
+            <h4>6.2.1 命名规则</h4>
+            <p>命名是编程中最难的两件事之一（另一件是缓存失效）。在RTL设计中，好的命名规则不仅能提高代码可读性，还能帮助调试和验证。一个实际的例子：在调试一个复杂的NPU设计时，如果信号命名清晰（如weight_buffer_rd_addr而不是addr3），波形调试的效率可以提高数倍。</p>
+            
+            <p>命名规则的制定需要平衡多个因素：描述性（名称要能说明用途）、简洁性（太长的名字会让代码难以阅读）、一致性（相似功能的信号应该有相似的命名模式）。下面的示例展示了业界广泛采用的命名规范：</p>
+            <div class="code-block">
+// ========== NPU RTL编码规范示例 ==========
+
+// 1. 模块命名：使用大驼峰命名法
+module NpuTopModule #(
+    parameter ARRAY_SIZE = 16,
+    parameter DATA_WIDTH = 8
+)(
+    // 2. 端口命名规则
+    // 时钟信号：clk_前缀
+    input  wire                     clk_sys,        // 系统时钟
+    input  wire                     clk_noc,        // NoC时钟
+    
+    // 复位信号：rst_前缀，_n表示低有效
+    input  wire                     rst_sys_n,      // 系统复位
+    input  wire                     rst_noc_n,      // NoC复位
+    
+    // 输入信号：_i后缀
+    input  wire [DATA_WIDTH-1:0]    weight_data_i,
+    input  wire                     weight_valid_i,
+    output wire                     weight_ready_o,
+    
+    // 输出信号：_o后缀
+    output wire [31:0]              result_data_o,
+    output wire                     result_valid_o,
+    input  wire                     result_ready_i,
+    
+    // 配置寄存器：cfg_前缀
+    input  wire [31:0]              cfg_layer_param,
+    input  wire [15:0]              cfg_tile_size
+);
+
+    // 3. 内部信号命名
+    // 寄存器输出：_q后缀
+    reg  [DATA_WIDTH-1:0]           weight_buffer_q;
+    
+    // 寄存器输入：_d后缀
+    wire [DATA_WIDTH-1:0]           weight_buffer_d;
+    
+    // 组合逻辑中间信号：_comb后缀
+    wire [DATA_WIDTH-1:0]           partial_sum_comb;
+    
+    // 控制信号：描述性命名
+    wire                            compute_enable;
+    wire                            accumulate_start;
+    
+    // 4. 参数命名：全大写，下划线分隔
+    localparam BUFFER_DEPTH = 1024;
+    localparam FSM_IDLE = 3'b000;
+    localparam FSM_COMPUTE = 3'b001;
+    
+    // 5. Generate变量：gen_前缀
+    genvar gen_i, gen_j;
+    
+    // 6. 函数命名：小驼峰命名法
+    function [7:0] calculateChecksum;
+        input [31:0] data;
+        begin
+            calculateChecksum = data[7:0] ^ data[15:8] ^ 
+                               data[23:16] ^ data[31:24];
+        end
+    endfunction
+
+endmodule
+            </div>
+
+            <h4>6.2.2 模块化设计原则</h4>
+            <p>模块化设计是管理复杂性的关键武器。一个现代NPU可能包含数百万门逻辑，如果没有良好的模块化，这种复杂度是不可管理的。模块化的本质是分而治之——将复杂系统分解为可管理的小块，每块都有清晰的功能和接口。</p>
+            
+            <p>Google TPU的设计团队分享过一个经验：他们将整个TPU分解为约200个主要模块，每个模块的代码行数控制在1000-5000行之间。这个粒度既保证了模块功能的完整性，又不会过于复杂难以理解。更重要的是，这种模块化使得多人并行开发成为可能——不同的工程师可以同时开发不同的模块，只要接口定义清晰。</p>
+            
+            <p>SystemVerilog的interface构造为模块化设计提供了强大支持。相比传统的端口列表，interface可以将相关信号组织在一起，大大简化了模块间的连接。在一个典型的NPU项目中，使用interface可以减少70%的连线代码，显著降低连接错误的可能性。</p>
+            <div class="code-block">
+// 良好的模块划分示例
+module NpuComputeCluster #(
+    parameter CLUSTER_ID = 0,
+    parameter PE_ROWS = 4,
+    parameter PE_COLS = 4
+)(
+    input  wire         clk,
+    input  wire         rst_n,
+    
+    // 标准化接口
+    NpuDataInterface.slave      data_if,
+    NpuControlInterface.slave   ctrl_if,
+    NpuConfigInterface.slave    cfg_if
+);
+
+    // ===== 模块化原则 =====
+    // 1. 单一职责：每个模块只负责一个功能
+    // 2. 接口清晰：使用SystemVerilog interface
+    // 3. 参数化设计：便于复用和配置
+    // 4. 层次化组织：自顶向下分解
+    
+    // 子模块实例化
+    genvar row, col;
+    generate
+        for (row = 0; row < PE_ROWS; row = row + 1) begin : gen_pe_row
+            for (col = 0; col < PE_COLS; col = col + 1) begin : gen_pe_col
+                ProcessingElement #(
+                    .PE_ID(row * PE_COLS + col),
+                    .DATA_WIDTH(data_if.DATA_WIDTH)
+                ) u_pe (
+                    .clk        (clk),
+                    .rst_n      (rst_n),
+                    .north_i    (pe_north_conn[row][col]),
+                    .south_o    (pe_south_conn[row][col]),
+                    .west_i     (pe_west_conn[row][col]),
+                    .east_o     (pe_east_conn[row][col]),
+                    .config_i   (pe_config[row][col])
+                );
+            end
+        end
+    endgenerate
+    
+    // 本地控制器
+    ClusterController #(
+        .CLUSTER_ID(CLUSTER_ID)
+    ) u_controller (
+        .clk        (clk),
+        .rst_n      (rst_n),
+        .ctrl_if    (ctrl_if),
+        .pe_enable  (pe_enable),
+        .pe_mode    (pe_mode)
+    );
+    
+    // 数据分发网络
+    DataDistributionNetwork #(
+        .NUM_PE(PE_ROWS * PE_COLS)
+    ) u_data_network (
+        .clk        (clk),
+        .rst_n      (rst_n),
+        .data_if    (data_if),
+        .pe_data    (pe_data_conn)
+    );
+
+endmodule
+
+// SystemVerilog Interface定义
+interface NpuDataInterface #(
+    parameter DATA_WIDTH = 256,
+    parameter ADDR_WIDTH = 32
+);
+    logic [DATA_WIDTH-1:0]  data;
+    logic [ADDR_WIDTH-1:0]  addr;
+    logic                   valid;
+    logic                   ready;
+    
+    modport master (
+        output data, addr, valid,
+        input  ready
+    );
+    
+    modport slave (
+        input  data, addr, valid,
+        output ready
+    );
+endinterface
+            </div>
+
+            <h4>6.2.3 可综合RTL编码准则</h4>
+            <p>可综合性是RTL代码的基本要求，但令人惊讶的是，许多初学者甚至有经验的工程师都会犯可综合性错误。这些错误的后果可能很严重——轻则导致综合结果与仿真不一致，重则某些功能完全无法实现。</p>
+            
+            <p>一个真实的案例：某初创公司的NPU项目在仿真阶段一切正常，但综合后发现面积比预期大了30%。经过分析发现，原因是大量使用了不当的编码方式导致综合工具推断出了不必要的锁存器。这个问题的修复花费了两周时间，严重影响了项目进度。</p>
+            
+            <p>可综合RTL编码的核心原则包括：1）明确区分时序逻辑和组合逻辑；2）避免产生锁存器（除非明确需要）；3）确保所有条件分支都有明确的赋值；4）使用综合工具友好的编码模式。下面的代码展示了这些原则的具体应用：</p>
+            <div class="code-block">
+// ===== 可综合RTL编码示例 =====
+
+module SynthesizableDesign (
+    input  wire         clk,
+    input  wire         rst_n,
+    input  wire [7:0]   data_in,
+    input  wire         data_valid,
+    output reg  [15:0]  data_out,
+    output reg          data_ready
+);
+
+    // 1. 时序逻辑：统一使用非阻塞赋值
+    reg [7:0] data_reg_q;
+    reg [2:0] state_q;
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            data_reg_q <= 8'h00;
+            state_q <= 3'b000;
+        end else begin
+            data_reg_q <= data_in;    // 非阻塞赋值
+            state_q <= next_state;     // 非阻塞赋值
+        end
+    end
+    
+    // 2. 组合逻辑：使用阻塞赋值，完整的条件覆盖
+    reg [2:0] next_state;
+    reg [15:0] compute_result;
+    
+    always @(*) begin
+        // 默认赋值，避免锁存器
+        next_state = state_q;
+        compute_result = 16'h0000;
+        data_ready = 1'b0;
+        
+        case (state_q)
+            3'b000: begin  // IDLE
+                if (data_valid) begin
+                    next_state = 3'b001;
+                end
+            end
+            
+            3'b001: begin  // COMPUTE
+                compute_result = {data_reg_q, data_in};  // 阻塞赋值
+                next_state = 3'b010;
+            end
+            
+            3'b010: begin  // OUTPUT
+                data_ready = 1'b1;
+                if (data_valid) begin
+                    next_state = 3'b001;
+                end else begin
+                    next_state = 3'b000;
+                end
+            end
+            
+            default: begin  // 必须有default分支
+                next_state = 3'b000;
+            end
+        endcase
+    end
+    
+    // 3. 输出寄存器化，改善时序
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            data_out <= 16'h0000;
+        end else begin
+            data_out <= compute_result;
+        end
+    end
+    
+    // 4. 避免的写法示例（注释形式）
+    // initial begin              // 不可综合
+    //     data_out = 0;
+    // end
+    
+    // always @(data_in) begin    // 不完整的敏感列表
+    //     result = data_in + offset;
+    // end
+    
+    // #10 data_out = result;     // 延时语句不可综合
+
+endmodule
+
+// 5. 推荐的参数化移位器实现
+module ParametricShifter #(
+    parameter WIDTH = 32,
+    parameter SHIFT_WIDTH = 5
+)(
+    input  wire [WIDTH-1:0]         data_in,
+    input  wire [SHIFT_WIDTH-1:0]   shift_amount,
+    input  wire                     shift_dir,  // 0: left, 1: right
+    output wire [WIDTH-1:0]         data_out
+);
+
+    // 使用generate实现可配置的移位器
+    wire [WIDTH-1:0] shift_stages [SHIFT_WIDTH:0];
+    assign shift_stages[0] = data_in;
+    
+    genvar i;
+    generate
+        for (i = 0; i < SHIFT_WIDTH; i = i + 1) begin : gen_shift
+            assign shift_stages[i+1] = shift_amount[i] ? 
+                (shift_dir ? 
+                    (shift_stages[i] >> (1 << i)) : 
+                    (shift_stages[i] << (1 << i))) : 
+                shift_stages[i];
+        end
+    endgenerate
+    
+    assign data_out = shift_stages[SHIFT_WIDTH];
+
+endmodule
+            </div>
+
+            <h4>6.2.4 RTL编码反例（Anti-patterns）</h4>
+            <div class="warning-box">
+                <p><strong>⚠️ 常见的RTL编码错误示例：</strong></p>
+            </div>
+            
+            <div class="code-block">
+// ❌ 错误示例1：产生锁存器的组合逻辑
+module bad_latch_example (
+    input wire [1:0] sel,
+    input wire [7:0] a, b, c,
+    output reg [7:0] out
+);
+    // 错误：不完整的条件覆盖会产生锁存器
+    always @(*) begin
+        case (sel)
+            2'b00: out = a;
+            2'b01: out = b;
+            2'b10: out = c;
+            // 缺少default或2'b11的情况！
+        endcase
+    end
+endmodule
+
+// ✅ 正确做法：完整的条件覆盖
+module good_comb_example (
+    input wire [1:0] sel,
+    input wire [7:0] a, b, c,
+    output reg [7:0] out
+);
+    always @(*) begin
+        case (sel)
+            2'b00: out = a;
+            2'b01: out = b;
+            2'b10: out = c;
+            default: out = 8'h00;  // 必须有default
+        endcase
+    end
+endmodule
+
+// ❌ 错误示例2：阻塞与非阻塞赋值混用
+module bad_assignment_mix (
+    input wire clk, rst_n,
+    input wire [7:0] d,
+    output reg [7:0] q
+);
+    reg [7:0] temp;
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            temp = 8'h00;    // 错误：时序逻辑中使用阻塞赋值
+            q <= 8'h00;
+        end else begin
+            temp = d;        // 错误：混用赋值类型
+            q <= temp;       // 会导致仿真与综合不一致
+        end
+    end
+endmodule
+
+// ✅ 正确做法：时序逻辑统一使用非阻塞赋值
+module good_sequential (
+    input wire clk, rst_n,
+    input wire [7:0] d,
+    output reg [7:0] q
+);
+    reg [7:0] temp;
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            temp <= 8'h00;
+            q <= 8'h00;
+        end else begin
+            temp <= d;
+            q <= temp;
+        end
+    end
+endmodule
+
+// ❌ 错误示例3：组合逻辑环路
+module bad_comb_loop (
+    input wire enable,
+    input wire [7:0] data_in,
+    output wire [7:0] data_out
+);
+    wire [7:0] internal;
+    
+    // 错误：创建了组合逻辑环路
+    assign internal = enable ? data_in : data_out;
+    assign data_out = internal + 1;
+    // 这会导致仿真时出现X态传播，综合时出现timing loop
+endmodule
+
+// ✅ 正确做法：打破组合环路
+module good_registered (
+    input wire clk, rst_n,
+    input wire enable,
+    input wire [7:0] data_in,
+    output reg [7:0] data_out
+);
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            data_out <= 8'h00;
+        else if (enable)
+            data_out <= data_in + 1;
+    end
+endmodule
+            </div>
+
+            <div class="info-box">
+                <p><strong>这些错误的危害：</strong></p>
+                <ul>
+                    <li><strong>锁存器：</strong>对毛刺敏感，时序分析困难，功耗高，测试覆盖率低</li>
+                    <li><strong>赋值混用：</strong>仿真行为与综合结果不一致，导致硅前验证失效</li>
+                    <li><strong>组合环路：</strong>产生振荡，时序无法收敛，芯片功能失效</li>
+                    <li><strong>预防措施：</strong>使用lint工具（如Spyglass）在早期发现这些问题</li>
+                </ul>
+            </div>
+
+            <h3>6.3 时钟域设计</h3>
+            
+            <p>NPU通常包含多个时钟域，正确的跨时钟域(CDC)设计对系统稳定性至关重要。时钟域就像是不同的国家，每个国家都有自己的时区和语言，跨越边界时需要“翻译”和“同步”。在NPU中，这种“边界”的处理不当可能导致数据丢失、亚稳态甚至系统崩溃。</p>
+            
+            <p>一个典型的NPU可能包含5-10个时钟域：计算核心可能运行在800MHz-1.5GHz，片上网络在400-600MHz，存储控制器在200-400MHz，配置接口在100MHz，还有各种外设接口的时钟。这些时钟域的划分不是随意的，而是基于各个模块的性能需求、功耗限制和物理实现难度的综合考虑。</p>
+            
+            <p>Intel在其AI加速器中采用了一种创新的方法：GALS（Globally Asynchronous, Locally Synchronous）架构。每个计算集群内部是同步的，但集群之间是异步通信的。这种设计允许不同的集群根据工作负载独立调整频率，从而实现更精细的功耗管理。这种方法的挑战在于异步接口的设计和验证复杂度显著增加。</p>
+
+            <h4>6.3.1 时钟域划分</h4>
+            <p>时钟域划分的艺术在于找到性能、功耗和复杂度之间的平衡点。过多的时钟域会增加CDC的复杂度和验证难度，过少的时钟域又会限制系统的灵活性和能效优化空间。Apple的Neural Engine采用了一种精巧的设计：在高负载时所有模块运行在高频率，在低负载时部分模块可以降频甚至关闭，这种动态调整实现了极佳的能效比。</p>
+            <div class="code-block">
+// NPU典型时钟域划分
+module NpuClockDomains (
+    // 多时钟输入
+    input wire clk_sys,          // 系统时钟 (1GHz)
+    input wire clk_noc,          // NoC时钟 (800MHz)
+    input wire clk_ddr,          // DDR时钟 (2.4GHz)
+    input wire clk_cfg,          // 配置时钟 (100MHz)
+    input wire clk_dbg,          // 调试时钟 (50MHz)
+    
+    input wire rst_n
+);
+
+    // ===== 时钟域功能划分 =====
+    // 1. 计算域 (clk_sys)
+    //    - MAC阵列
+    //    - 向量处理单元
+    //    - 本地SRAM
+    
+    // 2. 互连域 (clk_noc)
+    //    - 片上网络
+    //    - DMA控制器
+    //    - 全局缓冲区
+    
+    // 3. 存储域 (clk_ddr)
+    //    - DDR控制器
+    //    - PHY接口
+    
+    // 4. 低速域 (clk_cfg)
+    //    - 配置寄存器
+    //    - 中断控制器
+    //    - 电源管理
+    
+    // 5. 调试域 (clk_dbg)
+    //    - 调试接口
+    //    - 性能计数器
+    //    - Trace缓冲区
+
+endmodule
+            </div>
+
+            <h4>6.3.2 CDC同步器设计</h4>
+            <p>跨时钟域同步器是CDC设计的核心。一个设计不当的同步器可能在实验室环境下工作正常，但在实际产品中出现间歇性故障。这种问题的诊断极其困难，因为它可能只在特定的温度、电压和时序条件下出现。一个著名的案例是Intel Pentium的FDIV bug，虽然不是CDC问题，但它展示了一个小错误可能带来的巨大损失。</p>
+            <div class="code-block">
+// 1. 单比特信号同步器（2级触发器）
+module SyncBit #(
+    parameter SYNC_STAGES = 2  // 可配置同步级数
+)(
+    input  wire clk_dst,
+    input  wire rst_dst_n,
+    input  wire data_in,
+    output wire data_out
+);
+
+    reg [SYNC_STAGES-1:0] sync_regs;
+    
+    always @(posedge clk_dst or negedge rst_dst_n) begin
+        if (!rst_dst_n) begin
+            sync_regs <= {SYNC_STAGES{1'b0}};
+        end else begin
+            sync_regs <= {sync_regs[SYNC_STAGES-2:0], data_in};
+        end
+    end
+    
+    assign data_out = sync_regs[SYNC_STAGES-1];
+
+endmodule
+
+// 2. 多比特数据CDC - 握手协议
+module HandshakeCDC #(
+    parameter DATA_WIDTH = 32
+)(
+    // 源时钟域
+    input  wire                     clk_src,
+    input  wire                     rst_src_n,
+    input  wire [DATA_WIDTH-1:0]    data_src,
+    input  wire                     valid_src,
+    output wire                     ready_src,
+    
+    // 目标时钟域
+    input  wire                     clk_dst,
+    input  wire                     rst_dst_n,
+    output wire [DATA_WIDTH-1:0]    data_dst,
+    output wire                     valid_dst,
+    input  wire                     ready_dst
+);
+
+    // 源域：数据寄存和请求生成
+    reg [DATA_WIDTH-1:0] data_hold_q;
+    reg req_q;
+    wire ack_sync_src;
+    
+    always @(posedge clk_src or negedge rst_src_n) begin
+        if (!rst_src_n) begin
+            data_hold_q <= {DATA_WIDTH{1'b0}};
+            req_q <= 1'b0;
+        end else begin
+            if (valid_src && ready_src) begin
+                data_hold_q <= data_src;
+                req_q <= 1'b1;
+            end else if (ack_sync_src) begin
+                req_q <= 1'b0;
+            end
+        end
+    end
+    
+    assign ready_src = !req_q || ack_sync_src;
+    
+    // 请求信号同步到目标域
+    wire req_sync_dst;
+    SyncBit u_req_sync (
+        .clk_dst    (clk_dst),
+        .rst_dst_n  (rst_dst_n),
+        .data_in    (req_q),
+        .data_out   (req_sync_dst)
+    );
+    
+    // 目标域：接收数据和应答生成
+    reg ack_q;
+    reg req_sync_d1;
+    
+    always @(posedge clk_dst or negedge rst_dst_n) begin
+        if (!rst_dst_n) begin
+            ack_q <= 1'b0;
+            req_sync_d1 <= 1'b0;
+        end else begin
+            req_sync_d1 <= req_sync_dst;
+            
+            if (req_sync_dst && !req_sync_d1) begin  // 上升沿检测
+                ack_q <= 1'b1;
+            end else if (!req_sync_dst) begin
+                ack_q <= 1'b0;
+            end
+        end
+    end
+    
+    assign data_dst = data_hold_q;  // 数据保持稳定
+    assign valid_dst = req_sync_dst && !ack_q;
+    
+    // 应答信号同步回源域
+    SyncBit u_ack_sync (
+        .clk_dst    (clk_src),
+        .rst_dst_n  (rst_src_n),
+        .data_in    (ack_q),
+        .data_out   (ack_sync_src)
+    );
+
+endmodule
+
+// 3. 异步FIFO实现
+module AsyncFIFO #(
+    parameter DATA_WIDTH = 32,
+    parameter ADDR_WIDTH = 4,
+    parameter DEPTH = 16
+)(
+    // 写时钟域
+    input  wire                     wr_clk,
+    input  wire                     wr_rst_n,
+    input  wire                     wr_en,
+    input  wire [DATA_WIDTH-1:0]    wr_data,
+    output wire                     wr_full,
+    
+    // 读时钟域
+    input  wire                     rd_clk,
+    input  wire                     rd_rst_n,
+    input  wire                     rd_en,
+    output wire [DATA_WIDTH-1:0]    rd_data,
+    output wire                     rd_empty
+);
+
+    // 双端口RAM
+    reg [DATA_WIDTH-1:0] mem [DEPTH-1:0];
+    
+    // 写指针（二进制和格雷码）
+    reg [ADDR_WIDTH:0] wr_ptr_bin_q;
+    reg [ADDR_WIDTH:0] wr_ptr_gray_q;
+    wire [ADDR_WIDTH:0] wr_ptr_bin_next;
+    wire [ADDR_WIDTH:0] wr_ptr_gray_next;
+    
+    // 读指针（二进制和格雷码）
+    reg [ADDR_WIDTH:0] rd_ptr_bin_q;
+    reg [ADDR_WIDTH:0] rd_ptr_gray_q;
+    wire [ADDR_WIDTH:0] rd_ptr_bin_next;
+    wire [ADDR_WIDTH:0] rd_ptr_gray_next;
+    
+    // 同步后的指针
+    wire [ADDR_WIDTH:0] wr_ptr_gray_sync;
+    wire [ADDR_WIDTH:0] rd_ptr_gray_sync;
+    
+    // 二进制转格雷码
+    function [ADDR_WIDTH:0] bin2gray(input [ADDR_WIDTH:0] bin);
+        bin2gray = bin ^ (bin >> 1);
+    endfunction
+    
+    // 格雷码转二进制
+    function [ADDR_WIDTH:0] gray2bin(input [ADDR_WIDTH:0] gray);
+        integer i;
+        begin
+            gray2bin[ADDR_WIDTH] = gray[ADDR_WIDTH];
+            for (i = ADDR_WIDTH-1; i >= 0; i = i-1) begin
+                gray2bin[i] = gray2bin[i+1] ^ gray[i];
+            end
+        end
+    endfunction
+    
+    // 写逻辑
+    assign wr_ptr_bin_next = wr_ptr_bin_q + (wr_en && !wr_full);
+    assign wr_ptr_gray_next = bin2gray(wr_ptr_bin_next);
+    
+    always @(posedge wr_clk or negedge wr_rst_n) begin
+        if (!wr_rst_n) begin
+            wr_ptr_bin_q <= 0;
+            wr_ptr_gray_q <= 0;
+        end else begin
+            wr_ptr_bin_q <= wr_ptr_bin_next;
+            wr_ptr_gray_q <= wr_ptr_gray_next;
+            
+            if (wr_en && !wr_full) begin
+                mem[wr_ptr_bin_q[ADDR_WIDTH-1:0]] <= wr_data;
+            end
+        end
+    end
+    
+    // 读逻辑
+    assign rd_ptr_bin_next = rd_ptr_bin_q + (rd_en && !rd_empty);
+    assign rd_ptr_gray_next = bin2gray(rd_ptr_bin_next);
+    
+    always @(posedge rd_clk or negedge rd_rst_n) begin
+        if (!rd_rst_n) begin
+            rd_ptr_bin_q <= 0;
+            rd_ptr_gray_q <= 0;
+        end else begin
+            rd_ptr_bin_q <= rd_ptr_bin_next;
+            rd_ptr_gray_q <= rd_ptr_gray_next;
+        end
+    end
+    
+    assign rd_data = mem[rd_ptr_bin_q[ADDR_WIDTH-1:0]];
+    
+    // 指针同步
+    SyncBus #(.WIDTH(ADDR_WIDTH+1)) u_wr2rd_sync (
+        .clk_dst    (rd_clk),
+        .rst_dst_n  (rd_rst_n),
+        .data_in    (wr_ptr_gray_q),
+        .data_out   (wr_ptr_gray_sync)
+    );
+    
+    SyncBus #(.WIDTH(ADDR_WIDTH+1)) u_rd2wr_sync (
+        .clk_dst    (wr_clk),
+        .rst_dst_n  (wr_rst_n),
+        .data_in    (rd_ptr_gray_q),
+        .data_out   (rd_ptr_gray_sync)
+    );
+    
+    // 空满判断
+    assign wr_full = (wr_ptr_gray_next == {~rd_ptr_gray_sync[ADDR_WIDTH:ADDR_WIDTH-1], 
+                                            rd_ptr_gray_sync[ADDR_WIDTH-2:0]});
+    assign rd_empty = (rd_ptr_gray_q == wr_ptr_gray_sync);
+
+endmodule
+            </div>
+
+            <h4>6.3.3 CDC方案对比与选择</h4>
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>方案</th>
+                            <th>延迟</th>
+                            <th>吞吐量</th>
+                            <th>面积开销</th>
+                            <th>设计复杂度</th>
+                            <th>适用场景</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>两级同步器</td>
+                            <td>固定2-3周期</td>
+                            <td>低</td>
+                            <td>最小</td>
+                            <td>低</td>
+                            <td>单比特控制信号</td>
+                        </tr>
+                        <tr>
+                            <td>握手协议</td>
+                            <td>可变(4-10周期)</td>
+                            <td>中</td>
+                            <td>中等</td>
+                            <td>中</td>
+                            <td>多比特数据、命令传输</td>
+                        </tr>
+                        <tr>
+                            <td>异步FIFO</td>
+                            <td>高(深度相关)</td>
+                            <td>高</td>
+                            <td>较大</td>
+                            <td>高</td>
+                            <td>大量连续数据流</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="warning-box">
+                <p><strong>⚠️ CDC设计陷阱警告：</strong></p>
+                <ul>
+                    <li><strong>亚稳态问题：</strong>CDC是芯片设计中最难调试的问题之一，故障现象偶发且难以复现</li>
+                    <li><strong>毛刺传播：</strong>组合逻辑输出直接跨时钟域会导致毛刺传播，必须先寄存</li>
+                    <li><strong>格雷码要求：</strong>多比特计数器跨时钟域必须使用格雷码，否则会产生错误</li>
+                    <li><strong>验证挑战：</strong>常规仿真难以发现CDC问题，需要专门的CDC验证工具</li>
+                </ul>
+            </div>
+
+            <h3>6.4 复位策略</h3>
+            
+            <p>合理的复位策略对NPU的可靠性和功能正确性至关重要。需要考虑复位树的分布、同步、时序和功耗。复位就像是系统的“重启按钮”，但在硬件世界里，这个看似简单的功能却蕴含着许多微妙之处。</p>
+            
+            <p>一个有趣的历史案例：AMD的某款GPU在发布后被发现存在“黑屏”问题，最终追溯到复位时序设计不当——某些模块在复位释放后需要额外的初始化时间，但系统却过早地开始了正常操作。这个问题在实验室环境下很难复现，只有在特定的温度和电压条件下才会出现，这给调试带来了巨大挑战。</p>
+            
+            <p>现代NPU的复位策略越来越复杂。除了传统的全局复位，还有各种精细化的复位机制：软复位（只复位状态机而保留数据）、部分复位（只复位特定模块）、温复位（保留关键配置）等。这些复位类型的存在是为了平衡系统恢复时间和数据保护的需求。例如，在边缘计算场景中，频繁的全局复位会导致不可接受的服务中断，因此需要更精细的复位策略。</p>
+
+            <h4>6.4.1 复位类型选择</h4>
+            <p>选择合适的复位类型就像选择交通工具——没有绝对的好坏，只有最适合特定场景的选择。工程师们经常为“同步复位”还是“异步复位”争论不休，但实践证明，“异步复位同步释放”是一个兼顾两者优点的理想选择。</p>
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>复位类型</th>
+                            <th>优点</th>
+                            <th>缺点</th>
+                            <th>适用场景</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>同步复位</td>
+                            <td>无亚稳态问题、时序容易满足</td>
+                            <td>需要时钟、复位延迟大</td>
+                            <td>数据通路、状态机</td>
+                        </tr>
+                        <tr>
+                            <td>异步复位</td>
+                            <td>响应快、不需要时钟</td>
+                            <td>释放时可能产生亚稳态</td>
+                            <td>控制寄存器、配置模块</td>
+                        </tr>
+                        <tr>
+                            <td>异步复位同步释放</td>
+                            <td>结合两者优点</td>
+                            <td>设计复杂度增加</td>
+                            <td>推荐的默认选择</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="info-box">
+                <p><strong>为什么需要"异步复位同步释放"？</strong></p>
+                <p>异步复位的释放边沿如果不同步，会导致严重的时序问题：</p>
+                <ul>
+                    <li><strong>Recovery时间违例：</strong>复位释放信号相对于时钟的建立时间不足</li>
+                    <li><strong>Removal时间违例：</strong>复位释放信号相对于时钟的保持时间不足</li>
+                    <li><strong>不同步释放：</strong>不同触发器在不同时钟周期脱离复位，导致状态机进入非法状态</li>
+                    <li><strong>最佳实践：</strong>复位信号可以异步置位（立即响应），但必须同步释放（受时钟控制）</li>
+                </ul>
+            </div>
+
+            <h4>6.4.2 复位同步器设计</h4>
+            <p>复位同步器的设计看似简单，实则极其精妙。一个设计良好的复位同步器能够确保整个系统从任何状态平稳地过渡到初始状态。这在容错设计中尤为重要——当系统遇到意外情况时，复位是最后一道防线。</p>
+            <div class="code-block">
+// 异步复位同步释放电路
+module ResetSync (
+    input  wire clk,
+    input  wire async_rst_n,   // 异步复位输入（低有效）
+    output wire sync_rst_n     // 同步复位输出（低有效）
+);
+
+    reg [1:0] rst_sync_q;
+    
+    always @(posedge clk or negedge async_rst_n) begin
+        if (!async_rst_n) begin
+            rst_sync_q <= 2'b00;   // 异步复位立即生效
+        end else begin
+            rst_sync_q <= {rst_sync_q[0], 1'b1};  // 同步释放
+        end
+    end
+    
+    assign sync_rst_n = rst_sync_q[1];
+
+endmodule
+
+// 复位域划分与管理
+module ResetController #(
+    parameter NUM_DOMAINS = 4
+)(
+    input wire clk_sys,
+    input wire power_on_rst_n,      // 上电复位
+    input wire soft_rst_n,          // 软件复位
+    input wire wdt_rst_n,           // 看门狗复位
+    
+    // 各时钟域的时钟
+    input wire [NUM_DOMAINS-1:0] domain_clks,
+    
+    // 各域的复位输出
+    output wire [NUM_DOMAINS-1:0] domain_rst_n
+);
+
+    // 合并复位源
+    wire global_rst_n = power_on_rst_n & soft_rst_n & wdt_rst_n;
+    
+    // 为每个时钟域生成同步复位
+    genvar i;
+    generate
+        for (i = 0; i < NUM_DOMAINS; i = i + 1) begin : rst_sync_gen
+            ResetSync u_rst_sync (
+                .clk         (domain_clks[i]),
+                .async_rst_n (global_rst_n),
+                .sync_rst_n  (domain_rst_n[i])
+            );
+        end
+    endgenerate
+
+endmodule
+
+// 复位顺序控制器
+module ResetSequencer (
+    input wire clk,
+    input wire rst_n,
+    
+    // 模块复位输出（按顺序释放）
+    output reg rst_pll_n,        // PLL复位
+    output reg rst_mem_n,        // 内存控制器复位
+    output reg rst_core_n,       // 计算核心复位
+    output reg rst_periph_n      // 外设复位
+);
+
+    // 状态机状态
+    localparam IDLE = 3'b000;
+    localparam RST_PLL = 3'b001;
+    localparam RST_MEM = 3'b010;
+    localparam RST_CORE = 3'b011;
+    localparam RST_PERIPH = 3'b100;
+    localparam DONE = 3'b101;
+    
+    reg [2:0] state, next_state;
+    reg [7:0] wait_cnt;
+    
+    // 状态机
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state <= IDLE;
+            wait_cnt <= 0;
+        end else begin
+            state <= next_state;
+            if (state != next_state) begin
+                wait_cnt <= 0;
+            end else begin
+                wait_cnt <= wait_cnt + 1;
+            end
+        end
+    end
+    
+    // 下一状态逻辑
+    always @(*) begin
+        next_state = state;
+        case (state)
+            IDLE: next_state = RST_PLL;
+            RST_PLL: if (wait_cnt >= 8'h10) next_state = RST_MEM;
+            RST_MEM: if (wait_cnt >= 8'h20) next_state = RST_CORE;
+            RST_CORE: if (wait_cnt >= 8'h10) next_state = RST_PERIPH;
+            RST_PERIPH: if (wait_cnt >= 8'h08) next_state = DONE;
+            DONE: next_state = DONE;
+            default: next_state = IDLE;
+        endcase
+    end
+    
+    // 复位输出控制
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            rst_pll_n <= 1'b0;
+            rst_mem_n <= 1'b0;
+            rst_core_n <= 1'b0;
+            rst_periph_n <= 1'b0;
+        end else begin
+            case (state)
+                RST_PLL: rst_pll_n <= 1'b1;
+                RST_MEM: rst_mem_n <= 1'b1;
+                RST_CORE: rst_core_n <= 1'b1;
+                RST_PERIPH: rst_periph_n <= 1'b1;
+                default: begin
+                    // 保持当前状态
+                end
+            endcase
+        end
+    end
+
+endmodule
+            </div>
+
+            <h4>6.4.3 复位设计最佳实践</h4>
+            <div class="info-box">
+                <p><strong>复位设计准则：</strong></p>
+                <ul>
+                    <li>使用异步复位同步释放作为默认方案</li>
+                    <li>复位信号要经过时序分析，满足recovery和removal时间</li>
+                    <li>大规模设计需要复位树（Reset Tree）进行扇出控制</li>
+                    <li>不同功能模块可以有独立的复位控制</li>
+                    <li>考虑部分复位（Partial Reset）以降低功耗</li>
+                    <li>关键寄存器需要显式复位，非关键路径可以不复位</li>
+                </ul>
+            </div>
+
+            <div class="exercise">
+                <h4>练习 6.4</h4>
+                <div class="question">
+                    <p><strong>题目：</strong>设计一个支持多种复位源的复位管理器，要求：
+                    1) 支持上电复位、软件复位、看门狗复位
+                    2) 实现复位优先级管理
+                    3) 提供复位状态寄存器供软件查询</p>
+                    <details class="hint">
+                        <summary>💡 提示</summary>
+                        <p>思考方向：不同复位源有不同优先级（上电复位>看门狗>软件复位）。使用状态机管理复位序列。复位状态需要保存以供调试。考虑异步复位同步释放的最佳实践。</p>
+                    </details>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <div class="code-block">
+module ResetManager (
+    input wire clk,
+    input wire por_n,           // Power-on reset (highest priority)
+    input wire soft_rst_req,    // Software reset request
+    input wire wdt_rst_n,       // Watchdog reset
+    
+    // APB接口用于状态查询
+    input wire psel,
+    input wire penable,
+    input wire pwrite,
+    input wire [7:0] paddr,
+    input wire [31:0] pwdata,
+    output reg [31:0] prdata,
+    
+    // 复位输出
+    output wire sys_rst_n
+);
+
+    // 复位状态寄存器
+    reg [2:0] rst_source;  // 记录复位源
+    reg soft_rst_pending;
+    
+    // 复位源编码
+    localparam RST_POR = 3'b001;
+    localparam RST_SOFT = 3'b010;
+    localparam RST_WDT = 3'b100;
+    
+    // 软件复位脉冲生成
+    reg soft_rst_req_d1;
+    wire soft_rst_pulse = soft_rst_req && !soft_rst_req_d1;
+    
+    always @(posedge clk or negedge por_n) begin
+        if (!por_n) begin
+            soft_rst_req_d1 <= 1'b0;
+            soft_rst_pending <= 1'b0;
+            rst_source <= RST_POR;
+        end else begin
+            soft_rst_req_d1 <= soft_rst_req;
+            
+            // 软件复位请求锁存
+            if (soft_rst_pulse) begin
+                soft_rst_pending <= 1'b1;
+            end else if (!sys_rst_n) begin
+                soft_rst_pending <= 1'b0;
+            end
+            
+            // 复位源记录（优先级：POR > WDT > SOFT）
+            if (!por_n) begin
+                rst_source <= RST_POR;
+            end else if (!wdt_rst_n) begin
+                rst_source <= RST_WDT;
+            end else if (soft_rst_pending) begin
+                rst_source <= RST_SOFT;
+            end
+        end
+    end
+    
+    // 复位输出生成
+    wire rst_combined = por_n & wdt_rst_n & !soft_rst_pending;
+    
+    // 异步复位同步释放
+    ResetSync u_rst_sync (
+        .clk         (clk),
+        .async_rst_n (rst_combined),
+        .sync_rst_n  (sys_rst_n)
+    );
+    
+    // APB读操作
+    always @(posedge clk or negedge por_n) begin
+        if (!por_n) begin
+            prdata <= 32'h0;
+        end else if (psel && !pwrite && penable) begin
+            case (paddr[7:0])
+                8'h00: prdata <= {29'h0, rst_source};  // 复位源状态
+                8'h04: prdata <= {31'h0, sys_rst_n};   // 当前复位状态
+                default: prdata <= 32'h0;
+            endcase
+        end
+    end
+
+endmodule
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <h3>6.5 低功耗设计</h3>
+            
+            <p>NPU的功耗优化是关键设计目标，需要从架构到实现各个层面进行优化。功耗效率是NPU设计的核心指标之一，特别是在移动和边缘计算场景中。在智能手机中，NPU的功耗预算可能只有1-2瓦，但却要完成每秒数十亿次的计算。这就像是要求一辆微型电动车跑出赛车的性能——每一瓦特的能量都必须被最大限度地利用。</p>
+            
+            <p>功耗的来源可以分为两大类：动态功耗（电路开关时产生）和静态功耗（漏电流）。在先进工艺节点下，静态功耗的比例越来越高，这给低功耗设计带来了新的挑战。一个有趣的数据：在7nm工艺下，一个高性能NPU在空闲状态的漏电功耗可能占总功耗的20-30%，这在过去是难以想象的。</p>
+            
+            <p>业界领先的低功耗设计案例是Apple的Neural Engine。它采用了多层次的功耗优化策略：算法层面的量化和剪枝、架构层面的数据复用和访存优化、电路层面的时钟门控和电源门控、物理层面的多阈值电压器件。这种全方位的优化使得Neural Engine在同类产品中拥有最佳的能效比。</p>
+
+            <h4>6.5.1 时钟门控（Clock Gating）</h4>
+            <p>时钟门控是降低动态功耗最有效的技术之一。时钟信号是芯片中最活跃的信号，每个时钟周期都会翻转两次，带动大量的寄存器和组合逻辑。在一个典型的NPU中，时钟树的功耗可能占总功耗的30-40%。通过智能地关闭不必要的时钟，可以显著降低功耗。</p>
+            
+            <p>时钟门控的实现看似简单（只是一个AND门），但其中的细节却至关重要。一个设计不当的时钟门控可能产生毛刺，导致寄存器状态翻转，造成功能错误。因此，工业界普遍采用基于锁存器的时钟门控单元（Latch-based Clock Gating Cell），它能够滤除使能信号上的毛刺。</p>
+            <div class="code-block">
+// 细粒度时钟门控实现
+module ClockGatingCell (
+    input  wire clk,
+    input  wire enable,
+    input  wire test_en,  // DFT测试使能
+    output wire gclk      // 门控后的时钟
+);
+
+    reg enable_latch;
+    
+    // 低电平锁存器，防止毛刺
+    always @(clk or enable or test_en) begin
+        if (!clk) begin
+            enable_latch <= enable | test_en;
+        end
+    end
+    
+    // AND门生成门控时钟
+    assign gclk = clk & enable_latch;
+
+endmodule
+
+// MAC阵列的层次化时钟门控
+module MACArrayClockGated #(
+    parameter ARRAY_SIZE = 16,
+    parameter DATA_WIDTH = 8
+)(
+    input wire clk,
+    input wire rst_n,
+    input wire array_enable,
+    input wire [ARRAY_SIZE-1:0] row_enable,
+    input wire [ARRAY_SIZE-1:0] col_enable,
+    
+    // 数据接口
+    input wire [DATA_WIDTH-1:0] act_in [ARRAY_SIZE-1:0],
+    input wire [DATA_WIDTH-1:0] weight_in [ARRAY_SIZE-1:0][ARRAY_SIZE-1:0],
+    output wire [31:0] acc_out [ARRAY_SIZE-1:0][ARRAY_SIZE-1:0]
+);
+
+    // 层次化时钟门控
+    wire array_gclk;
+    wire [ARRAY_SIZE-1:0] row_gclk;
+    
+    // 顶层时钟门控
+    ClockGatingCell u_array_cg (
+        .clk     (clk),
+        .enable  (array_enable),
+        .test_en (1'b0),
+        .gclk    (array_gclk)
+    );
+    
+    // 行级时钟门控
+    genvar i, j;
+    generate
+        for (i = 0; i < ARRAY_SIZE; i = i + 1) begin : row_cg_gen
+            ClockGatingCell u_row_cg (
+                .clk     (array_gclk),
+                .enable  (row_enable[i]),
+                .test_en (1'b0),
+                .gclk    (row_gclk[i])
+            );
+            
+            // MAC单元实例化
+            for (j = 0; j < ARRAY_SIZE; j = j + 1) begin : mac_gen
+                wire mac_enable = row_enable[i] & col_enable[j];
+                wire mac_gclk;
+                
+                // 单元级时钟门控（可选）
+                ClockGatingCell u_mac_cg (
+                    .clk     (row_gclk[i]),
+                    .enable  (col_enable[j]),
+                    .test_en (1'b0),
+                    .gclk    (mac_gclk)
+                );
+                
+                // MAC单元
+                MACUnit #(.DATA_WIDTH(DATA_WIDTH)) u_mac (
+                    .clk     (mac_gclk),
+                    .rst_n   (rst_n),
+                    .enable  (1'b1),  // 时钟已门控
+                    .a_in    (act_in[i]),
+                    .b_in    (weight_in[i][j]),
+                    .acc_out (acc_out[i][j])
+                );
+            end
+        end
+    endgenerate
+
+endmodule
+            </div>
+
+            <div class="info-box">
+                <p><strong>时钟门控的功耗节省量化分析：</strong></p>
+                <p>以一个32位寄存器为例，假设：</p>
+                <ul>
+                    <li>时钟频率：1GHz</li>
+                    <li>寄存器翻转功耗：0.5pJ/bit/cycle</li>
+                    <li>时钟树功耗：0.2pJ/bit/cycle</li>
+                    <li>数据变化率：10%（90%时间数据不变）</li>
+                </ul>
+                <p><strong>不使用时钟门控：</strong></p>
+                <ul>
+                    <li>动态功耗 = (0.5 + 0.2) × 32 × 1G = 22.4mW</li>
+                </ul>
+                <p><strong>使用时钟门控后：</strong></p>
+                <ul>
+                    <li>时钟树功耗降为10%：0.2 × 32 × 1G × 0.1 = 0.64mW</li>
+                    <li>寄存器翻转功耗：0.5 × 32 × 1G × 0.1 = 1.6mW</li>
+                    <li>总功耗 = 0.64 + 1.6 = 2.24mW</li>
+                    <li><strong>功耗节省：90%</strong></li>
+                </ul>
+                <p>对于包含数千个寄存器的NPU设计，时钟门控可以节省数瓦的功耗。</p>
+            </div>
+
+            <h4>6.5.2 操作数隔离（Operand Isolation）</h4>
+            <div class="code-block">
+// 操作数隔离减少无效翻转
+module MACWithIsolation #(
+    parameter DATA_WIDTH = 8,
+    parameter ACC_WIDTH = 32
+)(
+    input wire clk,
+    input wire rst_n,
+    input wire enable,
+    
+    input wire signed [DATA_WIDTH-1:0] a_in,
+    input wire signed [DATA_WIDTH-1:0] b_in,
+    output reg signed [ACC_WIDTH-1:0] acc_out
+);
+
+    // 操作数隔离
+    wire signed [DATA_WIDTH-1:0] a_isolated;
+    wire signed [DATA_WIDTH-1:0] b_isolated;
+    
+    // 当不使能时，将输入置零，减少乘法器内部翻转
+    assign a_isolated = enable ? a_in : {DATA_WIDTH{1'b0}};
+    assign b_isolated = enable ? b_in : {DATA_WIDTH{1'b0}};
+    
+    // MAC运算
+    wire signed [2*DATA_WIDTH-1:0] mult_result;
+    assign mult_result = a_isolated * b_isolated;
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            acc_out <= {ACC_WIDTH{1'b0}};
+        end else if (enable) begin
+            acc_out <= acc_out + {{(ACC_WIDTH-2*DATA_WIDTH){mult_result[2*DATA_WIDTH-1]}}, mult_result};
+        end
+        // 不使能时保持原值，无需else分支
+    end
+
+endmodule
+            </div>
+
+            <h4>6.5.3 动态电压频率调节（DVFS）</h4>
+            <div class="code-block">
+// DVFS控制器
+module DVFSController (
+    input wire clk,
+    input wire rst_n,
+    
+    // 性能监控输入
+    input wire [31:0] workload,      // 当前负载
+    input wire [31:0] deadline,      // 截止时间
+    
+    // 电压频率控制输出
+    output reg [2:0] vdd_level,      // 电压等级
+    output reg [2:0] freq_level,     // 频率等级
+    output reg dvfs_change_req       // 变更请求
+);
+
+    // DVFS状态
+    localparam DVFS_LOW = 3'b000;    // 0.8V, 200MHz
+    localparam DVFS_MID = 3'b001;    // 0.9V, 400MHz
+    localparam DVFS_HIGH = 3'b010;   // 1.0V, 600MHz
+    localparam DVFS_TURBO = 3'b011;  // 1.1V, 800MHz
+    
+    reg [2:0] current_level;
+    reg [2:0] target_level;
+    reg [15:0] change_delay_cnt;
+    
+    // 负载评估
+    wire high_load = (workload > 32'h8000_0000);
+    wire mid_load = (workload > 32'h4000_0000) && !high_load;
+    wire low_load = (workload <= 32'h4000_0000);
+    
+    // 目标等级决策
+    always @(*) begin
+        if (high_load && (deadline < 32'h0000_1000)) begin
+            target_level = DVFS_TURBO;
+        end else if (high_load) begin
+            target_level = DVFS_HIGH;
+        end else if (mid_load) begin
+            target_level = DVFS_MID;
+        end else begin
+            target_level = DVFS_LOW;
+        end
+    end
+    
+    // DVFS状态机
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            current_level <= DVFS_LOW;
+            vdd_level <= DVFS_LOW;
+            freq_level <= DVFS_LOW;
+            dvfs_change_req <= 1'b0;
+            change_delay_cnt <= 16'h0;
+        end else begin
+            if (current_level != target_level) begin
+                if (change_delay_cnt == 16'h0) begin
+                    // 发起DVFS变更
+                    dvfs_change_req <= 1'b1;
+                    change_delay_cnt <= 16'hFFFF;
+                    
+                    // 电压优先于频率调整
+                    if (target_level > current_level) begin
+                        vdd_level <= target_level;  // 先升压
+                    end else begin
+                        freq_level <= target_level; // 先降频
+                    end
+                end else if (change_delay_cnt == 16'h8000) begin
+                    // 完成第二步调整
+                    if (target_level > current_level) begin
+                        freq_level <= target_level; // 后升频
+                    end else begin
+                        vdd_level <= target_level;  // 后降压
+                    end
+                    current_level <= target_level;
+                end else if (change_delay_cnt == 16'h0001) begin
+                    dvfs_change_req <= 1'b0;
+                end
+                
+                if (change_delay_cnt > 0) begin
+                    change_delay_cnt <= change_delay_cnt - 1;
+                end
+            end
+        end
+    end
+
+endmodule
+            </div>
+
+            <h4>6.5.4 功耗优化技术总结</h4>
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>技术</th>
+                            <th>功耗节省</th>
+                            <th>实现复杂度</th>
+                            <th>适用场景</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>时钟门控</td>
+                            <td>20-40%</td>
+                            <td>低</td>
+                            <td>所有模块</td>
+                        </tr>
+                        <tr>
+                            <td>操作数隔离</td>
+                            <td>5-15%</td>
+                            <td>低</td>
+                            <td>算术单元</td>
+                        </tr>
+                        <tr>
+                            <td>多阈值电压</td>
+                            <td>10-20%</td>
+                            <td>中</td>
+                            <td>关键/非关键路径</td>
+                        </tr>
+                        <tr>
+                            <td>电源门控</td>
+                            <td>50-90%</td>
+                            <td>高</td>
+                            <td>空闲模块</td>
+                        </tr>
+                        <tr>
+                            <td>DVFS</td>
+                            <td>30-60%</td>
+                            <td>高</td>
+                            <td>系统级</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="exercise">
+                <h4>练习 6.5</h4>
+                <div class="question">
+                    <p><strong>题目：</strong>设计一个支持多级电源门控的NPU计算核心，要求：
+                    1) 支持核心级、簇级、单元级三级电源门控
+                    2) 实现电源开关时序控制
+                    3) 处理隔离和状态保持</p>
+                    <details class="hint">
+                        <summary>💡 提示</summary>
+                        <p>思考方向：电源门控需要分层次关闭和打开（先关小单元再关大单元）。使用隔离单元防止漏电流。状态保持需要特殊的保持寄存器。注意电源开关的时序控制和rush current。</p>
+                    </details>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <div class="code-block">
+module PowerGatedNPUCore #(
+    parameter NUM_CLUSTERS = 4,
+    parameter UNITS_PER_CLUSTER = 16
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 电源控制
+    input wire core_power_req,
+    input wire [NUM_CLUSTERS-1:0] cluster_power_req,
+    input wire [NUM_CLUSTERS-1:0][UNITS_PER_CLUSTER-1:0] unit_power_req,
+    
+    // 电源状态
+    output reg core_powered,
+    output reg [NUM_CLUSTERS-1:0] cluster_powered,
+    output reg [NUM_CLUSTERS-1:0][UNITS_PER_CLUSTER-1:0] unit_powered
+);
+
+    // 电源开关控制信号
+    reg core_sleep_n;
+    reg core_iso_n;
+    reg core_ret_n;
+    
+    reg [NUM_CLUSTERS-1:0] cluster_sleep_n;
+    reg [NUM_CLUSTERS-1:0] cluster_iso_n;
+    reg [NUM_CLUSTERS-1:0] cluster_ret_n;
+    
+    // 电源时序状态机
+    localparam PSM_OFF = 3'b000;
+    localparam PSM_ISO_ON = 3'b001;
+    localparam PSM_RET_ON = 3'b010;
+    localparam PSM_PWR_ON = 3'b011;
+    localparam PSM_ACTIVE = 3'b100;
+    localparam PSM_PWR_OFF = 3'b101;
+    localparam PSM_RET_OFF = 3'b110;
+    localparam PSM_ISO_OFF = 3'b111;
+    
+    reg [2:0] core_psm_state;
+    reg [7:0] core_psm_timer;
+    
+    // 核心级电源控制状态机
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            core_psm_state <= PSM_OFF;
+            core_psm_timer <= 8'h0;
+            core_sleep_n <= 1'b0;
+            core_iso_n <= 1'b0;
+            core_ret_n <= 1'b0;
+            core_powered <= 1'b0;
+        end else begin
+            case (core_psm_state)
+                PSM_OFF: begin
+                    if (core_power_req) begin
+                        core_psm_state <= PSM_ISO_ON;
+                        core_iso_n <= 1'b1;  // 先开启隔离
+                        core_psm_timer <= 8'h10;
+                    end
+                end
+                
+                PSM_ISO_ON: begin
+                    if (core_psm_timer == 0) begin
+                        core_psm_state <= PSM_RET_ON;
+                        core_ret_n <= 1'b1;  // 开启状态保持
+                        core_psm_timer <= 8'h10;
+                    end else begin
+                        core_psm_timer <= core_psm_timer - 1;
+                    end
+                end
+                
+                PSM_RET_ON: begin
+                    if (core_psm_timer == 0) begin
+                        core_psm_state <= PSM_PWR_ON;
+                        core_sleep_n <= 1'b1;  // 开启电源
+                        core_psm_timer <= 8'h40;  // 更长的稳定时间
+                    end else begin
+                        core_psm_timer <= core_psm_timer - 1;
+                    end
+                end
+                
+                PSM_PWR_ON: begin
+                    if (core_psm_timer == 0) begin
+                        core_psm_state <= PSM_ACTIVE;
+                        core_powered <= 1'b1;
+                    end else begin
+                        core_psm_timer <= core_psm_timer - 1;
+                    end
+                end
+                
+                PSM_ACTIVE: begin
+                    if (!core_power_req) begin
+                        core_psm_state <= PSM_PWR_OFF;
+                        core_sleep_n <= 1'b0;  // 关闭电源
+                        core_powered <= 1'b0;
+                        core_psm_timer <= 8'h10;
+                    end
+                end
+                
+                PSM_PWR_OFF: begin
+                    if (core_psm_timer == 0) begin
+                        core_psm_state <= PSM_RET_OFF;
+                        core_ret_n <= 1'b0;  // 关闭状态保持
+                        core_psm_timer <= 8'h10;
+                    end else begin
+                        core_psm_timer <= core_psm_timer - 1;
+                    end
+                end
+                
+                PSM_RET_OFF: begin
+                    if (core_psm_timer == 0) begin
+                        core_psm_state <= PSM_ISO_OFF;
+                        core_iso_n <= 1'b0;  // 关闭隔离
+                        core_psm_timer <= 8'h10;
+                    end else begin
+                        core_psm_timer <= core_psm_timer - 1;
+                    end
+                end
+                
+                PSM_ISO_OFF: begin
+                    if (core_psm_timer == 0) begin
+                        core_psm_state <= PSM_OFF;
+                    end else begin
+                        core_psm_timer <= core_psm_timer - 1;
+                    end
+                end
+            endcase
+        end
+    end
+    
+    // 簇级电源控制（简化示例）
+    genvar i;
+    generate
+        for (i = 0; i < NUM_CLUSTERS; i = i + 1) begin : cluster_pg_gen
+            always @(posedge clk or negedge rst_n) begin
+                if (!rst_n) begin
+                    cluster_powered[i] <= 1'b0;
+                    cluster_sleep_n[i] <= 1'b0;
+                    cluster_iso_n[i] <= 1'b0;
+                    cluster_ret_n[i] <= 1'b0;
+                end else begin
+                    // 只有核心上电时才能控制簇
+                    if (core_powered) begin
+                        if (cluster_power_req[i] && !cluster_powered[i]) begin
+                            // 简化的上电序列
+                            cluster_iso_n[i] <= 1'b1;
+                            #10 cluster_ret_n[i] <= 1'b1;
+                            #10 cluster_sleep_n[i] <= 1'b1;
+                            #40 cluster_powered[i] <= 1'b1;
+                        end else if (!cluster_power_req[i] && cluster_powered[i]) begin
+                            // 简化的下电序列
+                            cluster_powered[i] <= 1'b0;
+                            cluster_sleep_n[i] <= 1'b0;
+                            #10 cluster_ret_n[i] <= 1'b0;
+                            #10 cluster_iso_n[i] <= 1'b0;
+                        end
+                    end else begin
+                        cluster_powered[i] <= 1'b0;
+                        cluster_sleep_n[i] <= 1'b0;
+                        cluster_iso_n[i] <= 1'b0;
+                        cluster_ret_n[i] <= 1'b0;
+                    end
+                end
+            end
+        end
+    endgenerate
+
+endmodule
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <h3>6.6 面积优化</h3>
+            
+            <p>面积优化对降低芯片成本至关重要。NPU设计需要在性能、功耗和面积之间找到最佳平衡点。芯片面积直接决定了成本，在半导体行业有一个著名的说法：“面积就是金钱”。每平方毫米的硅片成本可能高达数十美元，对于一个量产的NPU产品，1%的面积节省可能意味着每年数百万美元的成本节省。</p>
+            
+            <p>面积优化是一门艺术，需要在多个层次进行权衡。一个经典的例子是乘法器的实现：Booth编码乘法器比普通乘法器节生约40%的面积，但会增加控制逻辑的复杂度。在Google TPU中，设计团队选择了一种折中方案：在计算核心中使用简单的乘法器以追求高频率，但通过量化技术（8-bit整数）来减少每个乘法器的面积。这种“以量取胜”的策略被证明非常成功。</p>
+            
+            <p>现代EDA工具提供了强大的面积优化能力，但工具不是万能的。RTL工程师需要理解工具的优化原理，并编写“工具友好”的代码。一个实际的教训：某公司的NPU项目在综合后发现面积超出预期20%，分析后发现是因为大量使用了“一热编码”（one-hot encoding）而非二进制编码，导致控制逻辑膨胀。简单的编码方式改变就节省了15%的面积。</p>
+
+            <h4>6.6.1 资源共享技术</h4>
+            <p>资源共享是面积优化的核心技术之一。其基本思想是：当多个模块不会同时使用某个资源时，可以让它们共享这个资源。这就像是公共交通系统——不是每个人都需要拥有一辆车，大家可以共享公交车。在NPU设计中，乘法器、除法器、特殊函数单元等高成本资源是共享的主要候选。</p>
+            
+            <p>但资源共享也有其代价：需要额外的仲裁逻辑、多路选择器和控制逻辑。更重要的是，共享可能会影响性能——当多个请求同时到达时，某些请求必须等待。因此，设计师需要仔细分析资源的使用模式，确保共享不会成为性能瓶颈。</p>
+            <div class="code-block">
+// 优化的流水线共享乘法器 - Verilog版本
+module SharedMultiplier #(
+    parameter DATA_WIDTH = 16,
+    parameter NUM_USERS = 4,
+    parameter PIPE_STAGES = 3  // 流水线级数
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 请求接口
+    input wire [NUM_USERS-1:0] req,
+    input wire [DATA_WIDTH-1:0] a_in [NUM_USERS-1:0],
+    input wire [DATA_WIDTH-1:0] b_in [NUM_USERS-1:0],
+    
+    // 响应接口
+    output reg [NUM_USERS-1:0] ack,
+    output reg [2*DATA_WIDTH-1:0] result_out [NUM_USERS-1:0]
+);
+
+    // 流水线阶段定义
+    // Stage 0: 仲裁和输入选择
+    // Stage 1: 乘法第一级
+    // Stage 2: 乘法第二级
+    // Stage 3: 输出分发
+    
+    // 仲裁器状态
+    reg [$clog2(NUM_USERS)-1:0] grant_id;
+    reg req_valid;
+    
+    // 轮询仲裁器
+    reg [$clog2(NUM_USERS)-1:0] rr_pointer;
+    
+    // 流水线寄存器
+    reg [DATA_WIDTH-1:0] pipe_a [PIPE_STAGES:0];
+    reg [DATA_WIDTH-1:0] pipe_b [PIPE_STAGES:0];
+    reg [$clog2(NUM_USERS)-1:0] pipe_id [PIPE_STAGES:0];
+    reg pipe_valid [PIPE_STAGES:0];
+    
+    // Stage 0: 仲裁逻辑（改进的轮询仲裁）
+    integer i;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            rr_pointer <= 0;
+            req_valid <= 1'b0;
+            grant_id <= 0;
+        end else begin
+            req_valid <= 1'b0;
+            
+            // 轮询查找下一个请求
+            for (i = 0; i < NUM_USERS; i = i + 1) begin
+                integer idx = (rr_pointer + i) % NUM_USERS;
+                if (req[idx] && !req_valid) begin
+                    grant_id <= idx;
+                    req_valid <= 1'b1;
+                    rr_pointer <= (idx + 1) % NUM_USERS;
+                end
+            end
+        end
+    end
+    
+    // Stage 0->1: 输入寄存
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            pipe_a[0] <= 0;
+            pipe_b[0] <= 0;
+            pipe_id[0] <= 0;
+            pipe_valid[0] <= 1'b0;
+        end else begin
+            if (req_valid) begin
+                pipe_a[0] <= a_in[grant_id];
+                pipe_b[0] <= b_in[grant_id];
+                pipe_id[0] <= grant_id;
+                pipe_valid[0] <= 1'b1;
+            end else begin
+                pipe_valid[0] <= 1'b0;
+            end
+        end
+    end
+    
+    // 流水线乘法器（分为两级）
+    reg [DATA_WIDTH-1:0] mult_a_reg, mult_b_reg;
+    reg [DATA_WIDTH/2-1:0] partial_prod [3:0];
+    reg [2*DATA_WIDTH-1:0] mult_result;
+    
+    // Stage 1: 部分积计算
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            mult_a_reg <= 0;
+            mult_b_reg <= 0;
+            pipe_id[1] <= 0;
+            pipe_valid[1] <= 1'b0;
+            for (i = 0; i < 4; i = i + 1) begin
+                partial_prod[i] <= 0;
+            end
+        end else begin
+            mult_a_reg <= pipe_a[0];
+            mult_b_reg <= pipe_b[0];
+            pipe_id[1] <= pipe_id[0];
+            pipe_valid[1] <= pipe_valid[0];
+            
+            // 计算部分积（Booth编码优化）
+            partial_prod[0] <= pipe_a[0][DATA_WIDTH/2-1:0] * pipe_b[0][DATA_WIDTH/2-1:0];
+            partial_prod[1] <= pipe_a[0][DATA_WIDTH-1:DATA_WIDTH/2] * pipe_b[0][DATA_WIDTH/2-1:0];
+            partial_prod[2] <= pipe_a[0][DATA_WIDTH/2-1:0] * pipe_b[0][DATA_WIDTH-1:DATA_WIDTH/2];
+            partial_prod[3] <= pipe_a[0][DATA_WIDTH-1:DATA_WIDTH/2] * pipe_b[0][DATA_WIDTH-1:DATA_WIDTH/2];
+        end
+    end
+    
+    // Stage 2: 最终累加
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            mult_result <= 0;
+            pipe_id[2] <= 0;
+            pipe_valid[2] <= 1'b0;
+        end else begin
+            pipe_id[2] <= pipe_id[1];
+            pipe_valid[2] <= pipe_valid[1];
+            
+            // Wallace树累加部分积
+            mult_result <= {partial_prod[3], {(DATA_WIDTH/2){1'b0}}} +
+                          ({partial_prod[2], {(DATA_WIDTH/2){1'b0}}} >> (DATA_WIDTH/2)) +
+                          ({partial_prod[1], {(DATA_WIDTH/2){1'b0}}} >> (DATA_WIDTH/2)) +
+                          partial_prod[0];
+        end
+    end
+    
+    // Stage 3: 输出分发
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            ack <= 0;
+            for (i = 0; i < NUM_USERS; i = i + 1) begin
+                result_out[i] <= 0;
+            end
+        end else begin
+            // 清除之前的应答
+            ack <= 0;
+            
+            // 设置新的应答
+            if (pipe_valid[2]) begin
+                ack[pipe_id[2]] <= 1'b1;
+                result_out[pipe_id[2]] <= mult_result;
+            end
+        end
+    end
+
+endmodule
+            </div>
+            
+            <div class="code-block">
+// Chisel版本的流水线共享乘法器
+import chisel3._
+import chisel3.util._
+
+class SharedMultiplier(dataWidth: Int = 16, numUsers: Int = 4, pipeStages: Int = 3) extends Module {
+  val io = IO(new Bundle {
+    // 请求接口
+    val req = Input(Vec(numUsers, Bool()))
+    val aIn = Input(Vec(numUsers, UInt(dataWidth.W)))
+    val bIn = Input(Vec(numUsers, UInt(dataWidth.W)))
+    
+    // 响应接口
+    val ack = Output(Vec(numUsers, Bool()))
+    val resultOut = Output(Vec(numUsers, UInt((2*dataWidth).W)))
+  })
+  
+  // 轮询仲裁器
+  val rrPointer = RegInit(0.U(log2Ceil(numUsers).W))
+  val grantId = Wire(UInt(log2Ceil(numUsers).W))
+  val reqValid = Wire(Bool())
+  
+  // 仲裁逻辑
+  val arbiter = Module(new RoundRobinArbiter(numUsers))
+  arbiter.io.req := io.req
+  grantId := arbiter.io.grant
+  reqValid := arbiter.io.valid
+  
+  // 流水线寄存器
+  val pipeA = RegInit(VecInit(Seq.fill(pipeStages+1)(0.U(dataWidth.W))))
+  val pipeB = RegInit(VecInit(Seq.fill(pipeStages+1)(0.U(dataWidth.W))))
+  val pipeId = RegInit(VecInit(Seq.fill(pipeStages+1)(0.U(log2Ceil(numUsers).W))))
+  val pipeValid = RegInit(VecInit(Seq.fill(pipeStages+1)(false.B)))
+  
+  // Stage 0->1: 输入寄存
+  when (reqValid) {
+    pipeA(0) := io.aIn(grantId)
+    pipeB(0) := io.bIn(grantId)
+    pipeId(0) := grantId
+    pipeValid(0) := true.B
+  }.otherwise {
+    pipeValid(0) := false.B
+  }
+  
+  // 流水线传播
+  for (i <- 1 to pipeStages) {
+    pipeA(i) := pipeA(i-1)
+    pipeB(i) := pipeB(i-1)
+    pipeId(i) := pipeId(i-1)
+    pipeValid(i) := pipeValid(i-1)
+  }
+  
+  // 乘法器实例
+  val mult = Module(new PipelinedMultiplier(dataWidth))
+  mult.io.a := pipeA(0)
+  mult.io.b := pipeB(0)
+  mult.io.valid := pipeValid(0)
+  
+  // 输出分发
+  io.ack := VecInit(Seq.fill(numUsers)(false.B))
+  when (pipeValid(pipeStages)) {
+    io.ack(pipeId(pipeStages)) := true.B
+    io.resultOut(pipeId(pipeStages)) := mult.io.result
+  }
+}
+            </div>
+            
+            <div class="code-block">
+// 优化的流水线存储器资源共享 - Verilog版本
+module SharedMemoryWrapper #(
+    parameter ADDR_WIDTH = 10,
+    parameter DATA_WIDTH = 32,
+    parameter PIPELINE_READ = 1  // 读操作流水线
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 端口A（读写）
+    input wire a_en,
+    input wire a_we,
+    input wire [ADDR_WIDTH-1:0] a_addr,
+    input wire [DATA_WIDTH-1:0] a_wdata,
+    output reg [DATA_WIDTH-1:0] a_rdata,
+    output reg a_ready,
+    
+    // 端口B（只读）
+    input wire b_en,
+    input wire [ADDR_WIDTH-1:0] b_addr,
+    output reg [DATA_WIDTH-1:0] b_rdata,
+    output reg b_ready
+);
+
+    // 单端口存储器
+    reg [DATA_WIDTH-1:0] mem [(1<<ADDR_WIDTH)-1:0];
+    
+    // 流水线寄存器
+    reg [ADDR_WIDTH-1:0] addr_pipe;
+    reg [1:0] port_pipe;  // 0: none, 1: port A, 2: port B
+    reg we_pipe;
+    reg [DATA_WIDTH-1:0] wdata_pipe;
+    
+    // 请求缓冲（避免请求丢失）
+    reg a_pending, b_pending;
+    reg [ADDR_WIDTH-1:0] a_addr_buf, b_addr_buf;
+    reg a_we_buf;
+    reg [DATA_WIDTH-1:0] a_wdata_buf;
+    
+    // 仲裁逻辑
+    wire a_grant = (a_en || a_pending) && !b_pending;  // A优先，除非B在等待
+    wire b_grant = (b_en || b_pending) && !(a_en || a_pending);
+    
+    // Stage 1: 地址和控制流水线
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            addr_pipe <= 0;
+            port_pipe <= 0;
+            we_pipe <= 1'b0;
+            wdata_pipe <= 0;
+            a_pending <= 1'b0;
+            b_pending <= 1'b0;
+        end else begin
+            // 默认值
+            port_pipe <= 0;
+            
+            // 处理请求
+            if (a_grant) begin
+                if (a_pending) begin
+                    // 使用缓冲的请求
+                    addr_pipe <= a_addr_buf;
+                    we_pipe <= a_we_buf;
+                    wdata_pipe <= a_wdata_buf;
+                    a_pending <= 1'b0;
+                end else begin
+                    // 使用当前请求
+                    addr_pipe <= a_addr;
+                    we_pipe <= a_we;
+                    wdata_pipe <= a_wdata;
+                end
+                port_pipe <= 1;
+            end else if (b_grant) begin
+                if (b_pending) begin
+                    addr_pipe <= b_addr_buf;
+                    b_pending <= 1'b0;
+                end else begin
+                    addr_pipe <= b_addr;
+                end
+                we_pipe <= 1'b0;
+                port_pipe <= 2;
+            end
+            
+            // 缓冲未服务的请求
+            if (a_en && !a_grant && !a_pending) begin
+                a_pending <= 1'b1;
+                a_addr_buf <= a_addr;
+                a_we_buf <= a_we;
+                a_wdata_buf <= a_wdata;
+            end
+            
+            if (b_en && !b_grant && !b_pending) begin
+                b_pending <= 1'b1;
+                b_addr_buf <= b_addr;
+            end
+        end
+    end
+    
+    // Stage 2: 存储器访问
+    reg [DATA_WIDTH-1:0] read_data;
+    reg [1:0] port_out;
+    
+    always @(posedge clk) begin
+        if (we_pipe) begin
+            mem[addr_pipe] <= wdata_pipe;
+        end
+        read_data <= mem[addr_pipe];
+        port_out <= port_pipe;
+    end
+    
+    // Stage 3: 输出分发
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            a_ready <= 1'b0;
+            b_ready <= 1'b0;
+            a_rdata <= 0;
+            b_rdata <= 0;
+        end else begin
+            // 清除之前的ready
+            a_ready <= 1'b0;
+            b_ready <= 1'b0;
+            
+            // 根据端口分发结果
+            case (port_out)
+                1: begin  // Port A
+                    a_ready <= 1'b1;
+                    if (!we_pipe) begin  // 只在读操作时更新
+                        a_rdata <= read_data;
+                    end
+                end
+                
+                2: begin  // Port B
+                    b_ready <= 1'b1;
+                    b_rdata <= read_data;
+                end
+            endcase
+        end
+    end
+
+endmodule
+            </div>
+            
+            <div class="code-block">
+// Chisel版本的流水线存储器资源共享
+import chisel3._
+import chisel3.util._
+
+class SharedMemoryWrapper(addrWidth: Int = 10, dataWidth: Int = 32) extends Module {
+  val io = IO(new Bundle {
+    // 端口A（读写）
+    val aEn = Input(Bool())
+    val aWe = Input(Bool())
+    val aAddr = Input(UInt(addrWidth.W))
+    val aWdata = Input(UInt(dataWidth.W))
+    val aRdata = Output(UInt(dataWidth.W))
+    val aReady = Output(Bool())
+    
+    // 端口B（只读）
+    val bEn = Input(Bool())
+    val bAddr = Input(UInt(addrWidth.W))
+    val bRdata = Output(UInt(dataWidth.W))
+    val bReady = Output(Bool())
+  })
+  
+  // 存储器
+  val mem = SyncReadMem(1 << addrWidth, UInt(dataWidth.W))
+  
+  // 请求缓冲
+  val aPending = RegInit(false.B)
+  val bPending = RegInit(false.B)
+  val aAddrBuf = Reg(UInt(addrWidth.W))
+  val aWeBuf = Reg(Bool())
+  val aWdataBuf = Reg(UInt(dataWidth.W))
+  val bAddrBuf = Reg(UInt(addrWidth.W))
+  
+  // 仲裁
+  val aGrant = (io.aEn || aPending) && !bPending
+  val bGrant = (io.bEn || bPending) && !(io.aEn || aPending)
+  
+  // 流水线寄存器
+  val addrPipe = Reg(UInt(addrWidth.W))
+  val portPipe = Reg(UInt(2.W))
+  val wePipe = Reg(Bool())
+  val wdataPipe = Reg(UInt(dataWidth.W))
+  
+  // Stage 1: 仲裁和地址流水线
+  when (aGrant) {
+    when (aPending) {
+      addrPipe := aAddrBuf
+      wePipe := aWeBuf
+      wdataPipe := aWdataBuf
+      aPending := false.B
+    }.otherwise {
+      addrPipe := io.aAddr
+      wePipe := io.aWe
+      wdataPipe := io.aWdata
+    }
+    portPipe := 1.U
+  }.elsewhen (bGrant) {
+    addrPipe := Mux(bPending, bAddrBuf, io.bAddr)
+    wePipe := false.B
+    portPipe := 2.U
+    bPending := false.B
+  }.otherwise {
+    portPipe := 0.U
+  }
+  
+  // 缓冲未服务请求
+  when (io.aEn && !aGrant && !aPending) {
+    aPending := true.B
+    aAddrBuf := io.aAddr
+    aWeBuf := io.aWe
+    aWdataBuf := io.aWdata
+  }
+  
+  when (io.bEn && !bGrant && !bPending) {
+    bPending := true.B
+    bAddrBuf := io.bAddr
+  }
+  
+  // Stage 2: 存储器访问
+  val readData = mem.read(addrPipe)
+  when (wePipe) {
+    mem.write(addrPipe, wdataPipe)
+  }
+  val portOut = RegNext(portPipe)
+  
+  // Stage 3: 输出分发
+  io.aReady := portOut === 1.U
+  io.bReady := portOut === 2.U
+  io.aRdata := Mux(io.aReady && !RegNext(wePipe), readData, 0.U)
+  io.bRdata := Mux(io.bReady, readData, 0.U)
+}
+            </div>
+
+            <h4>6.6.2 数据路径优化</h4>
+            <div class="code-block">
+// 优化的流水线融合操作 - Verilog版本
+module FusedOperation #(
+    parameter DATA_WIDTH = 16
+)(
+    input wire clk,
+    input wire rst_n,
+    input wire enable,
+    input wire valid_in,
+    
+    // 原始操作：Y = (A * B) + (C * D) + E
+    input wire signed [DATA_WIDTH-1:0] a, b, c, d, e,
+    output reg signed [DATA_WIDTH*2+1:0] y,
+    output reg valid_out
+);
+
+    // 优化方案：3级流水线，共享2个乘法器
+    // Stage 1: 输入寄存和乘法
+    // Stage 2: 部分和累加
+    // Stage 3: 最终加法和输出
+    
+    // 流水线寄存器
+    reg signed [DATA_WIDTH-1:0] a_s1, b_s1, c_s1, d_s1, e_s1;
+    reg signed [DATA_WIDTH-1:0] e_s2;
+    reg valid_s1, valid_s2;
+    
+    // 乘法器输出
+    wire signed [DATA_WIDTH*2-1:0] mult1_out, mult2_out;
+    
+    // 累加器
+    reg signed [DATA_WIDTH*2:0] partial_sum;
+    
+    // Stage 1: 输入寄存
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            a_s1 <= 0;
+            b_s1 <= 0;
+            c_s1 <= 0;
+            d_s1 <= 0;
+            e_s1 <= 0;
+            valid_s1 <= 1'b0;
+        end else if (enable) begin
+            if (valid_in) begin
+                a_s1 <= a;
+                b_s1 <= b;
+                c_s1 <= c;
+                d_s1 <= d;
+                e_s1 <= e;
+                valid_s1 <= 1'b1;
+            end else begin
+                valid_s1 <= 1'b0;
+            end
+        end
+    end
+    
+    // 共享乘法器（组合逻辑）
+    assign mult1_out = a_s1 * b_s1;
+    assign mult2_out = c_s1 * d_s1;
+    
+    // Stage 2: 部分和累加
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            partial_sum <= 0;
+            e_s2 <= 0;
+            valid_s2 <= 1'b0;
+        end else if (enable) begin
+            if (valid_s1) begin
+                // Wallace树加法器结构
+                partial_sum <= {{1{mult1_out[DATA_WIDTH*2-1]}}, mult1_out} + 
+                              {{1{mult2_out[DATA_WIDTH*2-1]}}, mult2_out};
+                e_s2 <= e_s1;
+                valid_s2 <= 1'b1;
+            end else begin
+                valid_s2 <= 1'b0;
+            end
+        end
+    end
+    
+    // Stage 3: 最终加法
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            y <= 0;
+            valid_out <= 1'b0;
+        end else if (enable) begin
+            if (valid_s2) begin
+                y <= partial_sum + {{(DATA_WIDTH+2){e_s2[DATA_WIDTH-1]}}, e_s2};
+                valid_out <= 1'b1;
+            end else begin
+                valid_out <= 1'b0;
+            end
+        end
+    end
+
+endmodule
+            </div>
+            
+            <div class="code-block">
+// Chisel版本的流水线融合操作
+import chisel3._
+import chisel3.util._
+
+class FusedOperation(dataWidth: Int = 16) extends Module {
+  val io = IO(new Bundle {
+    val enable = Input(Bool())
+    val validIn = Input(Bool())
+    val a = Input(SInt(dataWidth.W))
+    val b = Input(SInt(dataWidth.W))
+    val c = Input(SInt(dataWidth.W))
+    val d = Input(SInt(dataWidth.W))
+    val e = Input(SInt(dataWidth.W))
+    val y = Output(SInt((dataWidth*2+2).W))
+    val validOut = Output(Bool())
+  })
+  
+  // 流水线寄存器
+  val stage1 = RegEnable(new Bundle {
+    val a = io.a
+    val b = io.b
+    val c = io.c
+    val d = io.d
+    val e = io.e
+    val valid = io.validIn
+  }, io.enable)
+  
+  // 乘法器
+  val mult1 = stage1.a * stage1.b
+  val mult2 = stage1.c * stage1.d
+  
+  // Stage 2
+  val stage2 = RegEnable(new Bundle {
+    val partialSum = mult1 +& mult2  // +& 保留进位
+    val e = stage1.e
+    val valid = stage1.valid
+  }, io.enable)
+  
+  // Stage 3
+  val stage3 = RegEnable(new Bundle {
+    val y = stage2.partialSum +& stage2.e.asSInt
+    val valid = stage2.valid
+  }, io.enable)
+  
+  io.y := stage3.y
+  io.validOut := stage3.valid
+}
+
+// 优化的流水线位宽优化MAC - Verilog版本
+module BitwidthOptimized #(
+    parameter IN_WIDTH = 8,
+    parameter WEIGHT_WIDTH = 8,
+    parameter OUT_WIDTH = 24  // 优化后的位宽
+)(
+    input wire clk,
+    input wire rst_n,
+    input wire enable,
+    
+    // 4个输入的MAC
+    input wire signed [IN_WIDTH-1:0] in0, in1, in2, in3,
+    input wire signed [WEIGHT_WIDTH-1:0] w0, w1, w2, w3,
+    output reg signed [OUT_WIDTH-1:0] out,
+    output reg valid_out
+);
+
+    // 流水线寄存器
+    reg signed [IN_WIDTH-1:0] in_reg [3:0];
+    reg signed [WEIGHT_WIDTH-1:0] w_reg [3:0];
+    reg valid_s1;
+    
+    // 部分积寄存器
+    reg signed [IN_WIDTH+WEIGHT_WIDTH-1:0] p_reg [3:0];
+    reg valid_s2;
+    
+    // Wallace树级寄存器
+    reg signed [IN_WIDTH+WEIGHT_WIDTH:0] sum01_reg, sum23_reg;
+    reg valid_s3;
+    
+    // Stage 1: 输入寄存
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            in_reg[0] <= 0; in_reg[1] <= 0; in_reg[2] <= 0; in_reg[3] <= 0;
+            w_reg[0] <= 0; w_reg[1] <= 0; w_reg[2] <= 0; w_reg[3] <= 0;
+            valid_s1 <= 1'b0;
+        end else if (enable) begin
+            in_reg[0] <= in0; in_reg[1] <= in1; in_reg[2] <= in2; in_reg[3] <= in3;
+            w_reg[0] <= w0; w_reg[1] <= w1; w_reg[2] <= w2; w_reg[3] <= w3;
+            valid_s1 <= 1'b1;
+        end else begin
+            valid_s1 <= 1'b0;
+        end
+    end
+    
+    // Stage 2: 乘法器（并行）
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            p_reg[0] <= 0; p_reg[1] <= 0; p_reg[2] <= 0; p_reg[3] <= 0;
+            valid_s2 <= 1'b0;
+        end else begin
+            p_reg[0] <= in_reg[0] * w_reg[0];
+            p_reg[1] <= in_reg[1] * w_reg[1];
+            p_reg[2] <= in_reg[2] * w_reg[2];
+            p_reg[3] <= in_reg[3] * w_reg[3];
+            valid_s2 <= valid_s1;
+        end
+    end
+    
+    // Stage 3: Wallace树第一级
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            sum01_reg <= 0;
+            sum23_reg <= 0;
+            valid_s3 <= 1'b0;
+        end else begin
+            sum01_reg <= p_reg[0] + p_reg[1];
+            sum23_reg <= p_reg[2] + p_reg[3];
+            valid_s3 <= valid_s2;
+        end
+    end
+    
+    // Stage 4: 最终累加和饱和
+    wire signed [IN_WIDTH+WEIGHT_WIDTH+1:0] sum_all = sum01_reg + sum23_reg;
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            out <= 0;
+            valid_out <= 1'b0;
+        end else begin
+            // 饱和逻辑
+            if (sum_all > $signed({1'b0, {(OUT_WIDTH-1){1'b1}}})) begin
+                out <= {1'b0, {(OUT_WIDTH-1){1'b1}}};  // 最大正值
+            end else if (sum_all < $signed({1'b1, {(OUT_WIDTH-1){1'b0}}})) begin
+                out <= {1'b1, {(OUT_WIDTH-1){1'b0}}};  // 最小负值
+            end else begin
+                out <= sum_all[OUT_WIDTH-1:0];
+            end
+            valid_out <= valid_s3;
+        end
+    end
+
+endmodule
+            </div>
+            
+            <div class="code-block">
+// Chisel版本的流水线位宽优化MAC
+import chisel3._
+import chisel3.util._
+
+class BitwidthOptimized(inWidth: Int = 8, weightWidth: Int = 8, outWidth: Int = 24) extends Module {
+  val io = IO(new Bundle {
+    val enable = Input(Bool())
+    val in = Input(Vec(4, SInt(inWidth.W)))
+    val weights = Input(Vec(4, SInt(weightWidth.W)))
+    val out = Output(SInt(outWidth.W))
+    val validOut = Output(Bool())
+  })
+  
+  // Stage 1: 输入寄存
+  val inReg = RegEnable(io.in, io.enable)
+  val wReg = RegEnable(io.weights, io.enable)
+  val validS1 = RegEnable(io.enable, io.enable)
+  
+  // Stage 2: 乘法
+  val products = Wire(Vec(4, SInt((inWidth + weightWidth).W)))
+  for (i <- 0 until 4) {
+    products(i) := RegNext(inReg(i) * wReg(i))
+  }
+  val validS2 = RegNext(validS1)
+  
+  // Stage 3: Wallace树第一级
+  val sum01 = RegNext(products(0) +& products(1))
+  val sum23 = RegNext(products(2) +& products(3))
+  val validS3 = RegNext(validS2)
+  
+  // Stage 4: 最终累加和饱和
+  val sumAll = sum01 +& sum23
+  val maxVal = ((1L << (outWidth - 1)) - 1).S
+  val minVal = (-(1L << (outWidth - 1))).S
+  
+  io.out := RegNext(MuxCase(sumAll(outWidth-1, 0).asSInt, Seq(
+    (sumAll > maxVal) -> maxVal,
+    (sumAll < minVal) -> minVal
+  )))
+  io.validOut := RegNext(validS3)
+}
+            </div>
+
+            <h4>6.6.3 面积优化检查清单</h4>
+            <div class="info-box">
+                <p><strong>面积优化策略：</strong></p>
+                <ul>
+                    <li><strong>资源共享：</strong>
+                        <ul>
+                            <li>共享昂贵的运算单元（乘法器、除法器）</li>
+                            <li>时分复用存储器端口</li>
+                            <li>共享控制逻辑</li>
+                        </ul>
+                    </li>
+                    <li><strong>数据路径优化：</strong>
+                        <ul>
+                            <li>操作融合减少中间寄存器</li>
+                            <li>位宽优化，移除冗余位</li>
+                            <li>使用移位代替乘以2的幂</li>
+                        </ul>
+                    </li>
+                    <li><strong>存储优化：</strong>
+                        <ul>
+                            <li>使用单端口代替双端口RAM</li>
+                            <li>寄存器文件改为分布式RAM</li>
+                            <li>压缩存储格式</li>
+                        </ul>
+                    </li>
+                    <li><strong>逻辑优化：</strong>
+                        <ul>
+                            <li>布尔优化和逻辑简化</li>
+                            <li>常数传播和死代码消除</li>
+                            <li>FSM编码优化</li>
+                        </ul>
+                    </li>
+                </ul>
+            </div>
+            
+            <div class="info-box">
+                <p><strong>面积优化前后对比：</strong></p>
+                <p>以一个16×16 MAC阵列为例：</p>
+                <ul>
+                    <li><strong>优化前：</strong></li>
+                    <ul>
+                        <li>256个独立乘法器：256 × 1000 gates = 256K gates</li>
+                        <li>256个独立累加器：256 × 500 gates = 128K gates</li>
+                        <li>总面积：384K gates</li>
+                    </ul>
+                    <li><strong>优化后（4:1资源共享）：</strong></li>
+                    <ul>
+                        <li>64个共享乘法器：64 × 1000 gates = 64K gates</li>
+                        <li>256个累加器：256 × 500 gates = 128K gates</li>
+                        <li>仲裁和控制逻辑：20K gates</li>
+                        <li>总面积：212K gates</li>
+                        <li><strong>面积节省：45%</strong></li>
+                    </ul>
+                </ul>
+                <p><strong>性能影响：</strong>吞吐量降低到25%，但通过提高频率可部分补偿。适用于对延迟不敏感的应用。</p>
+            </div>
+
+            <h3>6.7 时序收敛</h3>
+            
+            <p>时序收敛是RTL设计到物理实现的关键挑战，需要在设计早期就考虑时序问题。时序收敛就像是一场与时间赛跑的游戏——每个信号都必须在规定的时间窗口内到达目的地，既不能太早（保持时间违例），也不能太晚（建立时间违例）。</p>
+            
+            <p>在现代NPU设计中，时序收敛的难度与日俱增。一方面，为了追求更高的性能，设计频率不断提升（从几百MHz到超过1GHz）；另一方面，先进工艺的线延迟和门延迟变化越来越大，这使得时序预测变得更加困难。一个典型的例子：在7nm工艺下，同一条线的延迟在不同的工艺角（process corner）下可能相差50%以上。</p>
+            
+            <p>NVIDIA在其GPU设计中创造了一种称为“时序驱动设计”（Timing-Driven Design）的方法论。从RTL编码开始，每个设计决策都要考虑其对时序的影响。例如，在设计一个32位加法器时，不是简单地使用“+”符号，而是明确地实例化一个超前进位加法器（Carry Look-ahead Adder），并根据时序要求选择合适的实现方式。这种方法虽然增加了RTL编码的复杂度，但大大提高了时序收敛的成功率。</p>
+
+            <h4>6.7.1 流水线设计</h4>
+            <p>流水线是解决时序问题的利器。通过将复杂的组合逻辑分割成多个简单的阶段，每个阶段之间插入寄存器，可以显著减少关键路径的延迟。这就像是工厂流水线——虽然一个产品从开始到完成的总时间增加了（延迟增加），但是单位时间内的产量却大大提高了（吞吐量增加）。</p>
+            
+            <p>但流水线设计也有其挑战。每增加一级流水线，就会增加一个时钟周期的延迟，这对于对延迟敏感的应用可能是不可接受的。此外，流水线还会增加面积（寄存器）和功耗（时钟树）。因此，设计师需要找到流水线深度的最佳平衡点。Intel的经验是：在8-12级流水线之间通常可以获得最佳的性能功耗比。</p>
+            <div class="code-block">
+// 优化的深度流水线MAC阵列 - Verilog版本
+module PipelinedMACArray #(
+    parameter DATA_WIDTH = 8,
+    parameter ARRAY_DIM = 4,
+    parameter PIPE_STAGES = 3,  // 流水线级数
+    parameter ACC_WIDTH = 32     // 累加器位宽
+)(
+    input wire clk,
+    input wire rst_n,
+    input wire enable,
+    input wire clear_acc,        // 清除累加器
+    
+    input wire [DATA_WIDTH-1:0] a_in [ARRAY_DIM-1:0],
+    input wire [DATA_WIDTH-1:0] b_in [ARRAY_DIM-1:0][ARRAY_DIM-1:0],
+    output wire [ACC_WIDTH-1:0] c_out [ARRAY_DIM-1:0][ARRAY_DIM-1:0],
+    output reg valid_out
+);
+
+    // 流水线寄存器
+    reg [DATA_WIDTH-1:0] a_pipe [PIPE_STAGES:0][ARRAY_DIM-1:0];
+    reg [DATA_WIDTH-1:0] b_pipe [PIPE_STAGES:0][ARRAY_DIM-1:0][ARRAY_DIM-1:0];
+    reg valid_pipe [PIPE_STAGES:0];
+    
+    // 输入流水线（优化：使用非阻塞赋值减少延迟）
+    integer s, i, j;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            for (s = 0; s <= PIPE_STAGES; s = s + 1) begin
+                valid_pipe[s] <= 1'b0;
+                for (i = 0; i < ARRAY_DIM; i = i + 1) begin
+                    a_pipe[s][i] <= 0;
+                    for (j = 0; j < ARRAY_DIM; j = j + 1) begin
+                        b_pipe[s][i][j] <= 0;
+                    end
+                end
+            end
+        end else if (enable) begin
+            // 第一级
+            a_pipe[0] <= a_in;
+            b_pipe[0] <= b_in;
+            valid_pipe[0] <= 1'b1;
+            
+            // 流水线传播
+            for (s = 1; s <= PIPE_STAGES; s = s + 1) begin
+                a_pipe[s] <= a_pipe[s-1];
+                b_pipe[s] <= b_pipe[s-1];
+                valid_pipe[s] <= valid_pipe[s-1];
+            end
+        end else begin
+            // 不使能时清除valid
+            for (s = 0; s <= PIPE_STAGES; s = s + 1) begin
+                valid_pipe[s] <= 1'b0;
+            end
+        end
+    end
+    
+    // 输出valid信号
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            valid_out <= 1'b0;
+        end else begin
+            valid_out <= valid_pipe[PIPE_STAGES];
+        end
+    end
+    
+    // MAC单元实例化（优化后的流水线结构）
+    genvar gi, gj;
+    generate
+        for (gi = 0; gi < ARRAY_DIM; gi = gi + 1) begin : row_gen
+            for (gj = 0; gj < ARRAY_DIM; gj = gj + 1) begin : col_gen
+                OptimizedPipelinedMAC #(
+                    .DATA_WIDTH(DATA_WIDTH),
+                    .ACC_WIDTH(ACC_WIDTH),
+                    .INTERNAL_PIPES(2)  // MAC内部流水线
+                ) u_mac (
+                    .clk(clk),
+                    .rst_n(rst_n),
+                    .enable(valid_pipe[PIPE_STAGES]),
+                    .clear(clear_acc),
+                    .a(a_pipe[PIPE_STAGES][gi]),
+                    .b(b_pipe[PIPE_STAGES][gi][gj]),
+                    .acc_out(c_out[gi][gj])
+                );
+            end
+        end
+    endgenerate
+
+endmodule
+
+// 优化的流水线MAC单元
+module OptimizedPipelinedMAC #(
+    parameter DATA_WIDTH = 8,
+    parameter ACC_WIDTH = 32,
+    parameter INTERNAL_PIPES = 2
+)(
+    input wire clk,
+    input wire rst_n,
+    input wire enable,
+    input wire clear,
+    input wire signed [DATA_WIDTH-1:0] a,
+    input wire signed [DATA_WIDTH-1:0] b,
+    output wire signed [ACC_WIDTH-1:0] acc_out
+);
+
+    // 乘法器流水线寄存器
+    reg signed [DATA_WIDTH-1:0] a_reg, b_reg;
+    reg signed [2*DATA_WIDTH-1:0] mult_pipe [INTERNAL_PIPES:0];
+    reg enable_pipe [INTERNAL_PIPES+1:0];
+    
+    // 累加器
+    reg signed [ACC_WIDTH-1:0] acc_reg;
+    
+    // 流水线乘法
+    integer k;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            a_reg <= 0;
+            b_reg <= 0;
+            for (k = 0; k <= INTERNAL_PIPES; k = k + 1) begin
+                mult_pipe[k] <= 0;
+            end
+            for (k = 0; k <= INTERNAL_PIPES+1; k = k + 1) begin
+                enable_pipe[k] <= 1'b0;
+            end
+        end else begin
+            // 输入寄存
+            a_reg <= a;
+            b_reg <= b;
+            enable_pipe[0] <= enable;
+            
+            // 乘法第一级
+            mult_pipe[0] <= a_reg * b_reg;
+            enable_pipe[1] <= enable_pipe[0];
+            
+            // 乘法流水线
+            for (k = 1; k <= INTERNAL_PIPES; k = k + 1) begin
+                mult_pipe[k] <= mult_pipe[k-1];
+                enable_pipe[k+1] <= enable_pipe[k];
+            end
+        end
+    end
+    
+    // 累加（带清零控制）
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            acc_reg <= 0;
+        end else if (clear) begin
+            acc_reg <= 0;
+        end else if (enable_pipe[INTERNAL_PIPES+1]) begin
+            acc_reg <= acc_reg + {{(ACC_WIDTH-2*DATA_WIDTH){mult_pipe[INTERNAL_PIPES][2*DATA_WIDTH-1]}}, 
+                                  mult_pipe[INTERNAL_PIPES]};
+        end
+    end
+    
+    assign acc_out = acc_reg;
+
+endmodule
+            </div>
+            
+            <div class="code-block">
+// Chisel版本的深度流水线MAC阵列
+import chisel3._
+import chisel3.util._
+
+class PipelinedMACArray(dataWidth: Int = 8, arrayDim: Int = 4, pipeStages: Int = 3, accWidth: Int = 32) extends Module {
+  val io = IO(new Bundle {
+    val enable = Input(Bool())
+    val clearAcc = Input(Bool())
+    val aIn = Input(Vec(arrayDim, SInt(dataWidth.W)))
+    val bIn = Input(Vec(arrayDim, Vec(arrayDim, SInt(dataWidth.W))))
+    val cOut = Output(Vec(arrayDim, Vec(arrayDim, SInt(accWidth.W))))
+    val validOut = Output(Bool())
+  })
+  
+  // 流水线寄存器
+  val aPipe = RegInit(VecInit(Seq.fill(pipeStages+1)(VecInit(Seq.fill(arrayDim)(0.S(dataWidth.W))))))
+  val bPipe = RegInit(VecInit(Seq.fill(pipeStages+1)(VecInit(Seq.fill(arrayDim)(VecInit(Seq.fill(arrayDim)(0.S(dataWidth.W))))))))
+  val validPipe = RegInit(VecInit(Seq.fill(pipeStages+1)(false.B)))
+  
+  // 输入流水线
+  when (io.enable) {
+    aPipe(0) := io.aIn
+    bPipe(0) := io.bIn
+    validPipe(0) := true.B
+    
+    for (s <- 1 to pipeStages) {
+      aPipe(s) := aPipe(s-1)
+      bPipe(s) := bPipe(s-1)
+      validPipe(s) := validPipe(s-1)
+    }
+  }.otherwise {
+    validPipe.foreach(_ := false.B)
+  }
+  
+  io.validOut := validPipe(pipeStages)
+  
+  // MAC单元阵列
+  val macUnits = Seq.fill(arrayDim, arrayDim) {
+    Module(new OptimizedPipelinedMAC(dataWidth, accWidth, 2))
+  }
+  
+  for (i <- 0 until arrayDim; j <- 0 until arrayDim) {
+    macUnits(i)(j).io.enable := validPipe(pipeStages)
+    macUnits(i)(j).io.clear := io.clearAcc
+    macUnits(i)(j).io.a := aPipe(pipeStages)(i)
+    macUnits(i)(j).io.b := bPipe(pipeStages)(i)(j)
+    io.cOut(i)(j) := macUnits(i)(j).io.accOut
+  }
+}
+
+// 细粒度流水线MAC
+module PipelinedMAC #(
+    parameter DATA_WIDTH = 8,
+    parameter ACC_WIDTH = 32,
+    parameter INTERNAL_PIPES = 2
+)(
+    input wire clk,
+    input wire rst_n,
+    input wire [DATA_WIDTH-1:0] a,
+    input wire [DATA_WIDTH-1:0] b,
+    output wire [ACC_WIDTH-1:0] acc_out
+);
+
+    // 乘法器流水线
+    reg [DATA_WIDTH-1:0] a_reg, b_reg;
+    reg [2*DATA_WIDTH-1:0] mult_pipe [INTERNAL_PIPES-1:0];
+    
+    // 累加器
+    reg [ACC_WIDTH-1:0] acc_reg;
+    
+    // 流水线乘法
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            a_reg <= 0;
+            b_reg <= 0;
+            for (int i = 0; i < INTERNAL_PIPES; i++) begin
+                mult_pipe[i] <= 0;
+            end
+        end else begin
+            // 输入寄存
+            a_reg <= a;
+            b_reg <= b;
+            
+            // 第一级乘法
+            mult_pipe[0] <= a_reg * b_reg;
+            
+            // 乘法流水线
+            for (int i = 1; i < INTERNAL_PIPES; i++) begin
+                mult_pipe[i] <= mult_pipe[i-1];
+            end
+        end
+    end
+    
+    // 累加
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            acc_reg <= 0;
+        end else begin
+            acc_reg <= acc_reg + {{(ACC_WIDTH-2*DATA_WIDTH){mult_pipe[INTERNAL_PIPES-1][2*DATA_WIDTH-1]}}, 
+                                  mult_pipe[INTERNAL_PIPES-1]};
+        end
+    end
+    
+    assign acc_out = acc_reg;
+
+endmodule
+            </div>
+
+            <h4>6.7.2 时序优化技术</h4>
+            <div class="info-box">
+                <p><strong>流水线深度与性能权衡分析：</strong></p>
+                <table class="comparison-table">
+                    <tr>
+                        <th>流水线深度</th>
+                        <th>最大频率</th>
+                        <th>延迟(cycles)</th>
+                        <th>吞吐量</th>
+                        <th>面积开销</th>
+                        <th>功耗</th>
+                    </tr>
+                    <tr>
+                        <td>无流水线</td>
+                        <td>200 MHz</td>
+                        <td>1</td>
+                        <td>200 MOPS</td>
+                        <td>基准</td>
+                        <td>基准</td>
+                    </tr>
+                    <tr>
+                        <td>2级流水线</td>
+                        <td>400 MHz</td>
+                        <td>2</td>
+                        <td>400 MOPS</td>
+                        <td>+5%</td>
+                        <td>+10%</td>
+                    </tr>
+                    <tr>
+                        <td>4级流水线</td>
+                        <td>667 MHz</td>
+                        <td>4</td>
+                        <td>667 MOPS</td>
+                        <td>+12%</td>
+                        <td>+20%</td>
+                    </tr>
+                    <tr>
+                        <td>8级流水线</td>
+                        <td>800 MHz</td>
+                        <td>8</td>
+                        <td>800 MOPS</td>
+                        <td>+25%</td>
+                        <td>+35%</td>
+                    </tr>
+                </table>
+                <p><strong>结论：</strong>流水线深度增加带来递减的性能收益，同时面积和功耗开销递增。最优深度需要根据具体应用场景权衡。</p>
+            </div>
+            
+            <div class="code-block">
+// 优化的重定时（Retiming）示例 - Verilog版本
+module RetimingExample #(
+    parameter WIDTH = 32
+)(
+    input wire clk,
+    input wire rst_n,
+    input wire [WIDTH-1:0] a, b, c, d,
+    input wire valid_in,
+    output reg [WIDTH-1:0] result,
+    output reg valid_out
+);
+
+    // 原始设计：长组合路径
+    // assign result = ((a + b) * c) + d;
+    
+    // 优化后：平衡的流水线，带有效信号传播
+    reg [WIDTH-1:0] sum_ab;
+    reg [WIDTH-1:0] c_reg1, c_reg2;
+    reg [WIDTH-1:0] d_reg1, d_reg2, d_reg3;
+    reg [WIDTH*2-1:0] product;
+    reg valid_stage1, valid_stage2, valid_stage3;
+    
+    // 为了更好的时序，将乘法分解为部分积
+    reg [WIDTH-1:0] partial_prod_low, partial_prod_high;
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            sum_ab <= 0;
+            c_reg1 <= 0;
+            c_reg2 <= 0;
+            d_reg1 <= 0;
+            d_reg2 <= 0;
+            d_reg3 <= 0;
+            partial_prod_low <= 0;
+            partial_prod_high <= 0;
+            product <= 0;
+            result <= 0;
+            valid_stage1 <= 0;
+            valid_stage2 <= 0;
+            valid_stage3 <= 0;
+            valid_out <= 0;
+        end else begin
+            // Stage 1: 加法和寄存器
+            sum_ab <= a + b;
+            c_reg1 <= c;
+            d_reg1 <= d;
+            valid_stage1 <= valid_in;
+            
+            // Stage 2: 部分积计算
+            partial_prod_low <= sum_ab[WIDTH/2-1:0] * c_reg1[WIDTH/2-1:0];
+            partial_prod_high <= sum_ab[WIDTH-1:WIDTH/2] * c_reg1[WIDTH-1:WIDTH/2];
+            c_reg2 <= c_reg1;
+            d_reg2 <= d_reg1;
+            valid_stage2 <= valid_stage1;
+            
+            // Stage 3: 完整乘法结果
+            product <= {partial_prod_high, partial_prod_low} + 
+                      (sum_ab[WIDTH/2-1:0] * c_reg2[WIDTH-1:WIDTH/2]) << (WIDTH/2) +
+                      (sum_ab[WIDTH-1:WIDTH/2] * c_reg2[WIDTH/2-1:0]) << (WIDTH/2);
+            d_reg3 <= d_reg2;
+            valid_stage3 <= valid_stage2;
+            
+            // Stage 4: 最终加法和饱和
+            if (valid_stage3) begin
+                if (product[WIDTH*2-1:WIDTH] != 0 && product[WIDTH*2-1]) begin
+                    // 负数溢出
+                    result <= {1'b1, {(WIDTH-1){1'b0}}};
+                end else if (product[WIDTH*2-1:WIDTH] != 0 && !product[WIDTH*2-1]) begin
+                    // 正数溢出
+                    result <= {1'b0, {(WIDTH-1){1'b1}}};
+                end else begin
+                    result <= product[WIDTH-1:0] + d_reg3;
+                end
+            end
+            valid_out <= valid_stage3;
+        end
+    end
+
+endmodule
+            </div>
+            
+            <p>Chisel版本的重定时示例：</p>
+            <div class="code-block">
+import chisel3._
+import chisel3.util._
+
+class RetimingExample(width: Int = 32) extends Module {
+  val io = IO(new Bundle {
+    val a = Input(UInt(width.W))
+    val b = Input(UInt(width.W))
+    val c = Input(UInt(width.W))
+    val d = Input(UInt(width.W))
+    val valid_in = Input(Bool())
+    val result = Output(UInt(width.W))
+    val valid_out = Output(Bool())
+  })
+  
+  // Stage 1: 加法
+  val sum_ab = RegNext(io.a + io.b, 0.U)
+  val c_reg1 = RegNext(io.c, 0.U)
+  val d_reg1 = RegNext(io.d, 0.U)
+  val valid_stage1 = RegNext(io.valid_in, false.B)
+  
+  // Stage 2: 部分积
+  val partial_prod_low = RegNext(
+    sum_ab(width/2-1, 0) * c_reg1(width/2-1, 0), 0.U
+  )
+  val partial_prod_high = RegNext(
+    sum_ab(width-1, width/2) * c_reg1(width-1, width/2), 0.U
+  )
+  val c_reg2 = RegNext(c_reg1, 0.U)
+  val d_reg2 = RegNext(d_reg1, 0.U)
+  val valid_stage2 = RegNext(valid_stage1, false.B)
+  
+  // Stage 3: 完整乘法
+  val cross_prod1 = sum_ab(width/2-1, 0) * c_reg2(width-1, width/2)
+  val cross_prod2 = sum_ab(width-1, width/2) * c_reg2(width/2-1, 0)
+  val product = RegNext(
+    Cat(partial_prod_high, partial_prod_low) +
+    (cross_prod1 << (width/2)) +
+    (cross_prod2 << (width/2)), 0.U
+  )
+  val d_reg3 = RegNext(d_reg2, 0.U)
+  val valid_stage3 = RegNext(valid_stage2, false.B)
+  
+  // Stage 4: 最终结果
+  val raw_result = product(width-1, 0) + d_reg3
+  
+  // 饱和逻辑
+  val overflow = product(width*2-1, width).orR && !product(width*2-1)
+  val underflow = product(width*2-1, width).orR && product(width*2-1)
+  
+  io.result := RegEnable(
+    MuxCase(raw_result, Seq(
+      overflow -> Cat(0.U(1.W), Fill(width-1, 1.U)),
+      underflow -> Cat(1.U(1.W), Fill(width-1, 0.U))
+    )),
+    0.U,
+    valid_stage3
+  )
+  io.valid_out := RegNext(valid_stage3, false.B)
+}
+
+// 优化的逻辑复制解决扇出问题 - Verilog版本
+module FanoutOptimization #(
+    parameter WIDTH = 8,
+    parameter FANOUT = 64
+)(
+    input wire clk,
+    input wire rst_n,
+    input wire [WIDTH-1:0] data_in,
+    input wire valid_in,
+    input wire enable,
+    output reg [WIDTH-1:0] data_out [FANOUT-1:0],
+    output reg valid_out
+);
+
+    // 扇出树：使用多级缓冲和流水线
+    localparam TREE_LEVELS = 3;  // log4(64) = 3
+    localparam FANOUT_PER_LEVEL = 4;
+    
+    // 中间缓冲级和有效信号
+    reg [WIDTH-1:0] buffer_l1 [3:0];
+    reg [WIDTH-1:0] buffer_l2 [15:0];
+    reg enable_l1, enable_l2, enable_l3;
+    reg valid_l1, valid_l2, valid_l3;
+    
+    // 输入寄存器，减少输入端口的负载
+    reg [WIDTH-1:0] data_in_reg;
+    reg enable_reg;
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            data_in_reg <= 0;
+            enable_reg <= 0;
+        end else begin
+            data_in_reg <= data_in;
+            enable_reg <= enable;
+        end
+    end
+    
+    // 第一级：1->4 带有效信号传播
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            for (int i = 0; i < 4; i++) buffer_l1[i] <= 0;
+            enable_l1 <= 0;
+            valid_l1 <= 0;
+        end else begin
+            if (enable_reg) begin
+                // 使用循环展开减少逻辑延迟
+                buffer_l1[0] <= data_in_reg;
+                buffer_l1[1] <= data_in_reg;
+                buffer_l1[2] <= data_in_reg;
+                buffer_l1[3] <= data_in_reg;
+            end
+            enable_l1 <= enable_reg;
+            valid_l1 <= valid_in && enable_reg;
+        end
+    end
+    
+    // 第二级：4->16 带缓冲器选择逻辑
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            for (int i = 0; i < 16; i++) buffer_l2[i] <= 0;
+            enable_l2 <= 0;
+            valid_l2 <= 0;
+        end else begin
+            if (enable_l1) begin
+                // 手动展开以优化时序
+                buffer_l2[0]  <= buffer_l1[0];
+                buffer_l2[1]  <= buffer_l1[0];
+                buffer_l2[2]  <= buffer_l1[0];
+                buffer_l2[3]  <= buffer_l1[0];
+                buffer_l2[4]  <= buffer_l1[1];
+                buffer_l2[5]  <= buffer_l1[1];
+                buffer_l2[6]  <= buffer_l1[1];
+                buffer_l2[7]  <= buffer_l1[1];
+                buffer_l2[8]  <= buffer_l1[2];
+                buffer_l2[9]  <= buffer_l1[2];
+                buffer_l2[10] <= buffer_l1[2];
+                buffer_l2[11] <= buffer_l1[2];
+                buffer_l2[12] <= buffer_l1[3];
+                buffer_l2[13] <= buffer_l1[3];
+                buffer_l2[14] <= buffer_l1[3];
+                buffer_l2[15] <= buffer_l1[3];
+            end
+            enable_l2 <= enable_l1;
+            valid_l2 <= valid_l1;
+        end
+    end
+    
+    // 第三级：16->64 最终输出
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            for (int i = 0; i < FANOUT; i++) data_out[i] <= 0;
+            enable_l3 <= 0;
+            valid_out <= 0;
+        end else begin
+            if (enable_l2) begin
+                // 分组处理以减少每个时钟周期的负载
+                for (int j = 0; j < 16; j++) begin
+                    data_out[j*4]   <= buffer_l2[j];
+                    data_out[j*4+1] <= buffer_l2[j];
+                    data_out[j*4+2] <= buffer_l2[j];
+                    data_out[j*4+3] <= buffer_l2[j];
+                end
+            end
+            enable_l3 <= enable_l2;
+            valid_out <= valid_l2;
+        end
+    end
+
+endmodule
+            </div>
+            
+            <p>Chisel版本的扇出优化：</p>
+            <div class="code-block">
+import chisel3._
+import chisel3.util._
+
+class FanoutOptimization(width: Int = 8, fanout: Int = 64) extends Module {
+  val io = IO(new Bundle {
+    val data_in = Input(UInt(width.W))
+    val valid_in = Input(Bool())
+    val enable = Input(Bool())
+    val data_out = Output(Vec(fanout, UInt(width.W)))
+    val valid_out = Output(Bool())
+  })
+  
+  // 层级参数
+  val treeLevels = 3
+  val fanoutPerLevel = 4
+  
+  // 输入寄存器
+  val dataInReg = RegNext(io.data_in, 0.U)
+  val enableReg = RegNext(io.enable, false.B)
+  
+  // 第一级：1->4
+  val bufferL1 = Reg(Vec(4, UInt(width.W)))
+  val enableL1 = RegNext(enableReg, false.B)
+  val validL1 = RegNext(io.valid_in && enableReg, false.B)
+  
+  when(enableReg) {
+    bufferL1.foreach(_ := dataInReg)
+  }
+  
+  // 第二级：4->16
+  val bufferL2 = Reg(Vec(16, UInt(width.W)))
+  val enableL2 = RegNext(enableL1, false.B)
+  val validL2 = RegNext(validL1, false.B)
+  
+  when(enableL1) {
+    for (i <- 0 until 16) {
+      bufferL2(i) := bufferL1(i / 4)
+    }
+  }
+  
+  // 第三级：16->64
+  val dataOutReg = Reg(Vec(fanout, UInt(width.W)))
+  val validOutReg = RegNext(validL2, false.B)
+  
+  when(enableL2) {
+    for (i <- 0 until fanout) {
+      dataOutReg(i) := bufferL2(i / 4)
+    }
+  }
+  
+  io.data_out := dataOutReg
+  io.valid_out := validOutReg
+  
+  // 可选：添加性能计数器
+  val updateCounter = RegInit(0.U(32.W))
+  when(enableL2 && validL2) {
+    updateCounter := updateCounter + 1.U
+  }
+}
+            </div>
+
+            <h4>6.7.3 时序收敛策略</h4>
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>阶段</th>
+                            <th>策略</th>
+                            <th>工具/方法</th>
+                            <th>影响</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>RTL设计</td>
+                            <td>合理划分流水线</td>
+                            <td>架构探索、性能建模</td>
+                            <td>最大影响</td>
+                        </tr>
+                        <tr>
+                            <td>综合</td>
+                            <td>约束优化、逻辑重构</td>
+                            <td>compile_ultra、retime</td>
+                            <td>中等影响</td>
+                        </tr>
+                        <tr>
+                            <td>布局</td>
+                            <td>层次化布局、区域约束</td>
+                            <td>floorplan、region</td>
+                            <td>中等影响</td>
+                        </tr>
+                        <tr>
+                            <td>时钟树</td>
+                            <td>平衡时钟偏斜</td>
+                            <td>CTS、useful skew</td>
+                            <td>小幅改善</td>
+                        </tr>
+                        <tr>
+                            <td>布线后</td>
+                            <td>ECO修复</td>
+                            <td>sizing、buffering</td>
+                            <td>有限改善</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="exercise">
+                <h4>练习 6.6-6.7</h4>
+                <div class="question">
+                    <p><strong>题目：</strong>设计一个高性能矩阵乘法单元，要求：
+                    1) 支持4×4矩阵乘法
+                    2) 使用脉动阵列架构
+                    3) 实现3级流水线
+                    4) 优化面积和时序</p>
+                    <details class="hint">
+                        <summary>💡 提示</summary>
+                        <p>思考方向：脉动阵列中数据流动需要精心设计。使用数据skew来确保正确的计算时序。3级流水线可以分为：输入寄存、乘法、累加。面积优化可以考虑资源共享和位宽优化。</p>
+                    </details>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <div class="code-block">
+// 优化的脉动矩阵乘法器 - Verilog版本
+module SystolicMatrixMultiplier #(
+    parameter DATA_WIDTH = 16,
+    parameter MATRIX_SIZE = 4,
+    parameter ACC_WIDTH = DATA_WIDTH * 2 + $clog2(MATRIX_SIZE)
+)(
+    input wire clk,
+    input wire rst_n,
+    input wire start,
+    input wire valid_in,
+    
+    // 矩阵输入（按对角线输入）
+    input wire [DATA_WIDTH-1:0] a_in [MATRIX_SIZE-1:0],
+    input wire [DATA_WIDTH-1:0] b_in [MATRIX_SIZE-1:0],
+    
+    // 结果输出
+    output reg [ACC_WIDTH-1:0] c_out [MATRIX_SIZE-1:0][MATRIX_SIZE-1:0],
+    output reg done,
+    output reg valid_out
+);
+
+    // PE内部流水线寄存器
+    reg [DATA_WIDTH-1:0] pe_a_reg1 [MATRIX_SIZE-1:0][MATRIX_SIZE-1:0];
+    reg [DATA_WIDTH-1:0] pe_a_reg2 [MATRIX_SIZE-1:0][MATRIX_SIZE-1:0];
+    reg [DATA_WIDTH-1:0] pe_b_reg1 [MATRIX_SIZE-1:0][MATRIX_SIZE-1:0];
+    reg [DATA_WIDTH-1:0] pe_b_reg2 [MATRIX_SIZE-1:0][MATRIX_SIZE-1:0];
+    reg [DATA_WIDTH*2-1:0] pe_mult [MATRIX_SIZE-1:0][MATRIX_SIZE-1:0];
+    reg [ACC_WIDTH-1:0] pe_acc [MATRIX_SIZE-1:0][MATRIX_SIZE-1:0];
+    
+    // 输入延迟链（实现对角线输入）
+    reg [DATA_WIDTH-1:0] a_delay [MATRIX_SIZE-1:0][MATRIX_SIZE-1:0];
+    reg [DATA_WIDTH-1:0] b_delay [MATRIX_SIZE-1:0][MATRIX_SIZE-1:0];
+    reg valid_delay [MATRIX_SIZE-1:0][MATRIX_SIZE-1:0];
+    
+    // 控制计数器和状态
+    reg [5:0] cycle_count;
+    reg [2:0] state;
+    localparam IDLE = 3'b000;
+    localparam COMPUTING = 3'b001;
+    localparam DRAINING = 3'b010;
+    localparam OUTPUT = 3'b011;
+    
+    // 输入延迟链实现
+    genvar i, j;
+    generate
+        for (i = 0; i < MATRIX_SIZE; i = i + 1) begin : input_delay
+            always @(posedge clk or negedge rst_n) begin
+                if (!rst_n) begin
+                    for (int k = 0; k <= i; k++) begin
+                        a_delay[i][k] <= 0;
+                        b_delay[i][k] <= 0;
+                        valid_delay[i][k] <= 0;
+                    end
+                end else if (state == COMPUTING || state == DRAINING) begin
+                    // A矩阵行延迟
+                    a_delay[i][0] <= (state == COMPUTING) ? a_in[i] : 0;
+                    valid_delay[i][0] <= (state == COMPUTING) ? valid_in : 0;
+                    for (int k = 1; k <= i; k++) begin
+                        a_delay[i][k] <= a_delay[i][k-1];
+                        valid_delay[i][k] <= valid_delay[i][k-1];
+                    end
+                    
+                    // B矩阵列延迟
+                    b_delay[i][0] <= (state == COMPUTING) ? b_in[i] : 0;
+                    for (int k = 1; k <= i; k++) begin
+                        b_delay[i][k] <= b_delay[i][k-1];
+                    end
+                end
+            end
+        end
+    endgenerate
+    
+    // 脉动阵列PE - 完全流水线化
+    generate
+        for (i = 0; i < MATRIX_SIZE; i = i + 1) begin : pe_row
+            for (j = 0; j < MATRIX_SIZE; j = j + 1) begin : pe_col
+                
+                // PE输入信号
+                wire [DATA_WIDTH-1:0] a_input = (j == 0) ? a_delay[i][i] : pe_a_reg2[i][j-1];
+                wire [DATA_WIDTH-1:0] b_input = (i == 0) ? b_delay[j][j] : pe_b_reg2[i-1][j];
+                wire valid_input = (i == 0 && j == 0) ? valid_delay[0][0] :
+                                  (j == 0) ? valid_delay[i][i] :
+                                  (i == 0) ? valid_delay[j][j] : 1'b1;
+                
+                always @(posedge clk or negedge rst_n) begin
+                    if (!rst_n) begin
+                        pe_a_reg1[i][j] <= 0;
+                        pe_a_reg2[i][j] <= 0;
+                        pe_b_reg1[i][j] <= 0;
+                        pe_b_reg2[i][j] <= 0;
+                        pe_mult[i][j] <= 0;
+                        pe_acc[i][j] <= 0;
+                    end else begin
+                        // Stage 1: 输入寄存
+                        pe_a_reg1[i][j] <= a_input;
+                        pe_b_reg1[i][j] <= b_input;
+                        
+                        // Stage 2: 传播和乘法准备
+                        pe_a_reg2[i][j] <= pe_a_reg1[i][j];
+                        pe_b_reg2[i][j] <= pe_b_reg1[i][j];
+                        
+                        // Stage 3: 乘法
+                        pe_mult[i][j] <= pe_a_reg1[i][j] * pe_b_reg1[i][j];
+                        
+                        // Stage 4: 累加
+                        if (start) begin
+                            pe_acc[i][j] <= 0;
+                        end else if (valid_input && (state == COMPUTING || state == DRAINING)) begin
+                            pe_acc[i][j] <= pe_acc[i][j] + pe_mult[i][j];
+                        end
+                    end
+                end
+            end
+        end
+    endgenerate
+    
+    // 主控制状态机
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state <= IDLE;
+            cycle_count <= 0;
+            done <= 1'b0;
+            valid_out <= 1'b0;
+            for (int i = 0; i < MATRIX_SIZE; i++) begin
+                for (int j = 0; j < MATRIX_SIZE; j++) begin
+                    c_out[i][j] <= 0;
+                end
+            end
+        end else begin
+            case (state)
+                IDLE: begin
+                    if (start) begin
+                        state <= COMPUTING;
+                        cycle_count <= 0;
+                        done <= 1'b0;
+                        valid_out <= 1'b0;
+                    end
+                end
+                
+                COMPUTING: begin
+                    cycle_count <= cycle_count + 1;
+                    if (cycle_count == MATRIX_SIZE - 1) begin
+                        state <= DRAINING;
+                        cycle_count <= 0;
+                    end
+                end
+                
+                DRAINING: begin
+                    cycle_count <= cycle_count + 1;
+                    if (cycle_count == 2*MATRIX_SIZE + 2) begin
+                        state <= OUTPUT;
+                        cycle_count <= 0;
+                    end
+                end
+                
+                OUTPUT: begin
+                    // 输出结果
+                    for (int i = 0; i < MATRIX_SIZE; i++) begin
+                        for (int j = 0; j < MATRIX_SIZE; j++) begin
+                            c_out[i][j] <= pe_acc[i][j];
+                        end
+                    end
+                    done <= 1'b1;
+                    valid_out <= 1'b1;
+                    state <= IDLE;
+                end
+            endcase
+        end
+    end
+
+endmodule
+            </div>
+            
+            <p>Chisel版本的脉动矩阵乘法器：</p>
+            <div class="code-block">
+import chisel3._
+import chisel3.util._
+
+class SystolicMatrixMultiplier(dataWidth: Int = 16, matrixSize: Int = 4) extends Module {
+  val accWidth = dataWidth * 2 + log2Ceil(matrixSize)
+  
+  val io = IO(new Bundle {
+    val start = Input(Bool())
+    val valid_in = Input(Bool())
+    val a_in = Input(Vec(matrixSize, UInt(dataWidth.W)))
+    val b_in = Input(Vec(matrixSize, UInt(dataWidth.W)))
+    val c_out = Output(Vec(matrixSize, Vec(matrixSize, UInt(accWidth.W))))
+    val done = Output(Bool())
+    val valid_out = Output(Bool())
+  })
+  
+  // PE内部的流水线寄存器
+  val peArray = Seq.fill(matrixSize, matrixSize) {
+    new Bundle {
+      val aReg1 = Reg(UInt(dataWidth.W))
+      val aReg2 = Reg(UInt(dataWidth.W))
+      val bReg1 = Reg(UInt(dataWidth.W))
+      val bReg2 = Reg(UInt(dataWidth.W))
+      val mult = Reg(UInt((dataWidth * 2).W))
+      val acc = Reg(UInt(accWidth.W))
+    }
+  }
+  
+  // 输入延迟链
+  val aDelay = Seq.tabulate(matrixSize) { i =>
+    val delayChain = Module(new ShiftRegister(UInt(dataWidth.W), i + 1))
+    delayChain.io.in := io.a_in(i)
+    delayChain.io.enable := (state === computing) || (state === draining)
+    delayChain
+  }
+  
+  val bDelay = Seq.tabulate(matrixSize) { i =>
+    val delayChain = Module(new ShiftRegister(UInt(dataWidth.W), i + 1))
+    delayChain.io.in := io.b_in(i)
+    delayChain.io.enable := (state === computing) || (state === draining)
+    delayChain
+  }
+  
+  // 状态机
+  val idle :: computing :: draining :: output :: Nil = Enum(4)
+  val state = RegInit(idle)
+  val cycleCount = RegInit(0.U(6.W))
+  
+  // PE阵列连接和计算
+  for (i <- 0 until matrixSize) {
+    for (j <- 0 until matrixSize) {
+      val pe = peArray(i)(j)
+      
+      // 输入连接
+      val aInput = if (j == 0) aDelay(i).io.out else peArray(i)(j-1).aReg2
+      val bInput = if (i == 0) bDelay(j).io.out else peArray(i-1)(j).bReg2
+      
+      // 流水线寄存器
+      pe.aReg1 := aInput
+      pe.bReg1 := bInput
+      pe.aReg2 := pe.aReg1
+      pe.bReg2 := pe.bReg1
+      
+      // 乘法器
+      pe.mult := pe.aReg1 * pe.bReg1
+      
+      // 累加器
+      when(io.start) {
+        pe.acc := 0.U
+      }.elsewhen((state === computing || state === draining) && io.valid_in) {
+        pe.acc := pe.acc + pe.mult
+      }
+      
+      // 输出连接
+      io.c_out(i)(j) := pe.acc
+    }
+  }
+  
+  // 控制逻辑
+  switch(state) {
+    is(idle) {
+      when(io.start) {
+        state := computing
+        cycleCount := 0.U
+      }
+    }
+    is(computing) {
+      cycleCount := cycleCount + 1.U
+      when(cycleCount === (matrixSize - 1).U) {
+        state := draining
+        cycleCount := 0.U
+      }
+    }
+    is(draining) {
+      cycleCount := cycleCount + 1.U
+      when(cycleCount === (2 * matrixSize + 2).U) {
+        state := output
+      }
+    }
+    is(output) {
+      state := idle
+    }
+  }
+  
+  io.done := state === output
+  io.valid_out := state === output
+}
+
+// 辅助移位寄存器模块
+class ShiftRegister[T <: Data](gen: T, depth: Int) extends Module {
+  val io = IO(new Bundle {
+    val in = Input(gen.cloneType)
+    val out = Output(gen.cloneType)
+    val enable = Input(Bool())
+  })
+  
+  val regs = Reg(Vec(depth, gen.cloneType))
+  
+  when(io.enable) {
+    regs(0) := io.in
+    for (i <- 1 until depth) {
+      regs(i) := regs(i - 1)
+    }
+  }
+  
+  io.out := regs(depth - 1)
+}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="section-summary">
+                <h4>本章小结</h4>
+                <ul>
+                    <li><strong>RTL设计是NPU实现的关键环节，</strong>将抽象架构转化为可综合的硬件描述，直接决定芯片的最终性能</li>
+                    <li><strong>规范的设计流程确保项目成功，</strong>从需求分析到RTL编码、验证、综合，每个阶段都有明确的输入输出和检查点</li>
+                    <li><strong>良好的编码规范提升设计质量，</strong>包括命名规则、同步设计、组合逻辑优化等，减少后期调试和优化的工作量</li>
+                    <li><strong>时钟域设计影响系统稳定性，</strong>通过合理的时钟规划、同步器设计、亚稳态处理确保跨时钟域数据传输的可靠性</li>
+                    <li><strong>复位策略需要全局考虑，</strong>同步复位简化时序分析，异步复位响应快速，混合复位结合两者优点</li>
+                    <li><strong>低功耗设计贯穿RTL全流程，</strong>时钟门控、电源门控、多阈值设计等技术可将功耗降低50%以上</li>
+                    <li><strong>面积优化需要算法级创新，</strong>资源共享、运算器复用、存储压缩等技术在保持性能的同时减小芯片面积</li>
+                    <li><strong>时序收敛是RTL设计的终极挑战，</strong>通过流水线优化、逻辑重构、物理感知设计等技术满足目标频率要求</li>
+                </ul>
+            </div>
+        </div>
+        
+        <div class="chapter-nav">
+            <a href="chapter5.html" class="prev">上一章</a>
+            <a href="chapter7.html" class="next">下一章</a>
+        </div>
+    </div>
+</body>
+</html>

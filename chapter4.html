@@ -1,0 +1,4134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>第4章：计算核心设计 - NPU设计教程</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f5f5f5;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
+            color: white;
+            padding: 40px 0;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .nav-bar {
+            background: #34495e;
+            padding: 15px 0;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .nav-bar ul {
+            list-style: none;
+            display: flex;
+            justify-content: center;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0;
+        }
+
+        .nav-bar li {
+            margin: 0 15px;
+        }
+
+        .nav-bar a {
+            color: white;
+            text-decoration: none;
+            padding: 5px 10px;
+            border-radius: 4px;
+            transition: background 0.3s;
+        }
+
+        .nav-bar a:hover {
+            background: #2c3e50;
+        }
+
+        .nav-bar .current {
+            background: #2c3e50;
+            font-weight: bold;
+        }
+
+        .chapter {
+            background: white;
+            margin: 20px 0;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .chapter h2 {
+            color: #2c3e50;
+            font-size: 2em;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 3px solid #3498db;
+        }
+
+        .chapter h3 {
+            color: #34495e;
+            font-size: 1.5em;
+            margin: 25px 0 15px 0;
+        }
+
+        .chapter h4 {
+            color: #7f8c8d;
+            font-size: 1.2em;
+            margin: 20px 0 10px 0;
+        }
+
+        .code-block {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 20px;
+            border-radius: 5px;
+            margin: 15px 0;
+            overflow-x: auto;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            position: relative;
+        }
+        
+        /* Language label */
+        .code-block::before {
+            content: attr(data-language);
+            position: absolute;
+            top: 5px;
+            right: 10px;
+            font-size: 12px;
+            color: #95a5a6;
+            text-transform: uppercase;
+        }
+        
+        /* Syntax highlighting classes */
+        .code-block .keyword { color: #e74c3c; font-weight: bold; }
+        .code-block .type { color: #3498db; }
+        .code-block .comment { color: #95a5a6; font-style: italic; }
+        .code-block .number { color: #e67e22; }
+        .code-block .string { color: #2ecc71; }
+        .code-block .function { color: #3498db; }
+
+        .exercise {
+            background: #ecf0f1;
+            padding: 20px;
+            border-radius: 5px;
+            margin: 20px 0;
+            border-left: 5px solid #3498db;
+        }
+
+        .exercise h4 {
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+
+        .question {
+            margin: 15px 0;
+            padding: 15px;
+            background: white;
+            border-radius: 5px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .answer {
+            margin-top: 10px;
+            padding: 15px;
+            background: #e8f5e9;
+            border-radius: 5px;
+            display: none;
+            border-left: 4px solid #4caf50;
+        }
+
+        .answer.show {
+            display: block;
+        }
+        
+        .hint {
+            margin: 10px 0;
+            padding: 10px 15px;
+            background: #fff8dc;
+            border-left: 4px solid #ffa500;
+            border-radius: 5px;
+            font-size: 0.95em;
+        }
+        
+        .hint summary {
+            cursor: pointer;
+            font-weight: bold;
+            color: #ff8c00;
+            outline: none;
+        }
+        
+        .hint summary:hover {
+            color: #ff6347;
+        }
+        
+        .hint p {
+            margin-top: 10px;
+            color: #666;
+        }
+
+        .toggle-answer {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-top: 10px;
+            transition: background 0.3s;
+        }
+
+        .toggle-answer:hover {
+            background: #2980b9;
+        }
+
+        .table-wrapper {
+            overflow-x: auto;
+            margin: 20px 0;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+
+        th {
+            background: #34495e;
+            color: white;
+            font-weight: bold;
+        }
+
+        tr:hover {
+            background: #f5f5f5;
+        }
+
+        .info-box {
+            background: #e3f2fd;
+            border-left: 5px solid #2196f3;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+
+        .warning-box {
+            background: #fff3cd;
+            border-left: 5px solid #ff9800;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+
+        .chapter-nav {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 2px solid #ecf0f1;
+        }
+
+        .chapter-nav a {
+            background: #3498db;
+            color: white;
+            padding: 10px 20px;
+            text-decoration: none;
+            border-radius: 5px;
+            transition: background 0.3s;
+        }
+
+        .chapter-nav a:hover {
+            background: #2980b9;
+        }
+
+        .chapter-nav .prev::before {
+            content: "← ";
+        }
+
+        .chapter-nav .next::after {
+            content: " →";
+        }
+
+        /* Mobile Responsive Design */
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+            
+            header {
+                padding: 20px 10px;
+            }
+            
+            header h1 {
+                font-size: 1.5em;
+            }
+            
+            .chapter {
+                padding: 15px;
+                margin: 10px 0;
+            }
+            
+            .chapter h2 {
+                font-size: 1.5em;
+            }
+            
+            .chapter h3 {
+                font-size: 1.2em;
+            }
+            
+            .nav-bar ul {
+                flex-wrap: wrap;
+                justify-content: center;
+            }
+            
+            .nav-bar li {
+                margin: 5px;
+            }
+            
+            .code-block {
+                padding: 10px;
+                font-size: 12px;
+            }
+            
+            table {
+                font-size: 14px;
+            }
+            
+            th, td {
+                padding: 8px;
+            }
+        }
+
+        /* List styles for proper indentation */
+        .chapter ul, .chapter ol {
+            margin-left: 20px;
+            margin-bottom: 15px;
+        }
+        
+        .chapter li {
+            margin-bottom: 8px;
+            line-height: 1.8;
+        }
+        
+        .chapter ul ul, .chapter ol ol, .chapter ul ol, .chapter ol ul {
+            margin-left: 20px;
+            margin-top: 5px;
+        }
+        
+        .info-box ul, .warning-box ul, .answer ul {
+            margin-left: 20px;
+        }
+        
+        .info-box li, .warning-box li, .answer li {
+            margin-bottom: 10px;
+        }
+        
+        /* Keep nav-bar lists unstyled */
+        .nav-bar ul {
+            margin-left: 0;
+        }
+        
+        .nav-bar li {
+            margin-bottom: 0;
+        }
+    </style>
+    <script>
+        // Syntax highlighting functions
+        function escapeHtml(text) {
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return text.replace(/[&<>"']/g, m => map[m]);
+        }
+        
+        function highlightSyntax() {
+            const codeBlocks = document.querySelectorAll('.code-block');
+            
+            codeBlocks.forEach(block => {
+                const content = block.textContent;
+                let language = 'text';
+                let highlighted = content;
+                
+                // Auto-detect language based on content
+                if (content.includes('module ') || content.includes('always @') || content.includes('wire ') || content.includes('reg ')) {
+                    language = 'verilog';
+                    highlighted = highlightVerilog(content);
+                } else if (content.includes('import ') || content.includes('def ') || content.includes('class ')) {
+                    language = 'python';
+                    highlighted = highlightPython(content);
+                }
+                
+                block.innerHTML = highlighted;
+                block.classList.add(language);
+                block.setAttribute('data-language', language);
+            });
+        }
+        
+        function highlightVerilog(code) {
+            const placeholders = [];
+            let placeholderIndex = 0;
+            
+            // Replace comments with placeholders
+            code = code.replace(/(\/\/.*$|\/\*[\s\S]*?\*\/)/gm, (match) => {
+                const placeholder = `__COMMENT_${placeholderIndex}__`;
+                placeholders[placeholderIndex] = `<span class="comment">${escapeHtml(match)}</span>`;
+                placeholderIndex++;
+                return placeholder;
+            });
+            
+            // Replace strings with placeholders
+            code = code.replace(/("[^"]*")/g, (match) => {
+                const placeholder = `__STRING_${placeholderIndex}__`;
+                placeholders[placeholderIndex] = `<span class="string">${escapeHtml(match)}</span>`;
+                placeholderIndex++;
+                return placeholder;
+            });
+            
+            // Apply highlights
+            const keywords = /\b(module|endmodule|input|output|wire|reg|always|assign|begin|end|if|else|for|while|parameter|posedge|negedge)\b/g;
+            const types = /\b(bit|logic|byte|shortint|int|longint|integer|time|real)\b/g;
+            const numbers = /\b(\d+'[hbdo][\da-fA-F_]+|\d+)\b/g;
+            
+            code = code.replace(keywords, '<span class="keyword">$1</span>');
+            code = code.replace(types, '<span class="type">$1</span>');
+            code = code.replace(numbers, '<span class="number">$1</span>');
+            
+            // Restore placeholders
+            for (let i = 0; i < placeholderIndex; i++) {
+                code = code.replace(new RegExp(`__COMMENT_${i}__`, 'g'), placeholders[i]);
+                code = code.replace(new RegExp(`__STRING_${i}__`, 'g'), placeholders[i]);
+            }
+            
+            return code;
+        }
+        
+        function highlightPython(code) {
+            const placeholders = [];
+            let placeholderIndex = 0;
+            
+            // Replace comments
+            code = code.replace(/(#.*$)/gm, (match) => {
+                const placeholder = `__COMMENT_${placeholderIndex}__`;
+                placeholders[placeholderIndex] = `<span class="comment">${escapeHtml(match)}</span>`;
+                placeholderIndex++;
+                return placeholder;
+            });
+            
+            // Replace strings
+            code = code.replace(/("[^"]*"|'[^']*')/g, (match) => {
+                const placeholder = `__STRING_${placeholderIndex}__`;
+                placeholders[placeholderIndex] = `<span class="string">${escapeHtml(match)}</span>`;
+                placeholderIndex++;
+                return placeholder;
+            });
+            
+            // Apply highlights
+            const keywords = /\b(and|as|assert|break|class|continue|def|del|elif|else|except|False|finally|for|from|global|if|import|in|is|lambda|None|not|or|pass|raise|return|True|try|while|with|yield)\b/g;
+            const builtins = /\b(abs|all|any|bin|bool|dict|float|format|hex|input|int|len|list|map|max|min|open|print|range|round|set|sorted|str|sum|tuple|type|zip)\b/g;
+            const numbers = /\b(\d+\.?\d*)\b/g;
+            
+            code = code.replace(keywords, '<span class="keyword">$1</span>');
+            code = code.replace(builtins, '<span class="function">$1</span>');
+            code = code.replace(numbers, '<span class="number">$1</span>');
+            
+            // Restore placeholders
+            for (let i = 0; i < placeholderIndex; i++) {
+                code = code.replace(new RegExp(`__COMMENT_${i}__`, 'g'), placeholders[i]);
+                code = code.replace(new RegExp(`__STRING_${i}__`, 'g'), placeholders[i]);
+            }
+            
+            return code;
+        }
+        
+        // Toggle answer visibility
+        document.addEventListener('DOMContentLoaded', function() {
+            highlightSyntax();
+            
+            const toggleButtons = document.querySelectorAll('.toggle-answer');
+            toggleButtons.forEach(button => {
+                button.addEventListener('click', function() {
+                    const answer = this.nextElementSibling;
+                    answer.classList.toggle('show');
+                    this.textContent = answer.classList.contains('show') ? '隐藏答案' : '显示答案';
+                });
+            });
+        });
+    </script>
+</head>
+<body>
+    <header>
+        <h1>第4章：计算核心设计</h1>
+    </header>
+    
+    <nav class="nav-bar">
+        <ul>
+            <li><a href="index.html">首页</a></li>
+            <li><a href="chapter1.html">第1章</a></li>
+            <li><a href="chapter2.html">第2章</a></li>
+            <li><a href="chapter3.html">第3章</a></li>
+            <li><a href="chapter4.html" class="current">第4章</a></li>
+            <li><a href="chapter5.html">第5章</a></li>
+            <li><a href="chapter6.html">第6章</a></li>
+            <li><a href="chapter7.html">第7章</a></li>
+            <li><a href="chapter8.html">第8章</a></li>
+            <li><a href="chapter9.html">第9章</a></li>
+            <li><a href="chapter10.html">第10章</a></li>
+            <li><a href="chapter11.html">第11章</a></li>
+            <li><a href="chapter12.html">第12章</a></li>
+        </ul>
+    </nav>
+    
+    <div class="container">
+        <div class="chapter">
+            <h2>第4章：计算核心设计</h2>
+            
+            <p>在上一章中，我们从系统层面了解了NPU的整体架构。现在，让我们深入到NPU的心脏——计算核心。如果说NPU是一座高效运转的工厂，那么计算核心就是工厂里的生产线，而MAC（Multiply-Accumulate）单元则是生产线上的工人。本章将详细探讨如何设计高效的计算核心，从基础的MAC单元开始，逐步构建起能够处理海量神经网络运算的脉动阵列。</p>
+            
+            <p>我们将重点关注三个关键问题：<strong>如何设计单个MAC单元以实现最高效率？如何将成千上万个MAC单元组织成阵列？如何通过不同的数据流模式（Weight Stationary、Output Stationary、Row Stationary）来优化不同场景下的计算效率？</strong>通过回答这些问题，你将掌握NPU计算核心设计的精髓。</p>
+            
+            <h3>4.1 MAC阵列设计</h3>
+            
+            <h4>4.1.1 基础MAC单元</h4>
+            <p>MAC (Multiply-Accumulate) 是NPU的基本计算单元，执行 <code>C = C + A × B</code> 运算。</p>
+            
+            <p>计算核心的演进历程是一部从标量到张量的进化史。就像生物从单细胞进化到多细胞生物，计算单元也经历了类似的演变：</p>
+            
+            <div class="info-box">
+                <p><strong>计算架构的演进历程</strong></p>
+                <ol>
+                    <li><strong>标量处理器时代（1980s-1990s）：</strong> 一次处理一个数据，就像用筷子一粒一粒地夹米饭。</li>
+                    <li><strong>SIMD时代（2000s）：</strong> 引入向量处理，一条指令处理多个数据，就像用勺子一次舀起多粒米饭。代表作：Intel SSE/AVX。</li>
+                    <li><strong>GPU时代（2010s）：</strong> 大规模并行处理，成千上万个核心同时工作，像一个巨大的自助餐厅，数百个人同时进餐。</li>
+                    <li><strong>NPU/TPU时代（2015s-）：</strong> 专为矩阵运算优化，引入脉动阵列和张量核心，就像高度自动化的寿司传送带，每个工位专注完成特定任务。</li>
+                    <li><strong>未来：模拟计算与存内计算（2025+）：</strong> 打破冯·诺依曼架构，计算与存储融合，像大脑神经元般工作。</li>
+                </ol>
+            </div>
+            
+            <h5>为什么MAC如此重要？</h5>
+            
+            <p>深度学习的本质是大量的矩阵运算，而矩阵运算可以分解为无数个MAC操作。一个简单的全连接层计算可以表示为：</p>
+            
+            <div class="code-block">
+// 全连接层的数学表达
+Y = W × X + B
+
+// 分解为MAC操作
+for i in 0..M:
+    for j in 0..N:
+        Y[i] = 0
+        for k in 0..K:
+            Y[i] += W[i][k] * X[k][j]  // 这就是MAC操作
+        Y[i] += B[i]
+
+// 一个1024×1024的矩阵乘法需要：
+// 1024³ = 1,073,741,824 次MAC操作！
+            </div>
+            
+            <p>这就是为什么现代AI芯片都在疯狂堆砌MAC单元的原因。Google TPU v1拥有65,536个MAC单元，而最新的NVIDIA H100则包含了数百万个等效MAC单元。</p>
+            
+            <div class="code-block">
+// 优化的流水线MAC单元 - Verilog版本
+module MAC_Unit #(
+    parameter DATA_WIDTH = 8,      // 输入数据位宽(INT8)
+    parameter ACC_WIDTH = 32,      // 累加器位宽(防止溢出)
+    parameter PIPELINE_STAGES = 3  // 流水线级数
+)(
+    input wire clk,
+    input wire rst_n,
+    input wire enable,
+    
+    // 输入接口
+    input wire signed [DATA_WIDTH-1:0] a_in,      // 激活值
+    input wire signed [DATA_WIDTH-1:0] b_in,      // 权重
+    input wire signed [ACC_WIDTH-1:0] c_in,       // 部分和输入
+    
+    // 输出接口
+    output reg signed [ACC_WIDTH-1:0] c_out,      // 累加结果
+    output reg valid_out
+);
+
+    // 流水线寄存器 - 第一级
+    reg signed [DATA_WIDTH-1:0] a_reg1, b_reg1;
+    reg signed [ACC_WIDTH-1:0] c_reg1;
+    reg enable_reg1;
+    
+    // 流水线寄存器 - 第二级
+    reg signed [2*DATA_WIDTH-1:0] mult_reg2;
+    reg signed [ACC_WIDTH-1:0] c_reg2;
+    reg enable_reg2;
+    
+    // 乘法结果（第二级计算）
+    wire signed [2*DATA_WIDTH-1:0] mult_result;
+    assign mult_result = a_reg1 * b_reg1;
+    
+    // 加法结果（第三级计算）
+    wire signed [ACC_WIDTH-1:0] add_result;
+    assign add_result = c_reg2 + {{(ACC_WIDTH-2*DATA_WIDTH){mult_reg2[2*DATA_WIDTH-1]}}, mult_reg2};
+    
+    // 第一级流水线：输入寄存
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            a_reg1 <= 0;
+            b_reg1 <= 0;
+            c_reg1 <= 0;
+            enable_reg1 <= 0;
+        end else begin
+            if (enable) begin
+                a_reg1 <= a_in;
+                b_reg1 <= b_in;
+                c_reg1 <= c_in;
+            end
+            enable_reg1 <= enable;
+        end
+    end
+    
+    // 第二级流水线：乘法结果寄存
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            mult_reg2 <= 0;
+            c_reg2 <= 0;
+            enable_reg2 <= 0;
+        end else begin
+            if (enable_reg1) begin
+                mult_reg2 <= mult_result;
+                c_reg2 <= c_reg1;
+            end
+            enable_reg2 <= enable_reg1;
+        end
+    end
+    
+    // 第三级流水线：累加结果输出
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            c_out <= 0;
+            valid_out <= 0;
+        end else begin
+            if (enable_reg2) begin
+                c_out <= add_result;
+            end
+            valid_out <= enable_reg2;
+        end
+    end
+endmodule
+            </div>
+            
+            <p>Chisel版本的MAC单元：</p>
+            <div class="code-block">
+import chisel3._
+import chisel3.util._
+
+class MACUnit(val dataWidth: Int = 8, val accWidth: Int = 32) extends Module {
+    val io = IO(new Bundle {
+        val enable = Input(Bool())
+        val a_in = Input(SInt(dataWidth.W))
+        val b_in = Input(SInt(dataWidth.W))
+        val c_in = Input(SInt(accWidth.W))
+        val c_out = Output(SInt(accWidth.W))
+        val valid_out = Output(Bool())
+    })
+    
+    // 第一级流水线：输入寄存器
+    val a_reg1 = RegEnable(io.a_in, 0.S(dataWidth.W), io.enable)
+    val b_reg1 = RegEnable(io.b_in, 0.S(dataWidth.W), io.enable)
+    val c_reg1 = RegEnable(io.c_in, 0.S(accWidth.W), io.enable)
+    val enable_reg1 = RegNext(io.enable, false.B)
+    
+    // 第二级流水线：乘法
+    val mult_result = a_reg1 * b_reg1
+    val mult_reg2 = RegEnable(mult_result, 0.S((2*dataWidth).W), enable_reg1)
+    val c_reg2 = RegEnable(c_reg1, 0.S(accWidth.W), enable_reg1)
+    val enable_reg2 = RegNext(enable_reg1, false.B)
+    
+    // 第三级流水线：累加
+    val mult_extended = Wire(SInt(accWidth.W))
+    mult_extended := mult_reg2.asSInt
+    val add_result = c_reg2 + mult_extended
+    
+    io.c_out := RegEnable(add_result, 0.S(accWidth.W), enable_reg2)
+    io.valid_out := RegNext(enable_reg2, false.B)
+}
+
+// 生成Verilog
+object MACUnitGen extends App {
+    (new chisel3.stage.ChiselStage).emitVerilog(
+        new MACUnit(),
+        Array("--target-dir", "generated")
+    )
+}
+            </div>
+
+            <h4>4.1.2 多精度MAC设计</h4>
+            
+            <p>多精度设计是现代NPU的关键创新。不同的应用场景对精度的需求差异巨大，就像不同的工作需要不同精度的工具——外科手术需要手术刀，而拆墙只需要大锤。</p>
+            
+            <h5>功耗-性能-面积（PPA）权衡的具体数字</h5>
+            
+            <p>以下是基于7nm工艺的实际测量数据（相对于FP32）：</p>
+            
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>数据类型</th>
+                            <th>乘法器面积</th>
+                            <th>功耗</th>
+                            <th>延迟</th>
+                            <th>应用场景</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>INT4</td>
+                            <td>16 gates</td>
+                            <td>0.1x</td>
+                            <td>1 cycle</td>
+                            <td>极低功耗推理</td>
+                        </tr>
+                        <tr>
+                            <td>INT8</td>
+                            <td>64 gates</td>
+                            <td>0.25x</td>
+                            <td>1 cycle</td>
+                            <td>主流推理</td>
+                        </tr>
+                        <tr>
+                            <td>FP16</td>
+                            <td>~400 gates</td>
+                            <td>0.4x</td>
+                            <td>2 cycles</td>
+                            <td>训练/高精度推理</td>
+                        </tr>
+                        <tr>
+                            <td>FP32</td>
+                            <td>~1600 gates</td>
+                            <td>1.0x</td>
+                            <td>3 cycles</td>
+                            <td>科学计算/训练</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <div class="warning-box">
+                <p><strong>设计陷阱：精度选择的常见误区</strong></p>
+                <ul>
+                    <li><strong>误区1：越低精度越好。</strong> 实际上，过度量化会导致精度崩塌。例如，ResNet-50在INT8下精度损失小于1%，但在INT4下可能损失超过5%。</li>
+                    <li><strong>误区2：统一精度设计。</strong> 现代NPU采用混合精度，例如权重用INT4，激活值用INT8，累加器用INT32，这样可以在保持精度的同时最大化效率。</li>
+                    <li><strong>误区3：忽视量化友好性。</strong> 不是所有模型都适合量化。Transformer类模型对量化更敏感，需要特殊的量化策略。</li>
+                </ul>
+            </div>
+            
+            <h5>真实世界的创新案例</h5>
+            
+            <p><strong>1. NVIDIA Tensor Core的演进：</strong></p>
+            <ul>
+                <li><strong>第一代（Volta）：</strong> 只支持FP16混合精度，4×4×4矩阵运算</li>
+                <li><strong>第二代（Turing）：</strong> 增加INT8/INT4支持，引入稀疏加速</li>
+                <li><strong>第三代（Ampere）：</strong> 支持TF32（19位精度），结构化稀疏2:4</li>
+                <li><strong>第四代（Hopper）：</strong> 支持FP8（E4M3/E5M2），8×8×16大矩阵</li>
+            </ul>
+            
+            <p><strong>2. Google TPU的极简主义：</strong></p>
+            <p>TPU v1只支持INT8，通过大规模并行（256×256阵列）弥补精度限制。这种"以量取胜"的策略在推理场景下取得了巨大成功，但在训练场景下不得不在TPU v2中加入FP16/BF16支持。</p>
+
+            <h4>4.1.3 MAC阵列组织</h4>
+            <div class="code-block">
+// 二维MAC阵列组织示例 (8x8)
+module MAC_Array_8x8 #(
+    parameter DATA_WIDTH = 8,
+    parameter ACC_WIDTH = 32,
+    parameter ARRAY_SIZE = 8
+)(
+    input wire clk,
+    input wire rst_n,
+    input wire enable,
+    
+    // 输入数据广播
+    input wire [DATA_WIDTH-1:0] act_broadcast [0:ARRAY_SIZE-1],  // 激活值广播
+    input wire [DATA_WIDTH-1:0] weight_array [0:ARRAY_SIZE-1][0:ARRAY_SIZE-1],  // 权重
+    
+    // 部分和累加
+    output wire [ACC_WIDTH-1:0] psum_out [0:ARRAY_SIZE-1][0:ARRAY_SIZE-1]
+);
+
+    // MAC单元阵列
+    genvar i, j;
+    generate
+        for (i = 0; i < ARRAY_SIZE; i = i + 1) begin : row
+            for (j = 0; j < ARRAY_SIZE; j = j + 1) begin : col
+                MAC_Unit #(
+                    .DATA_WIDTH(DATA_WIDTH),
+                    .ACC_WIDTH(ACC_WIDTH)
+                ) mac_inst (
+                    .clk(clk),
+                    .rst_n(rst_n),
+                    .enable(enable),
+                    .a_in(act_broadcast[i]),              // 行广播
+                    .b_in(weight_array[i][j]),            // 本地权重
+                    .c_in(/* 根据数据流选择 */),
+                    .c_out(psum_out[i][j])
+                );
+            end
+        end
+    endgenerate
+endmodule
+            </div>
+
+            <h3>4.2 脉动阵列架构</h3>
+            
+            <h4>4.2.1 脉动阵列原理</h4>
+            <p>脉动阵列通过数据在PE间的有节奏流动，实现高效的数据复用和规则的计算模式。</p>
+            
+            <p>脉动阵列（Systolic Array）这个名字来源于心脏的脉动（Systole）。就像心脏有节奏地泵血，数据在脉动阵列中也以固定的节奏在处理单元间流动。这个优雅的概念由孔祥重（H.T. Kung）教授在1978年提出，如今已成为AI芯片的核心架构。</p>
+            
+            <h5>脉动阵列的天才之处</h5>
+            
+            <p>想象一个汽车装配线，每个工人负责安装一个部件。传统方法是每个工人都要去仓库取零件，效率低下。脉动阵列的做法是：让零件在传送带上流动，每个工人从传送带取用需要的零件，完成自己的工作后，将半成品继续传递下去。</p>
+            
+            <div class="info-box">
+                <p><strong>核心优势：</strong></p>
+                <ul>
+                    <li>数据复用率高：每个数据被多个PE使用</li>
+                    <li>通信局部化：只需要邻近PE间通信</li>
+                    <li>控制简单：规则的数据流动模式</li>
+                    <li>易于扩展：模块化设计便于增加阵列规模</li>
+                </ul>
+            </div>
+            
+            <h5>三种经典的脉动阵列变体</h5>
+            
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>类型</th>
+                            <th>数据流动方式</th>
+                            <th>适用场景</th>
+                            <th>代表实现</th>
+                            <th>优缺点</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Weight Stationary (WS)</strong></td>
+                            <td>权重固定在PE中，输入和输出流动</td>
+                            <td>卷积层（权重复用高）</td>
+                            <td>Google TPU v1</td>
+                            <td>✓ 权重只加载一次<br>✗ 输入/输出带宽需求高</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Output Stationary (OS)</strong></td>
+                            <td>输出固定在PE中累加，输入和权重流动</td>
+                            <td>大矩阵乘法</td>
+                            <td>NVIDIA CUTLASS</td>
+                            <td>✓ 减少部分和读写<br>✗ 权重带宽需求高</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Row Stationary (RS)</strong></td>
+                            <td>一行数据驻留，其他数据流动</td>
+                            <td>通用计算</td>
+                            <td>MIT Eyeriss</td>
+                            <td>✓ 灵活性高<br>✗ 控制复杂</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <h5>现代变体和创新</h5>
+            
+            <p><strong>1. Google TPU的超大规模脉动阵列：</strong></p>
+            <p>TPU v1使用256×256的脉动阵列，这在当时是革命性的。为了支撑如此大的阵列，Google设计了独特的"脉动数据调度器"，能够精确控制数据流入的时机，确保计算单元的利用率接近100%。</p>
+            
+            <p><strong>2. Groq的时间编排架构（TSP）：</strong></p>
+            <p>Groq将脉动阵列的概念推向极致，整个芯片就是一个巨大的脉动系统。他们抛弃了传统的缓存，所有数据移动都是预先编排好的，像一场精心排练的交响乐。</p>
+            
+            <p><strong>3. Cerebras的晶圆级脉动：</strong></p>
+            <p>Cerebras WSE-2包含850,000个核心，整个晶圆就是一个巨大的2D脉动阵列。数据可以在任意方向流动，突破了传统芯片的边界限制。</p>
+
+            <h4>4.2.2 Weight Stationary脉动阵列实现</h4>
+            <div class="code-block">
+// 权重固定型脉动阵列PE
+module SystolicPE_WS #(
+    parameter DATA_WIDTH = 8,
+    parameter ACC_WIDTH = 32
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 控制信号
+    input wire weight_load,      // 权重加载使能
+    input wire compute_en,       // 计算使能
+    
+    // 数据输入
+    input wire [DATA_WIDTH-1:0] act_in,      // 激活值输入（从上方）
+    input wire [DATA_WIDTH-1:0] weight_in,   // 权重输入（加载时）
+    input wire [ACC_WIDTH-1:0] psum_in,      // 部分和输入（从左侧）
+    
+    // 数据输出
+    output reg [DATA_WIDTH-1:0] act_out,     // 激活值输出（向下方）
+    output reg [ACC_WIDTH-1:0] psum_out      // 部分和输出（向右侧）
+);
+
+    // 内部寄存器
+    reg [DATA_WIDTH-1:0] weight_reg;         // 存储的权重
+    reg [DATA_WIDTH-1:0] act_reg;            // 激活值寄存器
+    
+    // MAC运算
+    wire [2*DATA_WIDTH-1:0] mult_result;
+    wire [ACC_WIDTH-1:0] mac_result;
+    
+    assign mult_result = act_reg * weight_reg;
+    assign mac_result = psum_in + {{(ACC_WIDTH-2*DATA_WIDTH){mult_result[2*DATA_WIDTH-1]}}, mult_result};
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            weight_reg <= 0;
+            act_reg <= 0;
+            act_out <= 0;
+            psum_out <= 0;
+        end else begin
+            // 权重加载
+            if (weight_load) begin
+                weight_reg <= weight_in;
+            end
+            
+            // 计算模式
+            if (compute_en) begin
+                // 激活值向下传递
+                act_reg <= act_in;
+                act_out <= act_reg;
+                
+                // MAC结果向右传递
+                psum_out <= mac_result;
+            end
+        end
+    end
+endmodule
+
+// 优化的流水线脉动阵列 - Verilog版本
+module SystolicArray_4x4_WS #(
+    parameter DATA_WIDTH = 8,
+    parameter ACC_WIDTH = 32,
+    parameter ARRAY_DIM = 4
+)(
+    input wire clk,
+    input wire rst_n,
+    input wire weight_load,
+    input wire compute_en,
+    
+    // 激活值输入（从顶部进入，已寄存）
+    input wire [DATA_WIDTH-1:0] act_in [0:ARRAY_DIM-1],
+    
+    // 权重加载接口
+    input wire [DATA_WIDTH-1:0] weight_in [0:ARRAY_DIM-1][0:ARRAY_DIM-1],
+    
+    // 结果输出（从右侧输出，已寄存）
+    output wire [ACC_WIDTH-1:0] result_out [0:ARRAY_DIM-1]
+);
+
+    // PE间的寄存连接
+    reg [DATA_WIDTH-1:0] act_reg [0:ARRAY_DIM][0:ARRAY_DIM-1];  // 激活值寄存器
+    reg [ACC_WIDTH-1:0] psum_reg [0:ARRAY_DIM-1][0:ARRAY_DIM];  // 部分和寄存器
+    reg valid_reg [0:ARRAY_DIM][0:ARRAY_DIM-1];                 // 有效信号寄存器
+    
+    // 初始化边界条件
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            for (int i = 0; i < ARRAY_DIM; i++) begin
+                psum_reg[i][0] <= 0;  // 左边界部分和为0
+                valid_reg[0][i] <= 0;  // 顶部有效信号初始化
+            end
+        end else begin
+            // 左边界保持为0
+            for (int i = 0; i < ARRAY_DIM; i++) begin
+                psum_reg[i][0] <= 0;
+            end
+            // 顶部输入寄存
+            for (int j = 0; j < ARRAY_DIM; j++) begin
+                act_reg[0][j] <= act_in[j];
+                valid_reg[0][j] <= compute_en;
+            end
+        end
+    end
+    
+    // PE阵列实例化（优化版本）
+    genvar i, j;
+    generate
+        for (i = 0; i < ARRAY_DIM; i = i + 1) begin : pe_row
+            for (j = 0; j < ARRAY_DIM; j = j + 1) begin : pe_col
+                SystolicPE_WS_Pipelined #(
+                    .DATA_WIDTH(DATA_WIDTH),
+                    .ACC_WIDTH(ACC_WIDTH)
+                ) pe_inst (
+                    .clk(clk),
+                    .rst_n(rst_n),
+                    .weight_load(weight_load),
+                    .valid_in(valid_reg[i][j]),
+                    .act_in(act_reg[i][j]),
+                    .weight_in(weight_in[i][j]),
+                    .psum_in(psum_reg[i][j]),
+                    .act_out(act_reg[i+1][j]),
+                    .psum_out(psum_reg[i][j+1]),
+                    .valid_out(valid_reg[i+1][j])
+                );
+            end
+        end
+    endgenerate
+    
+    // 输出连接（已寄存）
+    generate
+        for (i = 0; i < ARRAY_DIM; i = i + 1) begin
+            assign result_out[i] = psum_reg[i][ARRAY_DIM];
+        end
+    endgenerate
+endmodule
+
+// 优化的流水线PE单元
+module SystolicPE_WS_Pipelined #(
+    parameter DATA_WIDTH = 8,
+    parameter ACC_WIDTH = 32
+)(
+    input wire clk,
+    input wire rst_n,
+    input wire weight_load,
+    input wire valid_in,
+    input wire [DATA_WIDTH-1:0] act_in,
+    input wire [DATA_WIDTH-1:0] weight_in,
+    input wire [ACC_WIDTH-1:0] psum_in,
+    output reg [DATA_WIDTH-1:0] act_out,
+    output reg [ACC_WIDTH-1:0] psum_out,
+    output reg valid_out
+);
+    // 权重寄存器（保持不变）
+    reg [DATA_WIDTH-1:0] weight_reg;
+    
+    // 流水线寄存器
+    reg [DATA_WIDTH-1:0] act_reg;
+    reg [ACC_WIDTH-1:0] psum_reg;
+    reg valid_reg;
+    
+    // MAC计算（组合逻辑）
+    wire [2*DATA_WIDTH-1:0] mult_result;
+    wire [ACC_WIDTH-1:0] mac_result;
+    
+    assign mult_result = $signed(act_reg) * $signed(weight_reg);
+    assign mac_result = psum_reg + {{(ACC_WIDTH-2*DATA_WIDTH){mult_result[2*DATA_WIDTH-1]}}, mult_result};
+    
+    // 权重加载
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            weight_reg <= 0;
+        end else if (weight_load) begin
+            weight_reg <= weight_in;
+        end
+    end
+    
+    // 流水线第一级：输入寄存
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            act_reg <= 0;
+            psum_reg <= 0;
+            valid_reg <= 0;
+        end else begin
+            act_reg <= act_in;
+            psum_reg <= psum_in;
+            valid_reg <= valid_in;
+        end
+    end
+    
+    // 流水线第二级：输出寄存
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            act_out <= 0;
+            psum_out <= 0;
+            valid_out <= 0;
+        end else begin
+            act_out <= act_reg;  // 激活值向下传递
+            psum_out <= valid_reg ? mac_result : psum_reg;  // MAC结果向右传递
+            valid_out <= valid_reg;
+        end
+    end
+endmodule
+            </div>
+            
+            <p>Chisel版本的脉动阵列：</p>
+            <div class="code-block">
+import chisel3._
+import chisel3.util._
+
+// 脉动PE单元
+class SystolicPE(val dataWidth: Int = 8, val accWidth: Int = 32) extends Module {
+    val io = IO(new Bundle {
+        val weight_load = Input(Bool())
+        val valid_in = Input(Bool())
+        val act_in = Input(SInt(dataWidth.W))
+        val weight_in = Input(SInt(dataWidth.W))
+        val psum_in = Input(SInt(accWidth.W))
+        val act_out = Output(SInt(dataWidth.W))
+        val psum_out = Output(SInt(accWidth.W))
+        val valid_out = Output(Bool())
+    })
+    
+    // 权重寄存器
+    val weight_reg = RegInit(0.S(dataWidth.W))
+    when(io.weight_load) {
+        weight_reg := io.weight_in
+    }
+    
+    // 流水线寄存器
+    val act_reg = RegNext(io.act_in)
+    val psum_reg = RegNext(io.psum_in)
+    val valid_reg = RegNext(io.valid_in)
+    
+    // MAC计算
+    val mult_result = act_reg * weight_reg
+    val mac_result = psum_reg + mult_result
+    
+    // 输出寄存器
+    io.act_out := RegNext(act_reg)
+    io.psum_out := RegNext(Mux(valid_reg, mac_result, psum_reg))
+    io.valid_out := RegNext(valid_reg)
+}
+
+// 4x4脉动阵列
+class SystolicArray4x4(val dataWidth: Int = 8, val accWidth: Int = 32) extends Module {
+    val arrayDim = 4
+    val io = IO(new Bundle {
+        val weight_load = Input(Bool())
+        val compute_en = Input(Bool())
+        val act_in = Input(Vec(arrayDim, SInt(dataWidth.W)))
+        val weight_in = Input(Vec(arrayDim, Vec(arrayDim, SInt(dataWidth.W))))
+        val result_out = Output(Vec(arrayDim, SInt(accWidth.W)))
+    })
+    
+    // 创建PE阵列
+    val peArray = Array.fill(arrayDim, arrayDim)(Module(new SystolicPE(dataWidth, accWidth)))
+    
+    // 连接PE阵列
+    for (i <- 0 until arrayDim) {
+        for (j <- 0 until arrayDim) {
+            val pe = peArray(i)(j)
+            
+            // 权重加载
+            pe.io.weight_load := io.weight_load
+            pe.io.weight_in := io.weight_in(i)(j)
+            
+            // 激活值连接（从上到下）
+            if (i == 0) {
+                pe.io.act_in := RegNext(io.act_in(j))
+                pe.io.valid_in := RegNext(io.compute_en)
+            } else {
+                pe.io.act_in := peArray(i-1)(j).io.act_out
+                pe.io.valid_in := peArray(i-1)(j).io.valid_out
+            }
+            
+            // 部分和连接（从左到右）
+            if (j == 0) {
+                pe.io.psum_in := 0.S
+            } else {
+                pe.io.psum_in := peArray(i)(j-1).io.psum_out
+            }
+        }
+    }
+    
+    // 输出连接
+    for (i <- 0 until arrayDim) {
+        io.result_out(i) := peArray(i)(arrayDim-1).io.psum_out
+    }
+}
+            </div>
+
+            <h4>4.2.3 脉动阵列数据流动示例</h4>
+            <p>以2×2矩阵乘法为例，展示数据在脉动阵列中的流动过程：</p>
+            <div class="code-block">
+矩阵A = [a00 a01]    矩阵B = [b00 b01]    结果C = A×B
+        [a10 a11]            [b10 b11]
+
+时刻0: 权重加载
+PE[0][0] <- b00    PE[0][1] <- b01
+PE[1][0] <- b10    PE[1][1] <- b11
+
+时刻1: 
+输入: a00, a10 (错开一个周期)
+      ↓
+    [b00]--[b01]    a00×b00 → PE[0][0]
+      ↓
+    [b10]--[b11]    
+
+时刻2:
+输入: a01, a11
+    a00  ↓
+    [b00]--[b01]    a00×b01 → PE[0][1], a10×b00 → PE[1][0]
+    a10  ↓
+    [b10]--[b11]
+
+时刻3:
+    a01  a00
+    [b00]--[b01]→c00   a01×b10 → PE[0][0], a10×b01 → PE[1][1]
+    a11  a10
+    [b10]--[b11]
+
+时刻4:
+         a01
+    [b00]--[b01]→c01   a01×b11 → PE[0][1], a11×b10 → PE[1][0]
+         a11
+    [b10]--[b11]→c10
+
+时刻5:
+    [b00]--[b01]       a11×b11 → PE[1][1]
+    [b10]--[b11]→c11
+            </div>
+
+            <h4>4.2.4 Output Stationary 脉动阵列实现</h4>
+            <p>Output Stationary（输出固定）是另一种重要的脉动阵列架构，特别适合深度卷积和批处理场景。在这种架构中，每个PE负责计算输出矩阵的一个固定元素，输入数据和权重在PE阵列中流动。</p>
+            
+            <div class="code-block">
+// 优化的Output Stationary脉动阵列 - Verilog版本
+module OutputStationarySystolicArray #(
+    parameter ARRAY_SIZE = 4,
+    parameter DATA_WIDTH = 8,
+    parameter ACC_WIDTH = 32,
+    parameter PIPELINE_STAGES = 3
+)(
+    input wire clk,
+    input wire rst_n,
+    input wire enable,
+    input wire clear_acc,
+    
+    // 数据输入 - A矩阵从左侧输入，每行错开一个周期
+    input wire signed [DATA_WIDTH-1:0] a_data_in [0:ARRAY_SIZE-1],
+    input wire a_valid_in [0:ARRAY_SIZE-1],
+    
+    // 权重输入 - B矩阵从顶部输入，每列错开一个周期
+    input wire signed [DATA_WIDTH-1:0] b_data_in [0:ARRAY_SIZE-1],
+    input wire b_valid_in [0:ARRAY_SIZE-1],
+    
+    // 结果输出 - C矩阵
+    output reg signed [ACC_WIDTH-1:0] c_data_out [0:ARRAY_SIZE-1][0:ARRAY_SIZE-1],
+    output reg c_valid_out [0:ARRAY_SIZE-1][0:ARRAY_SIZE-1]
+);
+
+    // 内部信号
+    wire signed [DATA_WIDTH-1:0] a_flow [0:ARRAY_SIZE-1][0:ARRAY_SIZE];
+    wire signed [DATA_WIDTH-1:0] b_flow [0:ARRAY_SIZE][0:ARRAY_SIZE-1];
+    wire a_valid_flow [0:ARRAY_SIZE-1][0:ARRAY_SIZE];
+    wire b_valid_flow [0:ARRAY_SIZE][0:ARRAY_SIZE-1];
+    wire signed [ACC_WIDTH-1:0] pe_results [0:ARRAY_SIZE-1][0:ARRAY_SIZE-1];
+    wire pe_valid [0:ARRAY_SIZE-1][0:ARRAY_SIZE-1];
+    
+    // 输入延迟寄存器（创建数据错位）
+    reg signed [DATA_WIDTH-1:0] a_delay_reg [0:ARRAY_SIZE-1][0:ARRAY_SIZE-1];
+    reg signed [DATA_WIDTH-1:0] b_delay_reg [0:ARRAY_SIZE-1][0:ARRAY_SIZE-1];
+    reg a_valid_delay [0:ARRAY_SIZE-1][0:ARRAY_SIZE-1];
+    reg b_valid_delay [0:ARRAY_SIZE-1][0:ARRAY_SIZE-1];
+    
+    // 生成输入延迟链
+    genvar d, r, c;
+    generate
+        // A矩阵输入延迟（每行延迟递增）
+        for (r = 0; r < ARRAY_SIZE; r = r + 1) begin : a_delay_gen
+            always @(posedge clk or negedge rst_n) begin
+                if (!rst_n) begin
+                    for (int i = 0; i < r; i = i + 1) begin
+                        a_delay_reg[r][i] <= 0;
+                        a_valid_delay[r][i] <= 0;
+                    end
+                end else if (enable) begin
+                    if (r == 0) begin
+                        // 第一行无延迟
+                        a_flow[0][0] <= a_data_in[0];
+                        a_valid_flow[0][0] <= a_valid_in[0];
+                    end else begin
+                        // 延迟链
+                        a_delay_reg[r][0] <= a_data_in[r];
+                        a_valid_delay[r][0] <= a_valid_in[r];
+                        for (int i = 1; i < r; i = i + 1) begin
+                            a_delay_reg[r][i] <= a_delay_reg[r][i-1];
+                            a_valid_delay[r][i] <= a_valid_delay[r][i-1];
+                        end
+                        a_flow[r][0] <= a_delay_reg[r][r-1];
+                        a_valid_flow[r][0] <= a_valid_delay[r][r-1];
+                    end
+                end
+            end
+        end
+        
+        // B矩阵输入延迟（每列延迟递增）
+        for (c = 0; c < ARRAY_SIZE; c = c + 1) begin : b_delay_gen
+            always @(posedge clk or negedge rst_n) begin
+                if (!rst_n) begin
+                    for (int i = 0; i < c; i = i + 1) begin
+                        b_delay_reg[c][i] <= 0;
+                        b_valid_delay[c][i] <= 0;
+                    end
+                end else if (enable) begin
+                    if (c == 0) begin
+                        // 第一列无延迟
+                        b_flow[0][0] <= b_data_in[0];
+                        b_valid_flow[0][0] <= b_valid_in[0];
+                    end else begin
+                        // 延迟链
+                        b_delay_reg[c][0] <= b_data_in[c];
+                        b_valid_delay[c][0] <= b_valid_in[c];
+                        for (int i = 1; i < c; i = i + 1) begin
+                            b_delay_reg[c][i] <= b_delay_reg[c][i-1];
+                            b_valid_delay[c][i] <= b_valid_delay[c][i-1];
+                        end
+                        b_flow[0][c] <= b_delay_reg[c][c-1];
+                        b_valid_flow[0][c] <= b_valid_delay[c][c-1];
+                    end
+                end
+            end
+        end
+    endgenerate
+    
+    // PE阵列实例化
+    generate
+        for (r = 0; r < ARRAY_SIZE; r = r + 1) begin : pe_row
+            for (c = 0; c < ARRAY_SIZE; c = c + 1) begin : pe_col
+                OutputStationaryPE #(
+                    .DATA_WIDTH(DATA_WIDTH),
+                    .ACC_WIDTH(ACC_WIDTH)
+                ) pe_inst (
+                    .clk(clk),
+                    .rst_n(rst_n),
+                    .enable(enable),
+                    .clear_acc(clear_acc),
+                    
+                    // A数据从左向右流动
+                    .a_data_in(a_flow[r][c]),
+                    .a_valid_in(a_valid_flow[r][c]),
+                    .a_data_out(a_flow[r][c+1]),
+                    .a_valid_out(a_valid_flow[r][c+1]),
+                    
+                    // B数据从上向下流动
+                    .b_data_in(b_flow[r][c]),
+                    .b_valid_in(b_valid_flow[r][c]),
+                    .b_data_out(b_flow[r+1][c]),
+                    .b_valid_out(b_valid_flow[r+1][c]),
+                    
+                    // 累加结果
+                    .acc_out(pe_results[r][c]),
+                    .acc_valid(pe_valid[r][c])
+                );
+            end
+        end
+    endgenerate
+    
+    // 输出寄存
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            for (int i = 0; i < ARRAY_SIZE; i = i + 1) begin
+                for (int j = 0; j < ARRAY_SIZE; j = j + 1) begin
+                    c_data_out[i][j] <= 0;
+                    c_valid_out[i][j] <= 0;
+                end
+            end
+        end else begin
+            for (int i = 0; i < ARRAY_SIZE; i = i + 1) begin
+                for (int j = 0; j < ARRAY_SIZE; j = j + 1) begin
+                    c_data_out[i][j] <= pe_results[i][j];
+                    c_valid_out[i][j] <= pe_valid[i][j];
+                end
+            end
+        end
+    end
+
+endmodule
+
+// Output Stationary PE单元
+module OutputStationaryPE #(
+    parameter DATA_WIDTH = 8,
+    parameter ACC_WIDTH = 32
+)(
+    input wire clk,
+    input wire rst_n,
+    input wire enable,
+    input wire clear_acc,
+    
+    // A数据接口（水平流动）
+    input wire signed [DATA_WIDTH-1:0] a_data_in,
+    input wire a_valid_in,
+    output reg signed [DATA_WIDTH-1:0] a_data_out,
+    output reg a_valid_out,
+    
+    // B数据接口（垂直流动）
+    input wire signed [DATA_WIDTH-1:0] b_data_in,
+    input wire b_valid_in,
+    output reg signed [DATA_WIDTH-1:0] b_data_out,
+    output reg b_valid_out,
+    
+    // 累加结果（固定在PE中）
+    output reg signed [ACC_WIDTH-1:0] acc_out,
+    output reg acc_valid
+);
+
+    // 内部寄存器
+    reg signed [2*DATA_WIDTH-1:0] mult_result;
+    reg mult_valid;
+    reg signed [ACC_WIDTH-1:0] acc_reg;
+    
+    // 数据传递流水线
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            a_data_out <= 0;
+            a_valid_out <= 0;
+            b_data_out <= 0;
+            b_valid_out <= 0;
+        end else if (enable) begin
+            // 数据向右和向下传递
+            a_data_out <= a_data_in;
+            a_valid_out <= a_valid_in;
+            b_data_out <= b_data_in;
+            b_valid_out <= b_valid_in;
+        end
+    end
+    
+    // 乘法流水线
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            mult_result <= 0;
+            mult_valid <= 0;
+        end else if (enable) begin
+            if (a_valid_in && b_valid_in) begin
+                mult_result <= a_data_in * b_data_in;
+                mult_valid <= 1;
+            end else begin
+                mult_result <= 0;
+                mult_valid <= 0;
+            end
+        end
+    end
+    
+    // 累加流水线
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            acc_reg <= 0;
+            acc_valid <= 0;
+        end else if (clear_acc) begin
+            acc_reg <= 0;
+            acc_valid <= 0;
+        end else if (enable && mult_valid) begin
+            acc_reg <= acc_reg + mult_result;
+            acc_valid <= 1;
+        end
+    end
+    
+    // 输出
+    assign acc_out = acc_reg;
+
+endmodule
+            </div>
+            
+            <div class="code-block">
+// Chisel版本的Output Stationary脉动阵列
+import chisel3._
+import chisel3.util._
+
+class OutputStationaryPE(dataWidth: Int = 8, accWidth: Int = 32) extends Module {
+  val io = IO(new Bundle {
+    val enable = Input(Bool())
+    val clearAcc = Input(Bool())
+    
+    // A数据接口（水平流动）
+    val aDataIn = Input(SInt(dataWidth.W))
+    val aValidIn = Input(Bool())
+    val aDataOut = Output(SInt(dataWidth.W))
+    val aValidOut = Output(Bool())
+    
+    // B数据接口（垂直流动）
+    val bDataIn = Input(SInt(dataWidth.W))
+    val bValidIn = Input(Bool())
+    val bDataOut = Output(SInt(dataWidth.W))
+    val bValidOut = Output(Bool())
+    
+    // 累加结果
+    val accOut = Output(SInt(accWidth.W))
+    val accValid = Output(Bool())
+  })
+  
+  // 数据传递寄存器
+  val aDataReg = RegNext(io.aDataIn)
+  val aValidReg = RegNext(io.aValidIn)
+  val bDataReg = RegNext(io.bDataIn)
+  val bValidReg = RegNext(io.bValidIn)
+  
+  // 乘法流水线
+  val multResult = RegNext(io.aDataIn * io.bDataIn)
+  val multValid = RegNext(io.aValidIn && io.bValidIn)
+  
+  // 累加器
+  val accReg = RegInit(0.S(accWidth.W))
+  val accValidReg = RegInit(false.B)
+  
+  when (io.clearAcc) {
+    accReg := 0.S
+    accValidReg := false.B
+  }.elsewhen (io.enable && multValid) {
+    accReg := accReg + multResult
+    accValidReg := true.B
+  }
+  
+  // 输出连接
+  io.aDataOut := aDataReg
+  io.aValidOut := aValidReg
+  io.bDataOut := bDataReg
+  io.bValidOut := bValidReg
+  io.accOut := accReg
+  io.accValid := accValidReg
+}
+
+class OutputStationarySystolicArray(arraySize: Int = 4, dataWidth: Int = 8, accWidth: Int = 32) extends Module {
+  val io = IO(new Bundle {
+    val enable = Input(Bool())
+    val clearAcc = Input(Bool())
+    
+    // A矩阵输入
+    val aDataIn = Input(Vec(arraySize, SInt(dataWidth.W)))
+    val aValidIn = Input(Vec(arraySize, Bool()))
+    
+    // B矩阵输入
+    val bDataIn = Input(Vec(arraySize, SInt(dataWidth.W)))
+    val bValidIn = Input(Vec(arraySize, Bool()))
+    
+    // C矩阵输出
+    val cDataOut = Output(Vec(arraySize, Vec(arraySize, SInt(accWidth.W))))
+    val cValidOut = Output(Vec(arraySize, Vec(arraySize, Bool())))
+  })
+  
+  // PE阵列
+  val peArray = Seq.fill(arraySize, arraySize)(Module(new OutputStationaryPE(dataWidth, accWidth)))
+  
+  // 输入延迟链 - 创建数据错位
+  val aDelayChain = Seq.tabulate(arraySize) { r =>
+    if (r == 0) {
+      (io.aDataIn(0), io.aValidIn(0))
+    } else {
+      val delayRegs = Seq.fill(r)(Module(new Queue(new Bundle {
+        val data = SInt(dataWidth.W)
+        val valid = Bool()
+      }, 1)))
+      
+      // 连接延迟链
+      delayRegs(0).io.enq.valid := io.enable
+      delayRegs(0).io.enq.bits.data := io.aDataIn(r)
+      delayRegs(0).io.enq.bits.valid := io.aValidIn(r)
+      delayRegs(0).io.deq.ready := io.enable
+      
+      for (i <- 1 until r) {
+        delayRegs(i).io.enq <> delayRegs(i-1).io.deq
+        delayRegs(i).io.deq.ready := io.enable
+      }
+      
+      (delayRegs(r-1).io.deq.bits.data, delayRegs(r-1).io.deq.bits.valid)
+    }
+  }
+  
+  val bDelayChain = Seq.tabulate(arraySize) { c =>
+    if (c == 0) {
+      (io.bDataIn(0), io.bValidIn(0))
+    } else {
+      val delayRegs = Seq.fill(c)(Module(new Queue(new Bundle {
+        val data = SInt(dataWidth.W)
+        val valid = Bool()
+      }, 1)))
+      
+      // 连接延迟链
+      delayRegs(0).io.enq.valid := io.enable
+      delayRegs(0).io.enq.bits.data := io.bDataIn(c)
+      delayRegs(0).io.enq.bits.valid := io.bValidIn(c)
+      delayRegs(0).io.deq.ready := io.enable
+      
+      for (i <- 1 until c) {
+        delayRegs(i).io.enq <> delayRegs(i-1).io.deq
+        delayRegs(i).io.deq.ready := io.enable
+      }
+      
+      (delayRegs(c-1).io.deq.bits.data, delayRegs(c-1).io.deq.bits.valid)
+    }
+  }
+  
+  // 连接PE阵列
+  for (r <- 0 until arraySize) {
+    for (c <- 0 until arraySize) {
+      val pe = peArray(r)(c)
+      pe.io.enable := io.enable
+      pe.io.clearAcc := io.clearAcc
+      
+      // A数据连接（水平）
+      if (c == 0) {
+        pe.io.aDataIn := aDelayChain(r)._1
+        pe.io.aValidIn := aDelayChain(r)._2
+      } else {
+        pe.io.aDataIn := peArray(r)(c-1).io.aDataOut
+        pe.io.aValidIn := peArray(r)(c-1).io.aValidOut
+      }
+      
+      // B数据连接（垂直）
+      if (r == 0) {
+        pe.io.bDataIn := bDelayChain(c)._1
+        pe.io.bValidIn := bDelayChain(c)._2
+      } else {
+        pe.io.bDataIn := peArray(r-1)(c).io.bDataOut
+        pe.io.bValidIn := peArray(r-1)(c).io.bValidOut
+      }
+      
+      // 输出连接
+      io.cDataOut(r)(c) := pe.io.accOut
+      io.cValidOut(r)(c) := pe.io.accValid
+    }
+  }
+}
+            </div>
+            
+            <h4>4.2.5 Output Stationary vs Weight Stationary 对比</h4>
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>特性</th>
+                            <th>Weight Stationary</th>
+                            <th>Output Stationary</th>
+                            <th>适用场景</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>数据复用</td>
+                            <td>权重驻留在PE中</td>
+                            <td>部分和驻留在PE中</td>
+                            <td>WS: 批量小<br>OS: 批量大</td>
+                        </tr>
+                        <tr>
+                            <td>内存带宽</td>
+                            <td>输入/输出带宽高</td>
+                            <td>权重/输入带宽高</td>
+                            <td>WS: 权重复用多<br>OS: 输出通道多</td>
+                        </tr>
+                        <tr>
+                            <td>控制复杂度</td>
+                            <td>简单</td>
+                            <td>中等</td>
+                            <td>WS: 资源受限<br>OS: 性能优先</td>
+                        </tr>
+                        <tr>
+                            <td>延迟</td>
+                            <td>较低</td>
+                            <td>较高（需要数据对齐）</td>
+                            <td>WS: 实时推理<br>OS: 批处理训练</td>
+                        </tr>
+                        <tr>
+                            <td>能效</td>
+                            <td>权重读取能耗低</td>
+                            <td>部分和读写能耗低</td>
+                            <td>WS: 边缘设备<br>OS: 数据中心</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <h3>4.3 向量处理单元</h3>
+            
+            <h4>4.3.1 SIMD架构设计</h4>
+            <p>向量处理单元采用SIMD架构，支持非线性激活、池化等操作。</p>
+            
+            <p>虽然MAC阵列负责了深度学习中90%以上的计算量，但剩下的10%——激活函数、归一化、池化等操作——同样至关重要。这就像做菜，炒菜占了大部分时间，但最后的调味决定了菜品的成败。</p>
+            
+            <h5>为什么需要专门的向量处理单元？</h5>
+            
+            <p>让MAC阵列处理激活函数就像让推土机绣花——不是不能，而是大材小用。向量处理单元（VPU）专门为这些"轻量级但高频"的操作优化：</p>
+            
+            <div class="info-box">
+                <p><strong>VPU vs MAC阵列的设计权衡</strong></p>
+                <table>
+                    <tr>
+                        <th>特性</th>
+                        <th>MAC阵列</th>
+                        <th>向量处理单元</th>
+                    </tr>
+                    <tr>
+                        <td>计算模式</td>
+                        <td>固定的乘加运算</td>
+                        <td>灵活的算术/逻辑运算</td>
+                    </tr>
+                    <tr>
+                        <td>数据访问</td>
+                        <td>规则的矩阵访问</td>
+                        <td>灵活的向量访问</td>
+                    </tr>
+                    <tr>
+                        <td>功能单元</td>
+                        <td>大量简单MAC</td>
+                        <td>少量复杂ALU</td>
+                    </tr>
+                    <tr>
+                        <td>面积效率</td>
+                        <td>高（90%用于计算）</td>
+                        <td>中（需要多种功能）</td>
+                    </tr>
+                </table>
+            </div>
+            
+            <h5>现代VPU的关键创新</h5>
+            
+            <p><strong>1. 可重构计算管线：</strong></p>
+            <p>Intel的Nervana NNP包含了可重构的向量单元，可以根据不同的激活函数动态改变计算管线。例如，计算ReLU时只需要比较器，而计算GELU时需要完整的超越函数单元。</p>
+            
+            <p><strong>2. 查找表（LUT）加速：</strong></p>
+            <p>对于复杂的激活函数（如Sigmoid、Tanh），许多NPU使用查找表+插值的方法。例如，将函数域分成256段，存储每段的起点值和斜率，通过线性插值获得结果。这种方法可以将计算延迟从20+周期降低到2-3周期。</p>
+            
+            <p><strong>3. 融合操作（Fused Operations）：</strong></p>
+            <p>现代Transformer大量使用LayerNorm + Activation的组合。高级VPU可以将这些操作融合在一个流水线中完成，避免中间结果写回内存。NVIDIA的Hopper架构可以将整个"Linear-LayerNorm-GeLU"序列融合执行。</p>
+            
+            <div class="code-block">
+module VectorProcessingUnit #(
+    parameter VECTOR_WIDTH = 16,    // 向量宽度（并行度）
+    parameter DATA_WIDTH = 8,       // 数据位宽
+    parameter OPCODE_WIDTH = 5      // 操作码宽度
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 指令接口
+    input wire [OPCODE_WIDTH-1:0] opcode,
+    input wire execute,
+    
+    // 向量输入
+    input wire [DATA_WIDTH-1:0] vec_a [0:VECTOR_WIDTH-1],
+    input wire [DATA_WIDTH-1:0] vec_b [0:VECTOR_WIDTH-1],
+    
+    // 向量输出
+    output reg [DATA_WIDTH-1:0] vec_result [0:VECTOR_WIDTH-1],
+    output reg done
+);
+
+    // 操作码定义
+    localparam OP_ADD  = 5'b00001;
+    localparam OP_SUB  = 5'b00010;
+    localparam OP_MUL  = 5'b00011;
+    localparam OP_MAX  = 5'b00100;
+    localparam OP_MIN  = 5'b00101;
+    localparam OP_RELU = 5'b00110;
+    localparam OP_SIGM = 5'b00111;
+    localparam OP_TANH = 5'b01000;
+    
+    // 功能单元输出
+    wire [DATA_WIDTH-1:0] alu_out [0:VECTOR_WIDTH-1];
+    wire [DATA_WIDTH-1:0] act_out [0:VECTOR_WIDTH-1];
+    
+    // SIMD ALU阵列
+    genvar i;
+    generate
+        for (i = 0; i < VECTOR_WIDTH; i = i + 1) begin : simd_lane
+            // 算术逻辑单元
+            VectorALU #(.DATA_WIDTH(DATA_WIDTH)) alu_inst (
+                .a(vec_a[i]),
+                .b(vec_b[i]),
+                .op(opcode[2:0]),
+                .result(alu_out[i])
+            );
+            
+            // 激活函数单元
+            ActivationUnit #(.DATA_WIDTH(DATA_WIDTH)) act_inst (
+                .data_in(vec_a[i]),
+                .func_sel(opcode[4:3]),
+                .data_out(act_out[i])
+            );
+        end
+    endgenerate
+    
+    // 结果选择和流水线控制
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            done <= 0;
+        end else if (execute) begin
+            case (opcode)
+                OP_ADD, OP_SUB, OP_MUL, OP_MAX, OP_MIN: begin
+                    for (int j = 0; j < VECTOR_WIDTH; j = j + 1) begin
+                        vec_result[j] <= alu_out[j];
+                    end
+                end
+                OP_RELU, OP_SIGM, OP_TANH: begin
+                    for (int j = 0; j < VECTOR_WIDTH; j = j + 1) begin
+                        vec_result[j] <= act_out[j];
+                    end
+                end
+            endcase
+            done <= 1;
+        end else begin
+            done <= 0;
+        end
+    end
+endmodule
+            </div>
+
+            <h4>4.3.2 特殊功能单元</h4>
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>功能单元</th>
+                            <th>操作</th>
+                            <th>实现方式</th>
+                            <th>硬件成本</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>ReLU单元</td>
+                            <td>max(0, x)</td>
+                            <td>比较器+选择器</td>
+                            <td>极低</td>
+                        </tr>
+                        <tr>
+                            <td>池化单元</td>
+                            <td>max/avg pooling</td>
+                            <td>比较树/加法树</td>
+                            <td>低</td>
+                        </tr>
+                        <tr>
+                            <td>LUT单元</td>
+                            <td>sigmoid/tanh</td>
+                            <td>查找表+插值</td>
+                            <td>中等</td>
+                        </tr>
+                        <tr>
+                            <td>归一化单元</td>
+                            <td>batch/layer norm</td>
+                            <td>乘法器+移位器</td>
+                            <td>高</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <h4>4.3.3 TPU Softmax 实现深度解析</h4>
+            <p>Softmax是神经网络中的关键操作，尤其在注意力机制中。TPU采用了软硬件协同的优化策略，实现了极高效的Softmax计算。</p>
+            
+            <div class="info-box">
+                <h5>TPU Softmax 实现架构</h5>
+                
+                <p><strong>1. 算法优化：数值稳定的 Log-Sum-Exp</strong></p>
+                <div class="code-block">
+// 标准Softmax容易溢出：
+// softmax(x_i) = exp(x_i) / Σ exp(x_j)
+
+// TPU采用的数值稳定版本：
+// softmax(x_i) = exp(x_i - max(x)) / Σ exp(x_j - max(x))
+
+// 计算步骤：
+1. max_val = max(x)           // 并行规约找最大值
+2. x_shifted = x - max_val    // 广播减法
+3. exp_val = exp(x_shifted)   // 硬件加速指数运算
+4. sum_exp = sum(exp_val)     // 并行规约求和
+5. result = exp_val / sum_exp // 逐元素除法（转为乘法）
+                </div>
+                
+                <p><strong>2. 硬件实现：VPU（向量处理单元）</strong></p>
+                <table class="styled-table">
+                    <thead>
+                        <tr>
+                            <th>计算步骤</th>
+                            <th>硬件单元</th>
+                            <th>优化技术</th>
+                            <th>执行时间</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>寻找最大值</td>
+                            <td>VPU并行规约单元</td>
+                            <td>树状比较器网络</td>
+                            <td>O(log N)</td>
+                        </tr>
+                        <tr>
+                            <td>广播减法</td>
+                            <td>VPU SIMD单元</td>
+                            <td>标量广播+向量减法</td>
+                            <td>O(1)</td>
+                        </tr>
+                        <tr>
+                            <td>指数运算</td>
+                            <td>专用SFU（特殊功能单元）</td>
+                            <td>硬件LUT+多项式插值</td>
+                            <td>O(1)</td>
+                        </tr>
+                        <tr>
+                            <td>求和操作</td>
+                            <td>VPU并行规约单元</td>
+                            <td>树状加法器网络</td>
+                            <td>O(log N)</td>
+                        </tr>
+                        <tr>
+                            <td>逐元素除法</td>
+                            <td>VPU乘法单元</td>
+                            <td>倒数转乘法</td>
+                            <td>O(1)</td>
+                        </tr>
+                    </tbody>
+                </table>
+                
+                <p><strong>3. 关键硬件优化：SFU（特殊功能单元）</strong></p>
+                <div class="code-block">
+// TPU SFU 指数运算实现（简化示意）
+module ExponentialSFU #(
+    parameter DATA_WIDTH = 16,  // FP16
+    parameter LUT_DEPTH = 256   // 查找表深度
+)(
+    input wire [DATA_WIDTH-1:0] x,
+    output wire [DATA_WIDTH-1:0] exp_x
+);
+    // 步骤1：范围检测和饱和处理
+    wire in_range = (x > -10.0) && (x < 10.0);
+    
+    // 步骤2：分解 x = n*ln(2) + r，其中 |r| < ln(2)/2
+    wire [7:0] n;
+    wire [DATA_WIDTH-1:0] r;
+    
+    // 步骤3：查找表获取 exp(r) 的初值
+    wire [DATA_WIDTH-1:0] exp_r_lut;
+    LUT_256x16 exp_lut(.addr(r[15:8]), .data(exp_r_lut));
+    
+    // 步骤4：二次多项式修正
+    // exp(r) ≈ exp_r_lut * (1 + r_frac + 0.5*r_frac²)
+    wire [DATA_WIDTH-1:0] correction;
+    
+    // 步骤5：重构结果 exp(x) = 2^n * exp(r)
+    wire [DATA_WIDTH-1:0] result = shift_left(exp_r_corrected, n);
+    
+    assign exp_x = in_range ? result : 
+                   (x > 10.0) ? FP16_MAX : FP16_MIN;
+endmodule
+                </div>
+                
+                <p><strong>4. 内存优化：算子融合</strong></p>
+                <ul>
+                    <li><strong>数据局部性：</strong>Softmax输入通常来自前一层的矩阵乘法（MXU输出），直接流向VPU</li>
+                    <li><strong>片上计算：</strong>整个Softmax过程在片上SRAM完成，避免HBM访问</li>
+                    <li><strong>流水线优化：</strong>max、exp、sum等操作流水线化，隐藏延迟</li>
+                    <li><strong>批处理：</strong>多个序列的Softmax可以共享规约树硬件</li>
+                </ul>
+                
+                <p><strong>5. XLA编译器优化</strong></p>
+                <div class="code-block">
+// XLA识别并融合的Softmax模式
+// 输入：用户代码
+y = tf.nn.softmax(logits, axis=-1)
+
+// XLA编译后：融合的TPU指令序列
+TPU_VPU_MAX      vr1, logits, axis=-1    // 找最大值
+TPU_VPU_SUB      vr2, logits, vr1        // 减最大值
+TPU_SFU_EXP      vr3, vr2                // 硬件指数
+TPU_VPU_SUM      vr4, vr3, axis=-1       // 求和
+TPU_VPU_RECIP    vr5, vr4                // 倒数
+TPU_VPU_MUL      output, vr3, vr5        // 乘法归一化
+                </div>
+                
+                <p><strong>性能对比：</strong></p>
+                <table class="styled-table">
+                    <thead>
+                        <tr>
+                            <th>处理器</th>
+                            <th>Softmax实现</th>
+                            <th>1M元素耗时</th>
+                            <th>能效比</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>CPU (AVX-512)</td>
+                            <td>软件循环+数学库</td>
+                            <td>~10ms</td>
+                            <td>基准</td>
+                        </tr>
+                        <tr>
+                            <td>GPU (CUDA)</td>
+                            <td>Warp级规约+共享内存</td>
+                            <td>~0.5ms</td>
+                            <td>10x</td>
+                        </tr>
+                        <tr>
+                            <td>TPU v4</td>
+                            <td>VPU硬件+SFU+融合</td>
+                            <td>~0.05ms</td>
+                            <td>100x</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <h3>4.4 特殊计算单元</h3>
+            
+            <h4>4.4.1 Tensor Core设计</h4>
+            <p>Tensor Core是一种执行小矩阵乘法的专用单元，提供更高的计算密度。</p>
+            
+            <p>Tensor Core代表了计算单元设计的范式转变：从标量运算到矩阵运算。这就像从单兵作战升级到集团军作战——虽然单个士兵的能力没有显著提升，但协同作战的效率呈指数级增长。</p>
+            
+            <h5>Tensor Core的革命性创新</h5>
+            
+            <div class="info-box">
+                <p><strong>传统MAC vs Tensor Core的根本区别</strong></p>
+                <ul>
+                    <li><strong>传统MAC：</strong> C += A × B（标量运算）</li>
+                    <li><strong>Tensor Core：</strong> D = A×B + C（矩阵运算，如4×4×4）</li>
+                    <li><strong>计算密度提升：</strong> 单个Tensor Core完成64次乘法和48次加法，而占用的面积仅为64个独立MAC的约40%</li>
+                    <li><strong>能效提升：</strong> 批量操作减少了控制开销，能效提升2-3倍</li>
+                </ul>
+            </div>
+            
+            <h5>实现挑战与解决方案</h5>
+            
+            <p><strong>挑战1：数据对齐和填充</strong></p>
+            <p>Tensor Core要求输入矩阵的维度是特定倍数（如4、8、16）。对于不规则尺寸，需要填充（padding），这会浪费计算资源。解决方案包括：</p>
+            <ul>
+                <li>动态尺寸支持：NVIDIA Ampere引入了更灵活的维度支持</li>
+                <li>稀疏加速：利用结构化稀疏跳过填充的零值计算</li>
+            </ul>
+            
+            <p><strong>挑战2：数据供给带宽</strong></p>
+            <p>一个4×4×4的Tensor Core每周期需要32个输入数据。传统的寄存器文件设计无法提供如此高的带宽。创新解决方案：</p>
+            <ul>
+                <li>分布式寄存器文件：每个Tensor Core配备专用的局部寄存器</li>
+                <li>寄存器缓存层次：引入L0.5级寄存器缓存</li>
+                <li>数据预取和双缓冲：隐藏数据加载延迟</li>
+            </ul>
+            
+            <h5>未来趋势：从数字到模拟</h5>
+            
+            <p>下一代计算单元正在探索模拟计算和存内计算：</p>
+            
+            <p><strong>1. 模拟矩阵乘法器（Analog Matrix Multiplier）：</strong></p>
+            <p>利用欧姆定律和基尔霍夫定律，在模拟域完成矩阵运算。Mythic和Syntiant等公司已经实现了商用产品，能效提升100倍以上。</p>
+            
+            <p><strong>2. 存内计算（Compute-in-Memory）：</strong></p>
+            <p>将计算单元直接集成到存储阵列中，彻底消除数据移动。三星的HBM-PIM和SK海力士的AiM都是这个方向的先驱。</p>
+            
+            <p><strong>3. 光子计算（Photonic Computing）：</strong></p>
+            <p>利用光的干涉实现矩阵乘法，理论上可以达到光速计算。Lightmatter公司的Envise芯片已经展示了这种可能性。</p>
+            
+            <div class="code-block">
+// 4x4x4 Tensor Core实现
+// 计算 D = A×B + C，其中A、B、C、D都是4×4矩阵
+module TensorCore_4x4x4 #(
+    parameter DATA_WIDTH = 8,
+    parameter ACC_WIDTH = 32
+)(
+    input wire clk,
+    input wire rst_n,
+    input wire enable,
+    
+    // 输入矩阵（扁平化表示）
+    input wire [DATA_WIDTH-1:0] mat_a [0:15],  // 4x4矩阵A
+    input wire [DATA_WIDTH-1:0] mat_b [0:15],  // 4x4矩阵B
+    input wire [ACC_WIDTH-1:0] mat_c [0:15],   // 4x4矩阵C（累加）
+    
+    // 输出矩阵
+    output reg [ACC_WIDTH-1:0] mat_d [0:15],   // 4x4结果矩阵D
+    output reg valid
+);
+
+    // 内部信号
+    wire [ACC_WIDTH-1:0] dot_products [0:15];
+    
+    // 生成16个点积计算单元
+    genvar i, j, k;
+    generate
+        for (i = 0; i < 4; i = i + 1) begin : row
+            for (j = 0; j < 4; j = j + 1) begin : col
+                // 计算D[i][j] = sum(A[i][k] * B[k][j]) + C[i][j]
+                wire [2*DATA_WIDTH-1:0] products [0:3];
+                wire [ACC_WIDTH-1:0] sum;
+                
+                // 4个并行乘法器
+                for (k = 0; k < 4; k = k + 1) begin : mult
+                    assign products[k] = mat_a[i*4+k] * mat_b[k*4+j];
+                end
+                
+                // 加法树
+                assign sum = mat_c[i*4+j] + 
+                           {{(ACC_WIDTH-2*DATA_WIDTH){products[0][2*DATA_WIDTH-1]}}, products[0]} +
+                           {{(ACC_WIDTH-2*DATA_WIDTH){products[1][2*DATA_WIDTH-1]}}, products[1]} +
+                           {{(ACC_WIDTH-2*DATA_WIDTH){products[2][2*DATA_WIDTH-1]}}, products[2]} +
+                           {{(ACC_WIDTH-2*DATA_WIDTH){products[3][2*DATA_WIDTH-1]}}, products[3]};
+                
+                assign dot_products[i*4+j] = sum;
+            end
+        end
+    endgenerate
+    
+    // 寄存输出
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            valid <= 0;
+        end else if (enable) begin
+            for (int idx = 0; idx < 16; idx = idx + 1) begin
+                mat_d[idx] <= dot_products[idx];
+            end
+            valid <= 1;
+        end else begin
+            valid <= 0;
+        end
+    end
+endmodule
+            </div>
+
+            <h4>4.4.2 稀疏计算支持</h4>
+            <p>支持结构化稀疏（如2:4稀疏）可以显著提升有效计算吞吐量。</p>
+            
+            <div class="code-block">
+// 2:4结构化稀疏MAC单元
+// 每4个权重中有2个非零值
+module SparseMACUnit_2in4 #(
+    parameter DATA_WIDTH = 8,
+    parameter ACC_WIDTH = 32
+)(
+    input wire clk,
+    input wire rst_n,
+    input wire enable,
+    
+    // 稀疏权重输入（2个非零值）
+    input wire [DATA_WIDTH-1:0] weight_values [0:1],  // 非零权重值
+    input wire [1:0] weight_indices [0:1],            // 权重位置索引(0-3)
+    
+    // 4个激活值输入
+    input wire [DATA_WIDTH-1:0] activations [0:3],
+    
+    // 累加输入输出
+    input wire [ACC_WIDTH-1:0] psum_in,
+    output reg [ACC_WIDTH-1:0] psum_out,
+    output reg valid
+);
+
+    // 选择对应的激活值并计算
+    wire [DATA_WIDTH-1:0] selected_acts [0:1];
+    wire [2*DATA_WIDTH-1:0] products [0:1];
+    wire [ACC_WIDTH-1:0] sum;
+    
+    // 根据索引选择激活值
+    assign selected_acts[0] = activations[weight_indices[0]];
+    assign selected_acts[1] = activations[weight_indices[1]];
+    
+    // 计算两个乘积
+    assign products[0] = selected_acts[0] * weight_values[0];
+    assign products[1] = selected_acts[1] * weight_values[1];
+    
+    // 累加
+    assign sum = psum_in + 
+                {{(ACC_WIDTH-2*DATA_WIDTH){products[0][2*DATA_WIDTH-1]}}, products[0]} +
+                {{(ACC_WIDTH-2*DATA_WIDTH){products[1][2*DATA_WIDTH-1]}}, products[1]};
+    
+    // 寄存输出
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            psum_out <= 0;
+            valid <= 0;
+        end else if (enable) begin
+            psum_out <= sum;
+            valid <= 1;
+        end else begin
+            valid <= 0;
+        end
+    end
+endmodule
+            </div>
+
+            <div class="exercise">
+                <h4>练习题集 4</h4>
+                
+                <div class="question">
+                    <p><strong>题目4.1：</strong>设计一个支持INT8/INT16混合精度的MAC单元。要求能够处理不同精度的输入组合。</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <div class="code-block">
+module MixedPrecisionMAC #(
+    parameter MAX_WIDTH = 16,      // 最大数据宽度
+    parameter ACC_WIDTH = 48       // 累加器宽度（支持INT16×INT16）
+)(
+    input wire clk,
+    input wire rst_n,
+    input wire enable,
+    
+    // 输入数据和精度控制
+    input wire [MAX_WIDTH-1:0] a_in,
+    input wire [MAX_WIDTH-1:0] b_in,
+    input wire [1:0] precision_mode,  // 00: INT8×INT8, 01: INT8×INT16, 10: INT16×INT8, 11: INT16×INT16
+    input wire [ACC_WIDTH-1:0] c_in,
+    
+    // 输出
+    output reg [ACC_WIDTH-1:0] c_out,
+    output reg valid_out
+);
+
+    // 内部信号
+    reg signed [MAX_WIDTH-1:0] a_ext, b_ext;
+    wire signed [2*MAX_WIDTH-1:0] mult_result;
+    wire signed [ACC_WIDTH-1:0] add_result;
+    
+    // 根据精度模式进行符号扩展
+    always @(*) begin
+        case (precision_mode)
+            2'b00: begin  // INT8 × INT8
+                a_ext = {{8{a_in[7]}}, a_in[7:0]};
+                b_ext = {{8{b_in[7]}}, b_in[7:0]};
+            end
+            2'b01: begin  // INT8 × INT16
+                a_ext = {{8{a_in[7]}}, a_in[7:0]};
+                b_ext = b_in;
+            end
+            2'b10: begin  // INT16 × INT8
+                a_ext = a_in;
+                b_ext = {{8{b_in[7]}}, b_in[7:0]};
+            end
+            2'b11: begin  // INT16 × INT16
+                a_ext = a_in;
+                b_ext = b_in;
+            end
+        endcase
+    end
+    
+    // 乘法器（支持最大精度）
+    assign mult_result = a_ext * b_ext;
+    
+    // 累加器
+    assign add_result = c_in + {{(ACC_WIDTH-2*MAX_WIDTH){mult_result[2*MAX_WIDTH-1]}}, mult_result};
+    
+    // 输出寄存
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            c_out <= 0;
+            valid_out <= 0;
+        end else if (enable) begin
+            c_out <= add_result;
+            valid_out <= 1;
+        end else begin
+            valid_out <= 0;
+        end
+    end
+    
+    // 功耗优化：根据精度模式门控高位逻辑
+    // 实际实现中可以添加时钟门控逻辑
+endmodule
+                        </div>
+                        <p><strong>设计要点：</strong></p>
+                        <ul>
+                            <li>使用参数化的最大位宽支持多种精度</li>
+                            <li>根据精度模式进行正确的符号扩展</li>
+                            <li>累加器位宽需要足够大以防止溢出</li>
+                            <li>可以通过时钟门控优化低精度模式的功耗</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目4.2：</strong>分析脉动阵列的三种数据流（WS/OS/RS）在执行1×1卷积时的效率差异。</p>
+                    <details class="hint">
+                        <summary>💡 提示</summary>
+                        <p>思考方向：1×1卷积本质上是矩阵乘法，没有空间维度的滑窗。分析每种数据流在权重复用、激活值复用、部分和累加方面的特点。WS在这种情况下为什么最优？</p>
+                    </details>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <p><strong>答案：</strong></p>
+                        <p><strong>1×1卷积特点：</strong></p>
+                        <ul>
+                            <li>没有空间维度的滑动窗口</li>
+                            <li>本质上是通道间的线性组合</li>
+                            <li>可以完全转化为矩阵乘法</li>
+                        </ul>
+                        
+                        <table>
+                            <tr>
+                                <th>数据流</th>
+                                <th>数据复用</th>
+                                <th>带宽需求</th>
+                                <th>控制复杂度</th>
+                                <th>1×1卷积效率</th>
+                            </tr>
+                            <tr>
+                                <td>Weight Stationary (WS)</td>
+                                <td>权重100%复用<br>激活值无复用</td>
+                                <td>低（权重预加载）</td>
+                                <td>简单</td>
+                                <td><strong>最优</strong></td>
+                            </tr>
+                            <tr>
+                                <td>Output Stationary (OS)</td>
+                                <td>部分和本地累加<br>权重和激活都需流动</td>
+                                <td>高</td>
+                                <td>中等</td>
+                                <td>较差</td>
+                            </tr>
+                            <tr>
+                                <td>Row Stationary (RS)</td>
+                                <td>退化为WS模式</td>
+                                <td>低</td>
+                                <td>复杂（但退化后简化）</td>
+                                <td>等同于WS</td>
+                            </tr>
+                        </table>
+                        
+                        <p><strong>定量分析（假设计算1×1×256×256卷积）：</strong></p>
+                        <ul>
+                            <li><strong>WS模式：</strong>
+                                <ul>
+                                    <li>权重读取：256×256 = 65,536次（仅一次）</li>
+                                    <li>激活值读取：取决于输入特征图大小</li>
+                                    <li>部分和写回：每个输出位置一次</li>
+                                </ul>
+                            </li>
+                            <li><strong>OS模式：</strong>
+                                <ul>
+                                    <li>权重读取：每个空间位置都需要读取所有权重</li>
+                                    <li>带宽需求增加H×W倍</li>
+                                </ul>
+                            </li>
+                        </ul>
+                        
+                        <p><strong>结论：</strong>对于1×1卷积，WS数据流最优，因为可以充分利用权重复用，而没有空间维度的复用需求。</p>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目4.3：</strong>设计一个8×8脉动阵列的控制器，支持矩阵分块计算。输入矩阵可能大于8×8。</p>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <div class="code-block">
+module SystolicArrayController #(
+    parameter ARRAY_DIM = 8,
+    parameter DATA_WIDTH = 8,
+    parameter ADDR_WIDTH = 32,
+    parameter ACC_WIDTH = 32
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 配置接口
+    input wire [31:0] M, N, K,              // 矩阵维度
+    input wire [ADDR_WIDTH-1:0] addr_a,    // 矩阵A基地址
+    input wire [ADDR_WIDTH-1:0] addr_b,    // 矩阵B基地址
+    input wire [ADDR_WIDTH-1:0] addr_c,    // 矩阵C基地址
+    input wire start,
+    output reg done,
+    
+    // 内存接口
+    output reg [ADDR_WIDTH-1:0] mem_addr_a,
+    output reg [ADDR_WIDTH-1:0] mem_addr_b,
+    output reg [ADDR_WIDTH-1:0] mem_addr_c,
+    output reg mem_rd_a, mem_rd_b,
+    output reg mem_wr_c,
+    input wire [DATA_WIDTH*ARRAY_DIM-1:0] mem_data_a,
+    input wire [DATA_WIDTH*ARRAY_DIM-1:0] mem_data_b,
+    output reg [ACC_WIDTH*ARRAY_DIM-1:0] mem_data_c,
+    
+    // 脉动阵列接口
+    output reg sa_weight_load,
+    output reg sa_compute_en,
+    output reg [DATA_WIDTH-1:0] sa_act_in [0:ARRAY_DIM-1],
+    output reg [DATA_WIDTH-1:0] sa_weight_in [0:ARRAY_DIM-1][0:ARRAY_DIM-1],
+    input wire [ACC_WIDTH-1:0] sa_result_out [0:ARRAY_DIM-1]
+);
+
+    // 状态机定义
+    typedef enum logic [3:0] {
+        IDLE,
+        CALC_TILES,
+        LOAD_WEIGHT,
+        INIT_COMPUTE,
+        COMPUTE,
+        DRAIN,
+        STORE_RESULT,
+        NEXT_TILE
+    } state_t;
+    
+    state_t state, next_state;
+    
+    // 分块计算控制
+    reg [31:0] tile_m, tile_n, tile_k;     // 当前分块索引
+    reg [31:0] num_tiles_m, num_tiles_n, num_tiles_k;
+    reg [31:0] compute_cycles;              // 计算周期计数
+    reg [31:0] row_offset, col_offset;     // 数据输入偏移
+    
+    // 计算分块数量
+    always @(posedge clk) begin
+        if (start) begin
+            num_tiles_m <= (M + ARRAY_DIM - 1) / ARRAY_DIM;
+            num_tiles_n <= (N + ARRAY_DIM - 1) / ARRAY_DIM;
+            num_tiles_k <= (K + ARRAY_DIM - 1) / ARRAY_DIM;
+        end
+    end
+    
+    // 状态转换
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            state <= IDLE;
+        else
+            state <= next_state;
+    end
+    
+    always @(*) begin
+        next_state = state;
+        case (state)
+            IDLE: begin
+                if (start)
+                    next_state = CALC_TILES;
+            end
+            
+            CALC_TILES: begin
+                next_state = LOAD_WEIGHT;
+            end
+            
+            LOAD_WEIGHT: begin
+                if (compute_cycles == ARRAY_DIM - 1)
+                    next_state = INIT_COMPUTE;
+            end
+            
+            INIT_COMPUTE: begin
+                next_state = COMPUTE;
+            end
+            
+            COMPUTE: begin
+                // 需要K个周期完成一个K维的点积
+                if (compute_cycles == K - 1)
+                    next_state = DRAIN;
+            end
+            
+            DRAIN: begin
+                // 等待最后的结果流出
+                if (compute_cycles == ARRAY_DIM - 1)
+                    next_state = STORE_RESULT;
+            end
+            
+            STORE_RESULT: begin
+                if (compute_cycles == ARRAY_DIM - 1)
+                    next_state = NEXT_TILE;
+            end
+            
+            NEXT_TILE: begin
+                if (tile_k < num_tiles_k - 1) begin
+                    // 同一输出块的下一个K分块
+                    next_state = LOAD_WEIGHT;
+                end else if (tile_n < num_tiles_n - 1 || tile_m < num_tiles_m - 1) begin
+                    // 下一个输出块
+                    next_state = LOAD_WEIGHT;
+                end else begin
+                    // 完成所有计算
+                    next_state = IDLE;
+                end
+            end
+        endcase
+    end
+    
+    // 数据路径控制
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            tile_m <= 0;
+            tile_n <= 0;
+            tile_k <= 0;
+            compute_cycles <= 0;
+            done <= 0;
+            sa_weight_load <= 0;
+            sa_compute_en <= 0;
+            mem_rd_a <= 0;
+            mem_rd_b <= 0;
+            mem_wr_c <= 0;
+        end else begin
+            case (state)
+                IDLE: begin
+                    done <= 0;
+                    if (start) begin
+                        tile_m <= 0;
+                        tile_n <= 0;
+                        tile_k <= 0;
+                    end
+                end
+                
+                LOAD_WEIGHT: begin
+                    // 加载权重矩阵B的一个tile
+                    sa_weight_load <= 1;
+                    mem_rd_b <= 1;
+                    mem_addr_b <= addr_b + 
+                                 (tile_n * ARRAY_DIM * K + tile_k * ARRAY_DIM) * DATA_WIDTH/8;
+                    
+                    // 将权重数据分配到阵列
+                    // 简化处理：假设数据已正确排列
+                    for (int i = 0; i < ARRAY_DIM; i++) begin
+                        for (int j = 0; j < ARRAY_DIM; j++) begin
+                            sa_weight_in[i][j] <= mem_data_b[(i*ARRAY_DIM+j)*DATA_WIDTH +: DATA_WIDTH];
+                        end
+                    end
+                    
+                    compute_cycles <= compute_cycles + 1;
+                    if (compute_cycles == ARRAY_DIM - 1) begin
+                        compute_cycles <= 0;
+                        sa_weight_load <= 0;
+                        mem_rd_b <= 0;
+                    end
+                end
+                
+                COMPUTE: begin
+                    // 流式输入激活值
+                    sa_compute_en <= 1;
+                    mem_rd_a <= 1;
+                    
+                    // 计算当前输入地址
+                    mem_addr_a <= addr_a + 
+                                 ((tile_m * ARRAY_DIM + row_offset) * K + 
+                                  tile_k * ARRAY_DIM + col_offset) * DATA_WIDTH/8;
+                    
+                    // 错开输入时序（脉动阵列需要）
+                    for (int i = 0; i < ARRAY_DIM; i++) begin
+                        if (compute_cycles >= i && compute_cycles - i < K) begin
+                            sa_act_in[i] <= mem_data_a[i*DATA_WIDTH +: DATA_WIDTH];
+                        end else begin
+                            sa_act_in[i] <= 0;
+                        end
+                    end
+                    
+                    compute_cycles <= compute_cycles + 1;
+                    col_offset <= col_offset + 1;
+                    
+                    if (col_offset == ARRAY_DIM - 1) begin
+                        col_offset <= 0;
+                        row_offset <= row_offset + 1;
+                    end
+                    
+                    if (compute_cycles == K - 1) begin
+                        compute_cycles <= 0;
+                        row_offset <= 0;
+                        col_offset <= 0;
+                        sa_compute_en <= 0;
+                        mem_rd_a <= 0;
+                    end
+                end
+                
+                STORE_RESULT: begin
+                    // 存储计算结果
+                    mem_wr_c <= 1;
+                    mem_addr_c <= addr_c + 
+                                 ((tile_m * ARRAY_DIM + compute_cycles) * N + 
+                                  tile_n * ARRAY_DIM) * ACC_WIDTH/8;
+                    
+                    // 收集结果
+                    for (int i = 0; i < ARRAY_DIM; i++) begin
+                        mem_data_c[i*ACC_WIDTH +: ACC_WIDTH] <= sa_result_out[i];
+                    end
+                    
+                    compute_cycles <= compute_cycles + 1;
+                    if (compute_cycles == ARRAY_DIM - 1) begin
+                        compute_cycles <= 0;
+                        mem_wr_c <= 0;
+                    end
+                end
+                
+                NEXT_TILE: begin
+                    if (tile_k < num_tiles_k - 1) begin
+                        tile_k <= tile_k + 1;
+                    end else begin
+                        tile_k <= 0;
+                        if (tile_n < num_tiles_n - 1) begin
+                            tile_n <= tile_n + 1;
+                        end else begin
+                            tile_n <= 0;
+                            tile_m <= tile_m + 1;
+                        end
+                    end
+                    
+                    if (tile_m == num_tiles_m - 1 && 
+                        tile_n == num_tiles_n - 1 && 
+                        tile_k == num_tiles_k - 1) begin
+                        done <= 1;
+                    end
+                end
+            endcase
+        end
+    end
+endmodule
+                        </div>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目4.4：</strong>设计一个高效的激活函数单元，支持ReLU、Leaky ReLU和Swish。考虑面积和延迟的权衡。</p>
+                    <details class="hint">
+                        <summary>💡 提示</summary>
+                        <p>思考方向：ReLU只需要符号位判断，Leaky ReLU需要分支选择，Swish需要Sigmoid和乘法。考虑使用查找表（LUT）或分段线性逼近来实现复杂函数。通过多路选择器复用硬件资源。</p>
+                    </details>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <div class="code-block">
+module EfficientActivationUnit #(
+    parameter DATA_WIDTH = 16,
+    parameter FRAC_WIDTH = 8    // 小数位宽（定点数）
+)(
+    input wire clk,
+    input wire rst_n,
+    input wire enable,
+    
+    // 输入数据
+    input wire signed [DATA_WIDTH-1:0] data_in,
+    
+    // 功能选择和参数
+    input wire [1:0] func_sel,  // 00: ReLU, 01: LeakyReLU, 10: Swish
+    input wire [DATA_WIDTH-1:0] alpha,  // LeakyReLU的斜率（定点表示）
+    
+    // 输出
+    output reg signed [DATA_WIDTH-1:0] data_out,
+    output reg valid
+);
+
+    // 内部信号
+    wire is_negative;
+    wire signed [DATA_WIDTH-1:0] relu_out;
+    wire signed [DATA_WIDTH-1:0] leaky_relu_out;
+    wire signed [DATA_WIDTH-1:0] swish_out;
+    
+    // 负数检测
+    assign is_negative = data_in[DATA_WIDTH-1];
+    
+    // ReLU: max(0, x)
+    assign relu_out = is_negative ? {DATA_WIDTH{1'b0}} : data_in;
+    
+    // Leaky ReLU: x if x > 0, else alpha * x
+    wire signed [2*DATA_WIDTH-1:0] alpha_mult;
+    assign alpha_mult = data_in * alpha;
+    assign leaky_relu_out = is_negative ? 
+                           alpha_mult[DATA_WIDTH+FRAC_WIDTH-1:FRAC_WIDTH] : 
+                           data_in;
+    
+    // Swish: x * sigmoid(x)
+    // 使用分段线性逼近sigmoid
+    wire signed [DATA_WIDTH-1:0] sigmoid_approx;
+    SwishLUT #(
+        .DATA_WIDTH(DATA_WIDTH),
+        .FRAC_WIDTH(FRAC_WIDTH)
+    ) swish_lut (
+        .x(data_in),
+        .sigmoid_x(sigmoid_approx)
+    );
+    
+    wire signed [2*DATA_WIDTH-1:0] swish_mult;
+    assign swish_mult = data_in * sigmoid_approx;
+    assign swish_out = swish_mult[DATA_WIDTH+FRAC_WIDTH-1:FRAC_WIDTH];
+    
+    // 输出选择（组合逻辑，最小化延迟）
+    always @(*) begin
+        case (func_sel)
+            2'b00: data_out = relu_out;
+            2'b01: data_out = leaky_relu_out;
+            2'b10: data_out = swish_out;
+            default: data_out = data_in;  // 直通
+        endcase
+    end
+    
+    // 有效信号生成
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            valid <= 0;
+        end else begin
+            valid <= enable;
+        end
+    end
+endmodule
+
+// Swish激活函数的LUT实现
+module SwishLUT #(
+    parameter DATA_WIDTH = 16,
+    parameter FRAC_WIDTH = 8,
+    parameter LUT_DEPTH = 256  // LUT条目数
+)(
+    input wire signed [DATA_WIDTH-1:0] x,
+    output reg signed [DATA_WIDTH-1:0] sigmoid_x
+);
+
+    // 定义查找表（实际中由工具生成）
+    reg signed [DATA_WIDTH-1:0] lut_table [0:LUT_DEPTH-1];
+    
+    // LUT初始化（sigmoid函数的采样点）
+    initial begin
+        // 覆盖范围 [-8, 8]，均匀采样
+        for (int i = 0; i < LUT_DEPTH; i++) begin
+            real x_real = -8.0 + 16.0 * i / (LUT_DEPTH - 1);
+            real sigmoid_real = 1.0 / (1.0 + $exp(-x_real));
+            lut_table[i] = sigmoid_real * (1 << FRAC_WIDTH);
+        end
+    end
+    
+    // 地址计算和查表
+    wire [7:0] lut_addr;
+    wire signed [DATA_WIDTH-1:0] x_saturated;
+    
+    // 饱和到[-8, 8]范围
+    assign x_saturated = (x > (8 << FRAC_WIDTH)) ? (8 << FRAC_WIDTH) :
+                        (x < (-8 << FRAC_WIDTH)) ? (-8 << FRAC_WIDTH) : x;
+    
+    // 映射到LUT地址
+    assign lut_addr = ((x_saturated + (8 << FRAC_WIDTH)) * LUT_DEPTH) >> (FRAC_WIDTH + 4);
+    
+    // 查表（可以添加线性插值以提高精度）
+    always @(*) begin
+        sigmoid_x = lut_table[lut_addr];
+    end
+endmodule
+                        </div>
+                        <p><strong>设计权衡分析：</strong></p>
+                        <table>
+                            <tr>
+                                <th>激活函数</th>
+                                <th>硬件成本</th>
+                                <th>延迟</th>
+                                <th>精度</th>
+                            </tr>
+                            <tr>
+                                <td>ReLU</td>
+                                <td>极低（1个比较器）</td>
+                                <td>0延迟</td>
+                                <td>精确</td>
+                            </tr>
+                            <tr>
+                                <td>Leaky ReLU</td>
+                                <td>低（1个乘法器）</td>
+                                <td>1个乘法延迟</td>
+                                <td>取决于alpha精度</td>
+                            </tr>
+                            <tr>
+                                <td>Swish</td>
+                                <td>中等（LUT+乘法器）</td>
+                                <td>查表+乘法延迟</td>
+                                <td>取决于LUT大小</td>
+                            </tr>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目4.5：</strong>分析Tensor Core相比传统脉动阵列在执行批量矩阵乘法(Batched GEMM)时的优势。</p>
+                    <details class="hint">
+                        <summary>💡 提示</summary>
+                        <p>思考方向：Tensor Core以4×4×4或更大的矩阵块为计算单位。分析批处理时的数据复用率、带宽需求、调度开销。考虑不同batch size对性能的影响。</p>
+                    </details>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <p><strong>答案：</strong></p>
+                        <p><strong>批量矩阵乘法场景：</strong>计算C[i] = A[i] × B[i]，其中i = 0...batch_size-1</p>
+                        
+                        <p><strong>1. 传统脉动阵列处理方式：</strong></p>
+                        <ul>
+                            <li>串行处理：依次计算每个矩阵乘法</li>
+                            <li>时间复杂度：O(batch_size × 矩阵乘法时间)</li>
+                            <li>无法利用batch维度的并行性</li>
+                        </ul>
+                        
+                        <p><strong>2. Tensor Core优势：</strong></p>
+                        <table>
+                            <tr>
+                                <th>方面</th>
+                                <th>传统脉动阵列</th>
+                                <th>Tensor Core</th>
+                                <th>优势倍数</th>
+                            </tr>
+                            <tr>
+                                <td>基本运算粒度</td>
+                                <td>标量MAC</td>
+                                <td>4×4×4矩阵乘法</td>
+                                <td>64×</td>
+                            </tr>
+                            <tr>
+                                <td>批处理能力</td>
+                                <td>串行</td>
+                                <td>可并行多个小矩阵</td>
+                                <td>与batch size相关</td>
+                            </tr>
+                            <tr>
+                                <td>数据重排开销</td>
+                                <td>需要外部重排</td>
+                                <td>硬件原生支持</td>
+                                <td>-</td>
+                            </tr>
+                            <tr>
+                                <td>寄存器利用率</td>
+                                <td>~50%</td>
+                                <td>~90%</td>
+                                <td>1.8×</td>
+                            </tr>
+                        </table>
+                        
+                        <p><strong>3. 具体示例（Transformer注意力计算）：</strong></p>
+                        <div class="code-block">
+// Transformer中的批量矩阵乘法
+// Q, K, V: [batch_size, seq_len, d_model]
+// 需要计算：Attention = softmax(Q × K^T) × V
+
+// 传统脉动阵列：
+for (batch = 0; batch < batch_size; batch++) {
+    // 计算 Q[batch] × K[batch]^T
+    systolic_array_compute(Q[batch], K[batch].T);
+    // 等待完成...
+}
+// 总时间：batch_size × (seq_len × seq_len × d_model)
+
+// Tensor Core：
+// 可以将多个batch的小块同时映射到不同的Tensor Core
+for (batch_group = 0; batch_group < batch_size; batch_group += 4) {
+    // 4个batch并行计算
+    tensor_core_batch_compute(Q[batch_group:batch_group+4], 
+                            K[batch_group:batch_group+4].T);
+}
+// 总时间：(batch_size/4) × (seq_len × seq_len × d_model) / 64
+                        </div>
+                        
+                        <p><strong>4. 性能提升分析：</strong></p>
+                        <ul>
+                            <li>理论加速比：最高可达 4× (batch并行) × 64× (Tensor Core加速) = 256×</li>
+                            <li>实际加速比：考虑内存带宽限制，通常为10-50×</li>
+                            <li>功耗效率提升：3-5×（更少的数据移动）</li>
+                        </ul>
+                        
+                        <p><strong>5. 适用条件：</strong></p>
+                        <ul>
+                            <li>矩阵尺寸是4的倍数</li>
+                            <li>Batch size较大（≥4）</li>
+                            <li>支持的数据精度（通常是FP16/INT8混合）</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目4.6：</strong>设计一个支持动态稀疏的MAC阵列。要求能够跳过零权重和零激活值的计算。</p>
+                    <details class="hint">
+                        <summary>💡 提示</summary>
+                        <p>思考方向：零检测电路、非零元素索引存储、动态调度器将非零数据分配给MAC单元。考虑使用压缩稀疏表示（CSR/CSC）。注意调度开销可能抵消稀疏性带来的好处。</p>
+                    </details>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <div class="code-block">
+module DynamicSparseMACArray #(
+    parameter DATA_WIDTH = 8,
+    parameter ACC_WIDTH = 32,
+    parameter PE_NUM = 16,        // PE数量
+    parameter FIFO_DEPTH = 8      // 输入FIFO深度
+)(
+    input wire clk,
+    input wire rst_n,
+    input wire enable,
+    
+    // 稀疏数据输入（压缩格式）
+    input wire [DATA_WIDTH-1:0] act_values [0:PE_NUM-1],      // 非零激活值
+    input wire [4:0] act_indices [0:PE_NUM-1],                // 激活值索引
+    input wire [PE_NUM-1:0] act_valid,                        // 激活值有效标志
+    
+    input wire [DATA_WIDTH-1:0] weight_values [0:PE_NUM-1],   // 非零权重
+    input wire [4:0] weight_indices [0:PE_NUM-1],             // 权重索引
+    input wire [PE_NUM-1:0] weight_valid,                     // 权重有效标志
+    
+    // 输出接口
+    output reg [ACC_WIDTH-1:0] results [0:PE_NUM-1],
+    output reg [PE_NUM-1:0] result_valid,
+    output reg done
+);
+
+    // PE阵列
+    genvar i;
+    generate
+        for (i = 0; i < PE_NUM; i = i + 1) begin : sparse_pe
+            SparsePE #(
+                .DATA_WIDTH(DATA_WIDTH),
+                .ACC_WIDTH(ACC_WIDTH),
+                .FIFO_DEPTH(FIFO_DEPTH)
+            ) pe_inst (
+                .clk(clk),
+                .rst_n(rst_n),
+                .enable(enable),
+                .act_value(act_values[i]),
+                .act_index(act_indices[i]),
+                .act_valid(act_valid[i]),
+                .weight_value(weight_values[i]),
+                .weight_index(weight_indices[i]),
+                .weight_valid(weight_valid[i]),
+                .result(results[i]),
+                .result_valid(result_valid[i])
+            );
+        end
+    endgenerate
+    
+    // 完成信号生成
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            done <= 0;
+        end else begin
+            done <= &result_valid;  // 所有PE完成
+        end
+    end
+endmodule
+
+// 稀疏PE单元
+module SparsePE #(
+    parameter DATA_WIDTH = 8,
+    parameter ACC_WIDTH = 32,
+    parameter FIFO_DEPTH = 8
+)(
+    input wire clk,
+    input wire rst_n,
+    input wire enable,
+    
+    // 稀疏输入
+    input wire [DATA_WIDTH-1:0] act_value,
+    input wire [4:0] act_index,
+    input wire act_valid,
+    
+    input wire [DATA_WIDTH-1:0] weight_value,
+    input wire [4:0] weight_index,
+    input wire weight_valid,
+    
+    // 输出
+    output reg [ACC_WIDTH-1:0] result,
+    output reg result_valid
+);
+
+    // 输入FIFO
+    reg [DATA_WIDTH-1:0] act_fifo_data [0:FIFO_DEPTH-1];
+    reg [4:0] act_fifo_index [0:FIFO_DEPTH-1];
+    reg [DATA_WIDTH-1:0] weight_fifo_data [0:FIFO_DEPTH-1];
+    reg [4:0] weight_fifo_index [0:FIFO_DEPTH-1];
+    
+    reg [2:0] act_wr_ptr, act_rd_ptr;
+    reg [2:0] weight_wr_ptr, weight_rd_ptr;
+    reg [3:0] act_count, weight_count;
+    
+    // 匹配逻辑
+    wire index_match;
+    wire compute_valid;
+    
+    assign index_match = (act_fifo_index[act_rd_ptr] == weight_fifo_index[weight_rd_ptr]);
+    assign compute_valid = (act_count > 0) && (weight_count > 0) && index_match;
+    
+    // MAC计算
+    wire signed [2*DATA_WIDTH-1:0] mult_result;
+    wire signed [ACC_WIDTH-1:0] acc_result;
+    
+    assign mult_result = act_fifo_data[act_rd_ptr] * weight_fifo_data[weight_rd_ptr];
+    assign acc_result = result + {{(ACC_WIDTH-2*DATA_WIDTH){mult_result[2*DATA_WIDTH-1]}}, mult_result};
+    
+    // FIFO写入逻辑
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            act_wr_ptr <= 0;
+            weight_wr_ptr <= 0;
+            act_count <= 0;
+            weight_count <= 0;
+        end else if (enable) begin
+            // 激活值FIFO写入
+            if (act_valid && act_count < FIFO_DEPTH) begin
+                act_fifo_data[act_wr_ptr] <= act_value;
+                act_fifo_index[act_wr_ptr] <= act_index;
+                act_wr_ptr <= act_wr_ptr + 1;
+                act_count <= act_count + 1;
+            end
+            
+            // 权重FIFO写入
+            if (weight_valid && weight_count < FIFO_DEPTH) begin
+                weight_fifo_data[weight_wr_ptr] <= weight_value;
+                weight_fifo_index[weight_wr_ptr] <= weight_index;
+                weight_wr_ptr <= weight_wr_ptr + 1;
+                weight_count <= weight_count + 1;
+            end
+        end
+    end
+    
+    // 计算和FIFO读取逻辑
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            result <= 0;
+            result_valid <= 0;
+            act_rd_ptr <= 0;
+            weight_rd_ptr <= 0;
+        end else if (enable) begin
+            if (compute_valid) begin
+                // 执行MAC运算
+                result <= acc_result;
+                
+                // 更新读指针
+                act_rd_ptr <= act_rd_ptr + 1;
+                weight_rd_ptr <= weight_rd_ptr + 1;
+                act_count <= act_count - 1;
+                weight_count <= weight_count - 1;
+            end else if (act_count > 0 && weight_count > 0) begin
+                // 索引不匹配，跳过较小的索引
+                if (act_fifo_index[act_rd_ptr] < weight_fifo_index[weight_rd_ptr]) begin
+                    act_rd_ptr <= act_rd_ptr + 1;
+                    act_count <= act_count - 1;
+                end else begin
+                    weight_rd_ptr <= weight_rd_ptr + 1;
+                    weight_count <= weight_count - 1;
+                end
+            end
+            
+            // 生成完成信号
+            result_valid <= (act_count == 0) || (weight_count == 0);
+        end
+    end
+endmodule
+                        </div>
+                        <p><strong>设计特点：</strong></p>
+                        <ul>
+                            <li>使用FIFO缓存稀疏数据，解耦输入和计算</li>
+                            <li>索引匹配逻辑，只计算索引相同的元素</li>
+                            <li>支持不同稀疏度的激活值和权重</li>
+                            <li>自动跳过不匹配的索引，提高效率</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目4.7：</strong>优化一个16×16脉动阵列的时钟分配网络，考虑时钟偏斜和功耗。</p>
+                    <details class="hint">
+                        <summary>💡 提示</summary>
+                        <p>思考方向：脉动阵列中数据流动方向要求特定的时钟关系。考虑H树、fishbone等时钟网络拓扑。使用时钟门控降低动态功耗。平衡skew和useful skew的关系。</p>
+                    </details>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <p><strong>答案：</strong></p>
+                        <p><strong>1. 时钟网络挑战：</strong></p>
+                        <ul>
+                            <li>16×16 = 256个PE，每个PE需要同步时钟</li>
+                            <li>时钟偏斜影响最高工作频率</li>
+                            <li>时钟网络功耗占总功耗的20-30%</li>
+                        </ul>
+                        
+                        <p><strong>2. H-Tree时钟分配设计：</strong></p>
+                        <div class="code-block">
+module ClockTreeOptimized_16x16 (
+    input wire clk_in,
+    input wire [255:0] clock_enable,  // 每个PE的时钟使能
+    output wire clk_out [0:15][0:15]  // 分配到每个PE的时钟
+);
+
+    // H-Tree层次结构
+    // Level 0: 根节点
+    wire clk_l0;
+    ClockBuffer #(.DRIVE_STRENGTH(16)) buf_l0 (
+        .clk_in(clk_in),
+        .clk_out(clk_l0)
+    );
+    
+    // Level 1: 4个象限
+    wire clk_l1 [0:3];
+    genvar q;
+    generate
+        for (q = 0; q < 4; q = q + 1) begin : quadrant
+            ClockBuffer #(.DRIVE_STRENGTH(8)) buf_l1 (
+                .clk_in(clk_l0),
+                .clk_out(clk_l1[q])
+            );
+        end
+    endgenerate
+    
+    // Level 2: 16个区域（4×4）
+    wire clk_l2 [0:3][0:3];
+    genvar i, j;
+    generate
+        for (i = 0; i < 2; i = i + 1) begin
+            for (j = 0; j < 2; j = j + 1) begin
+                ClockBuffer #(.DRIVE_STRENGTH(4)) buf_l2_q0 (
+                    .clk_in(clk_l1[0]),
+                    .clk_out(clk_l2[i][j])
+                );
+                // 类似处理其他象限...
+            end
+        end
+    endgenerate
+    
+    // Level 3: 叶节点（带时钟门控）
+    generate
+        for (i = 0; i < 16; i = i + 1) begin : row
+            for (j = 0; j < 16; j = j + 1) begin : col
+                ClockGatingCell cgc (
+                    .clk_in(clk_l2[i/4][j/4]),
+                    .enable(clock_enable[i*16+j]),
+                    .clk_out(clk_out[i][j])
+                );
+            end
+        end
+    endgenerate
+endmodule
+
+// 低偏斜时钟缓冲器
+module ClockBuffer #(
+    parameter DRIVE_STRENGTH = 1
+) (
+    input wire clk_in,
+    output wire clk_out
+);
+    // 使用对称的缓冲器链
+    wire [DRIVE_STRENGTH-1:0] buf_chain;
+    
+    assign buf_chain[0] = clk_in;
+    genvar k;
+    generate
+        for (k = 1; k < DRIVE_STRENGTH; k = k + 1) begin
+            // 渐进式增大驱动能力
+            buf #(.size(2**k)) buffer_inst (
+                .in(buf_chain[k-1]),
+                .out(buf_chain[k])
+            );
+        end
+    endgenerate
+    
+    assign clk_out = buf_chain[DRIVE_STRENGTH-1];
+endmodule
+
+// 集成时钟门控单元
+module ClockGatingCell (
+    input wire clk_in,
+    input wire enable,
+    output wire clk_out
+);
+    reg enable_latch;
+    
+    // 锁存使能信号（避免毛刺）
+    always @(clk_in or enable) begin
+        if (!clk_in)
+            enable_latch <= enable;
+    end
+    
+    // AND门输出门控时钟
+    assign clk_out = clk_in & enable_latch;
+endmodule
+                        </div>
+                        
+                        <p><strong>3. 优化技术：</strong></p>
+                        <table>
+                            <tr>
+                                <th>技术</th>
+                                <th>原理</th>
+                                <th>效果</th>
+                                <th>成本</th>
+                            </tr>
+                            <tr>
+                                <td>H-Tree拓扑</td>
+                                <td>对称分支，等长路径</td>
+                                <td>偏斜<10ps</td>
+                                <td>布线资源多</td>
+                            </tr>
+                            <tr>
+                                <td>细粒度时钟门控</td>
+                                <td>PE级别关断</td>
+                                <td>功耗降低40%</td>
+                                <td>控制复杂</td>
+                            </tr>
+                            <tr>
+                                <td>多级缓冲</td>
+                                <td>逐级放大驱动</td>
+                                <td>转换时间优化</td>
+                                <td>面积增加</td>
+                            </tr>
+                            <tr>
+                                <td>局部时钟域</td>
+                                <td>分区异步</td>
+                                <td>降低全局偏斜</td>
+                                <td>同步开销</td>
+                            </tr>
+                        </table>
+                        
+                        <p><strong>4. 实施建议：</strong></p>
+                        <ul>
+                            <li>使用专用时钟布线层，减少干扰</li>
+                            <li>在每个分支点放置去耦电容</li>
+                            <li>考虑工艺偏差，预留时序裕量</li>
+                            <li>支持动态频率调节（DVFS）</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="question">
+                    <p><strong>题目4.8：</strong>比较不同MAC阵列规模（8×8、16×16、32×32）的设计权衡，给出选择建议。</p>
+                    <details class="hint">
+                        <summary>💡 提示</summary>
+                        <p>思考方向：从面积、功耗、利用率、布线复杂度、内存带宽需求等多个维度分析。考虑不同应用场景（云端/边缘）和工作负载特征对阵列规模的要求。</p>
+                    </details>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <p><strong>答案：</strong></p>
+                        <table>
+                            <tr>
+                                <th>指标</th>
+                                <th>8×8阵列</th>
+                                <th>16×16阵列</th>
+                                <th>32×32阵列</th>
+                            </tr>
+                            <tr>
+                                <td>MAC单元数</td>
+                                <td>64</td>
+                                <td>256</td>
+                                <td>1024</td>
+                            </tr>
+                            <tr>
+                                <td>峰值算力(相对)</td>
+                                <td>1×</td>
+                                <td>4×</td>
+                                <td>16×</td>
+                            </tr>
+                            <tr>
+                                <td>面积(相对)</td>
+                                <td>1×</td>
+                                <td>~4.5×</td>
+                                <td>~20×</td>
+                            </tr>
+                            <tr>
+                                <td>功耗(相对)</td>
+                                <td>1×</td>
+                                <td>~4.2×</td>
+                                <td>~18×</td>
+                            </tr>
+                            <tr>
+                                <td>片上SRAM需求</td>
+                                <td>64KB</td>
+                                <td>256KB</td>
+                                <td>1MB+</td>
+                            </tr>
+                            <tr>
+                                <td>带宽需求</td>
+                                <td>64GB/s</td>
+                                <td>256GB/s</td>
+                                <td>1TB/s</td>
+                            </tr>
+                            <tr>
+                                <td>控制复杂度</td>
+                                <td>低</td>
+                                <td>中</td>
+                                <td>高</td>
+                            </tr>
+                            <tr>
+                                <td>时钟分配难度</td>
+                                <td>简单</td>
+                                <td>适中</td>
+                                <td>困难</td>
+                            </tr>
+                            <tr>
+                                <td>利用率(典型)</td>
+                                <td>85%</td>
+                                <td>75%</td>
+                                <td>60%</td>
+                            </tr>
+                        </table>
+                        
+                        <p><strong>设计权衡分析：</strong></p>
+                        
+                        <p><strong>1. 8×8阵列：</strong></p>
+                        <ul>
+                            <li><strong>优势：</strong>
+                                <ul>
+                                    <li>控制简单，易于实现</li>
+                                    <li>利用率高，适合小矩阵</li>
+                                    <li>功耗密度低，散热容易</li>
+                                </ul>
+                            </li>
+                            <li><strong>劣势：</strong>
+                                <ul>
+                                    <li>绝对性能有限</li>
+                                    <li>大矩阵需要多次分块</li>
+                                </ul>
+                            </li>
+                            <li><strong>适用场景：</strong>边缘设备、低功耗应用</li>
+                        </ul>
+                        
+                        <p><strong>2. 16×16阵列：</strong></p>
+                        <ul>
+                            <li><strong>优势：</strong>
+                                <ul>
+                                    <li>性能功耗比最优</li>
+                                    <li>适配主流网络的层大小</li>
+                                    <li>设计复杂度可控</li>
+                                </ul>
+                            </li>
+                            <li><strong>劣势：</strong>
+                                <ul>
+                                    <li>需要更复杂的数据调度</li>
+                                </ul>
+                            </li>
+                            <li><strong>适用场景：</strong>主流推理加速器</li>
+                        </ul>
+                        
+                        <p><strong>3. 32×32阵列：</strong></p>
+                        <ul>
+                            <li><strong>优势：</strong>
+                                <ul>
+                                    <li>峰值性能高</li>
+                                    <li>大矩阵效率好</li>
+                                </ul>
+                            </li>
+                            <li><strong>劣势：</strong>
+                                <ul>
+                                    <li>面积开销呈超线性增长</li>
+                                    <li>带宽墙问题严重</li>
+                                    <li>小矩阵利用率低</li>
+                                    <li>时序收敛困难</li>
+                                </ul>
+                            </li>
+                            <li><strong>适用场景：</strong>高端服务器、特定大模型</li>
+                        </ul>
+                        
+                        <p><strong>选择建议：</strong></p>
+                        <ol>
+                            <li><strong>边缘推理：</strong>8×8，功耗优先</li>
+                            <li><strong>移动端NPU：</strong>8×8或16×16，平衡性能功耗</li>
+                            <li><strong>数据中心推理：</strong>16×16多核，可扩展性好</li>
+                            <li><strong>训练加速器：</strong>32×32或更大，性能优先</li>
+                        </ol>
+                        
+                        <p><strong>未来趋势：</strong>多个中等规模阵列（16×16）+ 灵活互联 > 单个超大阵列</p>
+                    </div>
+                </div>
+            </div>
+            
+            <h3>4.5 Transformer专用计算核心</h3>
+            
+            <p>Transformer模型的计算特征与CNN显著不同，需要专门优化的计算核心设计。本节探讨针对Transformer优化的硬件计算单元。</p>
+            
+            <h4>4.5.1 注意力计算引擎</h4>
+            <p>自注意力机制是Transformer的核心，其计算包含矩阵乘法、Softmax和缩放等操作：</p>
+            
+            <div class="code-block">
+// 统一的注意力计算引擎
+module AttentionEngine #(
+    parameter SEQ_LEN = 512,
+    parameter D_MODEL = 768,
+    parameter NUM_HEADS = 12,
+    parameter PE_ARRAY_SIZE = 16
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 控制接口
+    input wire [2:0] compute_phase,  // 0:QK 1:Softmax 2:PV
+    input wire start,
+    
+    // 数据输入
+    input wire [15:0] q_input [PE_ARRAY_SIZE-1:0],
+    input wire [15:0] k_input [PE_ARRAY_SIZE-1:0],
+    input wire [15:0] v_input [PE_ARRAY_SIZE-1:0],
+    input wire input_valid,
+    
+    // 输出
+    output reg [15:0] attention_output [PE_ARRAY_SIZE-1:0],
+    output reg output_valid,
+    output reg done
+);
+    
+    localparam D_HEAD = D_MODEL / NUM_HEADS;
+    
+    // 内部PE阵列（可重构）
+    wire [15:0] pe_outputs [PE_ARRAY_SIZE-1:0][PE_ARRAY_SIZE-1:0];
+    reg [2:0] pe_mode;
+    
+    // 可重构PE阵列
+    genvar i, j;
+    generate
+        for (i = 0; i < PE_ARRAY_SIZE; i = i + 1) begin : row
+            for (j = 0; j < PE_ARRAY_SIZE; j = j + 1) begin : col
+                FlexiblePE #(
+                    .DATA_WIDTH(16)
+                ) pe_inst (
+                    .clk(clk),
+                    .rst_n(rst_n),
+                    .mode(pe_mode),
+                    .a_in(q_input[i]),
+                    .b_in(k_input[j]),
+                    .c_in(v_input[j]),
+                    .result(pe_outputs[i][j])
+                );
+            end
+        end
+    endgenerate
+    
+    // Softmax专用单元
+    reg [15:0] softmax_input [PE_ARRAY_SIZE-1:0];
+    wire [15:0] softmax_output [PE_ARRAY_SIZE-1:0];
+    wire softmax_done;
+    
+    StreamingSoftmax #(
+        .VECTOR_SIZE(PE_ARRAY_SIZE),
+        .DATA_WIDTH(16)
+    ) softmax_unit (
+        .clk(clk),
+        .rst_n(rst_n),
+        .enable(compute_phase == 3'b001),
+        .input_vector(softmax_input),
+        .output_vector(softmax_output),
+        .done(softmax_done)
+    );
+    
+    // 缩放因子计算
+    reg [15:0] scale_factor;
+    always @(posedge clk) begin
+        // scale = 1/sqrt(d_k)
+        scale_factor <= 16'h0200;  // 示例值，实际需要根据D_HEAD计算
+    end
+    
+    // 计算状态机
+    reg [3:0] state;
+    localparam IDLE = 4'd0;
+    localparam QK_COMPUTE = 4'd1;
+    localparam QK_SCALE = 4'd2;
+    localparam SOFTMAX = 4'd3;
+    localparam PV_COMPUTE = 4'd4;
+    localparam OUTPUT = 4'd5;
+    
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            state <= IDLE;
+            done <= 1'b0;
+        end else begin
+            case (state)
+                IDLE: begin
+                    if (start) begin
+                        case (compute_phase)
+                            3'b000: state <= QK_COMPUTE;
+                            3'b001: state <= SOFTMAX;
+                            3'b010: state <= PV_COMPUTE;
+                        endcase
+                        done <= 1'b0;
+                    end
+                end
+                
+                QK_COMPUTE: begin
+                    pe_mode <= 3'b000;  // 矩阵乘法模式
+                    if (/* QK计算完成 */) begin
+                        state <= QK_SCALE;
+                    end
+                end
+                
+                QK_SCALE: begin
+                    // 应用缩放因子
+                    for (int i = 0; i < PE_ARRAY_SIZE; i++) begin
+                        for (int j = 0; j < PE_ARRAY_SIZE; j++) begin
+                            softmax_input[j] <= pe_outputs[i][j] >> 3; // 简化的缩放
+                        end
+                    end
+                    state <= SOFTMAX;
+                end
+                
+                SOFTMAX: begin
+                    if (softmax_done) begin
+                        state <= PV_COMPUTE;
+                    end
+                end
+                
+                PV_COMPUTE: begin
+                    pe_mode <= 3'b001;  // 加权求和模式
+                    if (/* PV计算完成 */) begin
+                        state <= OUTPUT;
+                    end
+                end
+                
+                OUTPUT: begin
+                    done <= 1'b1;
+                    state <= IDLE;
+                end
+            endcase
+        end
+    end
+endmodule
+
+// 流式Softmax实现
+module StreamingSoftmax #(
+    parameter VECTOR_SIZE = 16,
+    parameter DATA_WIDTH = 16
+)(
+    input wire clk,
+    input wire rst_n,
+    input wire enable,
+    
+    input wire [DATA_WIDTH-1:0] input_vector [VECTOR_SIZE-1:0],
+    output reg [DATA_WIDTH-1:0] output_vector [VECTOR_SIZE-1:0],
+    output reg done
+);
+    
+    // 两遍扫描实现
+    reg [2:0] state;
+    localparam FIND_MAX = 3'd0;
+    localparam COMPUTE_EXP = 3'd1;
+    localparam SUM_EXP = 3'd2;
+    localparam NORMALIZE = 3'd3;
+    localparam DONE = 3'd4;
+    
+    reg [DATA_WIDTH-1:0] max_value;
+    reg [DATA_WIDTH+7:0] exp_sum;  // 扩展位宽防止溢出
+    reg [DATA_WIDTH-1:0] exp_values [VECTOR_SIZE-1:0];
+    
+    // 指数函数近似（查找表）
+    wire [DATA_WIDTH-1:0] exp_result [VECTOR_SIZE-1:0];
+    genvar i;
+    generate
+        for (i = 0; i < VECTOR_SIZE; i = i + 1) begin : exp_units
+            ExpApprox #(
+                .DATA_WIDTH(DATA_WIDTH)
+            ) exp_inst (
+                .x(input_vector[i] - max_value),
+                .exp_x(exp_result[i])
+            );
+        end
+    endgenerate
+    
+    integer idx;
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            state <= FIND_MAX;
+            done <= 1'b0;
+        end else if (enable) begin
+            case (state)
+                FIND_MAX: begin
+                    // 找最大值
+                    max_value = input_vector[0];
+                    for (idx = 1; idx < VECTOR_SIZE; idx = idx + 1) begin
+                        if (input_vector[idx] > max_value) begin
+                            max_value = input_vector[idx];
+                        end
+                    end
+                    state <= COMPUTE_EXP;
+                end
+                
+                COMPUTE_EXP: begin
+                    // 计算exp(x - max)
+                    for (idx = 0; idx < VECTOR_SIZE; idx = idx + 1) begin
+                        exp_values[idx] <= exp_result[idx];
+                    end
+                    state <= SUM_EXP;
+                end
+                
+                SUM_EXP: begin
+                    // 求和
+                    exp_sum = 0;
+                    for (idx = 0; idx < VECTOR_SIZE; idx = idx + 1) begin
+                        exp_sum = exp_sum + exp_values[idx];
+                    end
+                    state <= NORMALIZE;
+                end
+                
+                NORMALIZE: begin
+                    // 归一化
+                    for (idx = 0; idx < VECTOR_SIZE; idx = idx + 1) begin
+                        output_vector[idx] <= (exp_values[idx] << 8) / exp_sum[DATA_WIDTH+7:8];
+                    end
+                    state <= DONE;
+                end
+                
+                DONE: begin
+                    done <= 1'b1;
+                    state <= FIND_MAX;
+                end
+            endcase
+        end
+    end
+endmodule
+            </div>
+            
+            <h4>4.5.2 多头并行处理单元</h4>
+            <p>多头注意力的并行性为硬件加速提供了机会：</p>
+            
+            <div class="info-box">
+                <p><strong>多头并行策略：</strong></p>
+                <ul>
+                    <li><strong>头间并行：</strong>不同注意力头完全独立计算</li>
+                    <li><strong>头内并行：</strong>每个头内的矩阵运算并行化</li>
+                    <li><strong>批间并行：</strong>不同批次样本的并行处理</li>
+                    <li><strong>序列并行：</strong>长序列分段并行计算</li>
+                </ul>
+            </div>
+            
+            <div class="code-block">
+// 多头注意力并行处理器
+module MultiHeadProcessor #(
+    parameter NUM_HEADS = 12,
+    parameter D_MODEL = 768,
+    parameter SEQ_LEN = 512,
+    parameter HEAD_PE_SIZE = 8  // 每个头的PE阵列大小
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 输入数据
+    input wire [15:0] q_matrix [SEQ_LEN-1:0][D_MODEL-1:0],
+    input wire [15:0] k_matrix [SEQ_LEN-1:0][D_MODEL-1:0],
+    input wire [15:0] v_matrix [SEQ_LEN-1:0][D_MODEL-1:0],
+    input wire start,
+    
+    // 输出
+    output reg [15:0] output_matrix [SEQ_LEN-1:0][D_MODEL-1:0],
+    output reg done
+);
+    
+    localparam D_HEAD = D_MODEL / NUM_HEADS;
+    
+    // 投影权重（实际应从外部加载）
+    reg [15:0] w_q [NUM_HEADS-1:0][D_MODEL-1:0][D_HEAD-1:0];
+    reg [15:0] w_k [NUM_HEADS-1:0][D_MODEL-1:0][D_HEAD-1:0];
+    reg [15:0] w_v [NUM_HEADS-1:0][D_MODEL-1:0][D_HEAD-1:0];
+    reg [15:0] w_o [D_MODEL-1:0][D_MODEL-1:0];
+    
+    // 每个头的计算状态
+    wire head_done [NUM_HEADS-1:0];
+    wire [15:0] head_output [NUM_HEADS-1:0][SEQ_LEN-1:0][D_HEAD-1:0];
+    
+    // 并行实例化注意力头
+    genvar h;
+    generate
+        for (h = 0; h < NUM_HEADS; h = h + 1) begin : heads
+            AttentionHead #(
+                .SEQ_LEN(SEQ_LEN),
+                .D_HEAD(D_HEAD),
+                .PE_SIZE(HEAD_PE_SIZE)
+            ) head_inst (
+                .clk(clk),
+                .rst_n(rst_n),
+                .start(start),
+                
+                // 投影后的输入
+                .q_head(/* 投影后的Q */),
+                .k_head(/* 投影后的K */),
+                .v_head(/* 投影后的V */),
+                
+                .output(head_output[h]),
+                .done(head_done[h])
+            );
+        end
+    endgenerate
+    
+    // 输出投影和拼接
+    reg [2:0] output_state;
+    reg [NUM_HEADS-1:0] heads_complete;
+    
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            output_state <= 3'b000;
+            done <= 1'b0;
+        end else begin
+            case (output_state)
+                3'b000: begin  // 等待所有头完成
+                    heads_complete <= {head_done[NUM_HEADS-1:0]};
+                    if (&heads_complete) begin
+                        output_state <= 3'b001;
+                    end
+                end
+                
+                3'b001: begin  // 拼接各头输出
+                    for (int s = 0; s < SEQ_LEN; s++) begin
+                        for (int h = 0; h < NUM_HEADS; h++) begin
+                            for (int d = 0; d < D_HEAD; d++) begin
+                                output_matrix[s][h*D_HEAD + d] <= head_output[h][s][d];
+                            end
+                        end
+                    end
+                    output_state <= 3'b010;
+                end
+                
+                3'b010: begin  // 输出投影
+                    // 实际需要矩阵乘法，这里简化
+                    done <= 1'b1;
+                    output_state <= 3'b000;
+                end
+            endcase
+        end
+    end
+endmodule
+            </div>
+            
+            <h4>4.5.3 位置编码处理单元</h4>
+            <p>高效的位置编码计算对Transformer性能至关重要：</p>
+            
+            <div class="code-block">
+// 旋转位置编码（RoPE）处理单元
+module RoPEUnit #(
+    parameter MAX_SEQ_LEN = 2048,
+    parameter D_MODEL = 768,
+    parameter DATA_WIDTH = 16
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 输入
+    input wire [DATA_WIDTH-1:0] q_in [D_MODEL-1:0],
+    input wire [DATA_WIDTH-1:0] k_in [D_MODEL-1:0],
+    input wire [10:0] position,  // 当前位置
+    input wire enable,
+    
+    // 输出
+    output reg [DATA_WIDTH-1:0] q_out [D_MODEL-1:0],
+    output reg [DATA_WIDTH-1:0] k_out [D_MODEL-1:0],
+    output reg done
+);
+    
+    // 预计算的sin/cos表（实际应使用ROM）
+    reg [DATA_WIDTH-1:0] sin_table [MAX_SEQ_LEN-1:0][D_MODEL/2-1:0];
+    reg [DATA_WIDTH-1:0] cos_table [MAX_SEQ_LEN-1:0][D_MODEL/2-1:0];
+    
+    // 复数乘法单元
+    reg [DATA_WIDTH-1:0] real_part, imag_part;
+    reg [DATA_WIDTH-1:0] cos_theta, sin_theta;
+    
+    // 2D旋转计算
+    // [cos θ  -sin θ] [x]   [x cos θ - y sin θ]
+    // [sin θ   cos θ] [y] = [x sin θ + y cos θ]
+    
+    integer i;
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            done <= 1'b0;
+        end else if (enable) begin
+            // 并行处理所有维度对
+            for (i = 0; i < D_MODEL/2; i = i + 1) begin
+                // 获取旋转角度
+                cos_theta = cos_table[position][i];
+                sin_theta = sin_table[position][i];
+                
+                // Q的旋转
+                real_part = q_in[2*i];
+                imag_part = q_in[2*i + 1];
+                q_out[2*i]     <= (real_part * cos_theta - imag_part * sin_theta) >> 8;
+                q_out[2*i + 1] <= (real_part * sin_theta + imag_part * cos_theta) >> 8;
+                
+                // K的旋转
+                real_part = k_in[2*i];
+                imag_part = k_in[2*i + 1];
+                k_out[2*i]     <= (real_part * cos_theta - imag_part * sin_theta) >> 8;
+                k_out[2*i + 1] <= (real_part * sin_theta + imag_part * cos_theta) >> 8;
+            end
+            
+            done <= 1'b1;
+        end else begin
+            done <= 1'b0;
+        end
+    end
+    
+    // 初始化sin/cos表
+    initial begin
+        for (int pos = 0; pos < MAX_SEQ_LEN; pos++) begin
+            for (int dim = 0; dim < D_MODEL/2; dim++) begin
+                real theta = pos / (10000.0 ** (2.0 * dim / D_MODEL));
+                sin_table[pos][dim] = $sin(theta) * (1 << 8);  // Q8格式
+                cos_table[pos][dim] = $cos(theta) * (1 << 8);
+            end
+        end
+    end
+endmodule
+            </div>
+            
+            <h4>4.5.4 层归一化加速单元</h4>
+            <p>层归一化是Transformer中的关键操作，需要专门的硬件支持：</p>
+            
+            <div class="code-block">
+// 高效层归一化单元
+module LayerNormUnit #(
+    parameter VECTOR_DIM = 768,
+    parameter DATA_WIDTH = 16,
+    parameter PRECISION = 8  // 小数位数
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 输入
+    input wire [DATA_WIDTH-1:0] input_vector [VECTOR_DIM-1:0],
+    input wire input_valid,
+    
+    // 可学习参数
+    input wire [DATA_WIDTH-1:0] gamma [VECTOR_DIM-1:0],
+    input wire [DATA_WIDTH-1:0] beta [VECTOR_DIM-1:0],
+    
+    // 输出
+    output reg [DATA_WIDTH-1:0] output_vector [VECTOR_DIM-1:0],
+    output reg output_valid
+);
+    
+    // 流水线寄存器
+    reg [DATA_WIDTH+9:0] sum_stage1;  // 扩展位宽防止溢出
+    reg [DATA_WIDTH+9:0] sum_sq_stage1;
+    reg [DATA_WIDTH-1:0] mean_stage2;
+    reg [DATA_WIDTH-1:0] var_stage2;
+    reg [DATA_WIDTH-1:0] std_stage3;
+    
+    // 第一级：计算和与平方和
+    integer i;
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            sum_stage1 <= 0;
+            sum_sq_stage1 <= 0;
+        end else if (input_valid) begin
+            sum_stage1 = 0;
+            sum_sq_stage1 = 0;
+            for (i = 0; i < VECTOR_DIM; i = i + 1) begin
+                sum_stage1 = sum_stage1 + input_vector[i];
+                sum_sq_stage1 = sum_sq_stage1 + input_vector[i] * input_vector[i];
+            end
+        end
+    end
+    
+    // 第二级：计算均值和方差
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            mean_stage2 <= 0;
+            var_stage2 <= 0;
+        end else begin
+            mean_stage2 <= sum_stage1 / VECTOR_DIM;
+            var_stage2 <= (sum_sq_stage1 / VECTOR_DIM) - 
+                         (mean_stage2 * mean_stage2);
+        end
+    end
+    
+    // 第三级：计算标准差（使用近似）
+    wire [DATA_WIDTH-1:0] sqrt_result;
+    SqrtApprox #(
+        .DATA_WIDTH(DATA_WIDTH)
+    ) sqrt_inst (
+        .x(var_stage2 + (1 << 4)),  // 加小量避免除零
+        .sqrt_x(sqrt_result)
+    );
+    
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            std_stage3 <= 0;
+        end else begin
+            std_stage3 <= sqrt_result;
+        end
+    end
+    
+    // 第四级：归一化和仿射变换
+    reg [3:0] output_counter;
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            output_valid <= 0;
+            output_counter <= 0;
+        end else if (output_counter < VECTOR_DIM) begin
+            // 分批处理以减少硬件资源
+            for (i = 0; i < 16 && output_counter + i < VECTOR_DIM; i = i + 1) begin
+                reg [DATA_WIDTH+7:0] normalized;
+                normalized = ((input_vector[output_counter + i] - mean_stage2) << PRECISION) 
+                           / std_stage3;
+                output_vector[output_counter + i] <= 
+                    (normalized * gamma[output_counter + i] >> PRECISION) + 
+                    beta[output_counter + i];
+            end
+            output_counter <= output_counter + 16;
+            
+            if (output_counter + 16 >= VECTOR_DIM) begin
+                output_valid <= 1'b1;
+                output_counter <= 0;
+            end
+        end else begin
+            output_valid <= 1'b0;
+        end
+    end
+endmodule
+
+// 平方根近似单元
+module SqrtApprox #(
+    parameter DATA_WIDTH = 16
+)(
+    input wire [DATA_WIDTH-1:0] x,
+    output reg [DATA_WIDTH-1:0] sqrt_x
+);
+    // 使用Newton-Raphson迭代或查找表
+    // 这里简化实现
+    always @(*) begin
+        sqrt_x = x >> 1;  // 极简近似，实际需要更精确的实现
+    end
+endmodule
+            </div>
+            
+            <h4>4.5.5 融合计算优化</h4>
+            <p>Transformer中多个操作可以融合以提高效率：</p>
+            
+            <div class="info-box">
+                <p><strong>常见的融合模式：</strong></p>
+                <ul>
+                    <li><strong>QKV投影融合：</strong>将Q、K、V的线性投影合并为一次矩阵乘法</li>
+                    <li><strong>注意力+Dropout融合：</strong>在Softmax后直接应用Dropout掩码</li>
+                    <li><strong>LayerNorm+线性层融合：</strong>减少中间结果的存储</li>
+                    <li><strong>激活函数融合：</strong>将GELU/SiLU等激活函数与前面的线性层融合</li>
+                </ul>
+            </div>
+            
+            <div class="exercise">
+                <h4>练习 4.5</h4>
+                <div class="question">
+                    <p><strong>题目：</strong>设计一个支持混合精度计算的Transformer加速器，要求：
+                    1) 支持FP16/INT8混合精度
+                    2) 关键层（注意力）使用FP16，其他层使用INT8
+                    3) 实现动态精度切换
+                    4) 优化不同精度间的数据转换开销</p>
+                    <details class="hint">
+                        <summary>💡 提示</summary>
+                        <p>思考方向：考虑不同精度计算单元的复用策略。FP16和INT8计算可以共享某些硬件资源吗？精度转换应该在哪里进行最高效？如何设计数据通路以支持动态切换？注意力层为什么需要更高精度？考虑softmax计算的数值稳定性。</p>
+                    </details>
+                    <button class="toggle-answer">显示答案</button>
+                    <div class="answer">
+                        <div class="code-block">
+module MixedPrecisionTransformer #(
+    parameter SEQ_LEN = 512,
+    parameter D_MODEL = 768,
+    parameter NUM_HEADS = 12,
+    parameter NUM_LAYERS = 12
+)(
+    input wire clk,
+    input wire rst_n,
+    
+    // 精度配置（每层）
+    input wire [NUM_LAYERS-1:0] layer_precision,  // 0:INT8, 1:FP16
+    
+    // 输入
+    input wire [7:0] input_int8 [SEQ_LEN-1:0][D_MODEL-1:0],
+    input wire start,
+    
+    // 输出
+    output reg [7:0] output_int8 [SEQ_LEN-1:0][D_MODEL-1:0],
+    output reg done
+);
+    
+    // 精度转换单元
+    reg [15:0] fp16_buffer [SEQ_LEN-1:0][D_MODEL-1:0];
+    reg [7:0] int8_buffer [SEQ_LEN-1:0][D_MODEL-1:0];
+    
+    // INT8到FP16转换
+    task int8_to_fp16;
+        input [7:0] int8_val;
+        input [7:0] scale;
+        input [7:0] zero_point;
+        output [15:0] fp16_val;
+        begin
+            // 反量化：fp_val = (int_val - zero_point) * scale
+            reg signed [15:0] dequant;
+            dequant = $signed(int8_val) - $signed(zero_point);
+            fp16_val = dequant * scale;  // 简化，实际需要浮点运算
+        end
+    endtask
+    
+    // FP16到INT8转换
+    task fp16_to_int8;
+        input [15:0] fp16_val;
+        input [7:0] scale;
+        input [7:0] zero_point;
+        output [7:0] int8_val;
+        begin
+            // 量化：int_val = round(fp_val / scale) + zero_point
+            reg signed [15:0] quant;
+            quant = fp16_val / scale;  // 简化
+            
+            // 饱和处理
+            if (quant + zero_point > 127)
+                int8_val = 8'd127;
+            else if (quant + zero_point < -128)
+                int8_val = 8'd128;  // -128
+            else
+                int8_val = quant + zero_point;
+        end
+    endtask
+    
+    // 层处理状态机
+    reg [3:0] current_layer;
+    reg [2:0] layer_state;
+    
+    // 双精度计算单元
+    wire attention_done, ffn_done;
+    wire [15:0] attention_output_fp16 [SEQ_LEN-1:0][D_MODEL-1:0];
+    wire [7:0] ffn_output_int8 [SEQ_LEN-1:0][D_MODEL-1:0];
+    
+    // FP16注意力单元
+    AttentionLayerFP16 #(
+        .SEQ_LEN(SEQ_LEN),
+        .D_MODEL(D_MODEL),
+        .NUM_HEADS(NUM_HEADS)
+    ) attention_fp16 (
+        .clk(clk),
+        .rst_n(rst_n),
+        .enable(layer_state == 3'b001 && layer_precision[current_layer]),
+        .input_data(fp16_buffer),
+        .output_data(attention_output_fp16),
+        .done(attention_done)
+    );
+    
+    // INT8 FFN单元
+    FFNLayerINT8 #(
+        .SEQ_LEN(SEQ_LEN),
+        .D_MODEL(D_MODEL)
+    ) ffn_int8 (
+        .clk(clk),
+        .rst_n(rst_n),
+        .enable(layer_state == 3'b010 && !layer_precision[current_layer]),
+        .input_data(int8_buffer),
+        .output_data(ffn_output_int8),
+        .done(ffn_done)
+    );
+    
+    // 量化参数存储（每层）
+    reg [7:0] quant_scale [NUM_LAYERS-1:0];
+    reg [7:0] quant_zero_point [NUM_LAYERS-1:0];
+    
+    // 主控制逻辑
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            current_layer <= 0;
+            layer_state <= 3'b000;
+            done <= 1'b0;
+        end else begin
+            case (layer_state)
+                3'b000: begin  // 准备阶段
+                    if (start) begin
+                        current_layer <= 0;
+                        int8_buffer <= input_int8;
+                        layer_state <= 3'b001;
+                    end
+                end
+                
+                3'b001: begin  // 精度转换（如需要）
+                    if (layer_precision[current_layer]) begin
+                        // INT8 -> FP16
+                        for (int s = 0; s < SEQ_LEN; s++) begin
+                            for (int d = 0; d < D_MODEL; d++) begin
+                                int8_to_fp16(
+                                    int8_buffer[s][d],
+                                    quant_scale[current_layer],
+                                    quant_zero_point[current_layer],
+                                    fp16_buffer[s][d]
+                                );
+                            end
+                        end
+                    end
+                    layer_state <= 3'b010;
+                end
+                
+                3'b010: begin  // 计算阶段
+                    if (layer_precision[current_layer]) begin
+                        // FP16注意力计算
+                        if (attention_done) begin
+                            // FP16 -> INT8
+                            for (int s = 0; s < SEQ_LEN; s++) begin
+                                for (int d = 0; d < D_MODEL; d++) begin
+                                    fp16_to_int8(
+                                        attention_output_fp16[s][d],
+                                        quant_scale[current_layer],
+                                        quant_zero_point[current_layer],
+                                        int8_buffer[s][d]
+                                    );
+                                end
+                            end
+                            layer_state <= 3'b011;
+                        end
+                    end else begin
+                        // INT8 FFN计算
+                        if (ffn_done) begin
+                            int8_buffer <= ffn_output_int8;
+                            layer_state <= 3'b011;
+                        end
+                    end
+                end
+                
+                3'b011: begin  // 层完成
+                    if (current_layer == NUM_LAYERS - 1) begin
+                        output_int8 <= int8_buffer;
+                        done <= 1'b1;
+                        layer_state <= 3'b000;
+                    end else begin
+                        current_layer <= current_layer + 1;
+                        layer_state <= 3'b001;
+                    end
+                end
+            endcase
+        end
+    end
+    
+    // 性能监控
+    reg [31:0] fp16_cycles;
+    reg [31:0] int8_cycles;
+    reg [31:0] conversion_cycles;
+    
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            fp16_cycles <= 0;
+            int8_cycles <= 0;
+            conversion_cycles <= 0;
+        end else begin
+            case (layer_state)
+                3'b001: conversion_cycles <= conversion_cycles + 1;
+                3'b010: begin
+                    if (layer_precision[current_layer])
+                        fp16_cycles <= fp16_cycles + 1;
+                    else
+                        int8_cycles <= int8_cycles + 1;
+                end
+            endcase
+        end
+    end
+endmodule
+                        </div>
+                        <p><strong>设计要点：</strong></p>
+                        <ul>
+                            <li>关键层使用高精度保证准确性</li>
+                            <li>非关键层使用低精度提高效率</li>
+                            <li>精度转换单元优化减少开销</li>
+                            <li>动态配置支持不同模型需求</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="section">
+                <h4>本章小结</h4>
+                <ul>
+                    <li><strong>MAC单元是NPU的基本计算单元，</strong>通过大规模并行MAC阵列实现高效的矩阵运算，是AI加速的核心</li>
+                    <li><strong>脉动阵列通过规则的数据流动实现高效计算，</strong>每个PE只与相邻PE通信，减少了全局互连的复杂度和功耗</li>
+                    <li><strong>三种数据流模式各有优劣：</strong>Weight Stationary适合大批量推理，Output Stationary简化累加逻辑，Row Stationary平衡了各种权衡</li>
+                    <li><strong>向量处理单元负责非线性运算，</strong>通过SIMD架构、查找表、分段线性逼近等技术高效实现激活函数</li>
+                    <li><strong>特殊功能单元提升系统灵活性，</strong>包括量化/反量化、归一化、池化等操作，避免了数据在CPU和NPU间的频繁搬运</li>
+                    <li><strong>计算精度与效率需要权衡，</strong>INT8量化可以在保持精度的同时将计算效率提升4倍，是边缘部署的关键技术</li>
+                    <li><strong>未来的计算核心将更加灵活和智能，</strong>支持动态精度、稀疏计算、混合精度等高级特性，适应不断演进的AI模型需求</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Chapter 5: 存储系统设计 -->
+        </div>
+        
+        <div class="chapter-nav">
+            <a href="chapter3.html" class="prev">上一章</a>
+            <a href="chapter5.html" class="next">下一章</a>
+        </div>
+    </div>
+</body>
+</html>
