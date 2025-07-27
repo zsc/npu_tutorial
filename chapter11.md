@@ -211,63 +211,27 @@ class NPUAwareNAS:
         best_score = float('-inf')
         
         for iteration in range(num_iterations):
-            # 采样候选架构
             candidate_arch = self.sample_architecture(search_space)
-            
-            # 评估架构性能
             accuracy = self.evaluate_accuracy(candidate_arch)
             latency = self.estimate_latency(candidate_arch)
             memory = self.estimate_memory(candidate_arch)
             
-            # 检查约束
-            if latency > self.max_latency or memory > self.max_memory:
-                continue
-            
-            # 计算综合评分
-            score = self.calculate_score(accuracy, latency, memory)
-            
-            if score > best_score:
-                best_score = score
-                best_arch = candidate_arch
+            if latency <= self.max_latency and memory <= self.max_memory:
+                score = self.calculate_score(accuracy, latency, memory)
+                if score > best_score:
+                    best_score = score
+                    best_arch = candidate_arch
         
         return best_arch
     
     def estimate_latency(self, architecture):
         """基于NPU特性估计延迟"""
         total_latency = 0
-        
         for layer in architecture.layers:
-            # 获取算子类型
-            op_type = layer.op_type
-            
-            if op_type in self.preferred_ops:
-                # NPU高效算子
-                base_latency = self.get_base_latency(op_type, layer.params)
-                efficiency_factor = 1.0
-            else:
-                # 需要CPU fallback的算子
-                base_latency = self.get_cpu_latency(op_type, layer.params)
-                efficiency_factor = 10.0  # CPU fallback开销大
-            
-            # 考虑数据传输开销
-            data_transfer_cost = self.estimate_data_transfer(layer)
-            
-            layer_latency = base_latency * efficiency_factor + data_transfer_cost
-            total_latency += layer_latency
-        
+            efficiency_factor = 1.0 if layer.op_type in self.preferred_ops else 10.0
+            base_latency = self.get_base_latency(layer.op_type, layer.params)
+            total_latency += base_latency * efficiency_factor
         return total_latency
-    
-    def calculate_score(self, accuracy, latency, memory):
-        """多目标优化评分函数"""
-        # 归一化各个指标
-        norm_accuracy = accuracy / 100.0  # 假设精度在0-100之间
-        norm_latency = self.max_latency / latency  # 延迟越小越好
-        norm_memory = self.max_memory / memory     # 内存越小越好
-        
-        # 加权求和
-        score = 0.6 * norm_accuracy + 0.3 * norm_latency + 0.1 * norm_memory
-        
-        return score
 ```
 
 ## 11.3 编译器优化
@@ -331,74 +295,39 @@ class InstructionScheduler {
         int issue_cycle;
     };
     
-    // 数据依赖图
-    class DependencyGraph {
-        std::vector<Instruction> instructions;
-        std::vector<std::vector<int>> dependencies;
-        
-    public:
-        void add_dependency(int src_inst, int dst_inst) {
-            dependencies[src_inst].push_back(dst_inst);
-        }
-        
-        std::vector<int> get_ready_instructions(int current_cycle) {
-            std::vector<int> ready;
-            for (int i = 0; i < instructions.size(); i++) {
-                if (is_ready(i, current_cycle)) {
-                    ready.push_back(i);
-                }
-            }
-            return ready;
-        }
-    };
-    
+public:
     // 列表调度算法
     std::vector<Instruction> schedule_instructions(
         const std::vector<Instruction>& input_instructions) {
         
-        DependencyGraph dep_graph(input_instructions);
         std::vector<Instruction> scheduled;
         std::vector<bool> scheduled_mask(input_instructions.size(), false);
         
         int current_cycle = 0;
         while (scheduled.size() < input_instructions.size()) {
-            // 获取当前周期可调度的指令
-            auto ready_insts = dep_graph.get_ready_instructions(current_cycle);
+            auto ready_insts = get_ready_instructions(current_cycle, scheduled_mask);
             
-            // 选择优先级最高的指令
             if (!ready_insts.empty()) {
                 int selected = select_highest_priority(ready_insts);
-                
                 auto& inst = input_instructions[selected];
                 inst.issue_cycle = current_cycle;
                 scheduled.push_back(inst);
                 scheduled_mask[selected] = true;
             }
-            
             current_cycle++;
         }
-        
         return scheduled;
     }
     
 private:
     int select_highest_priority(const std::vector<int>& candidates) {
-        // 优先级启发式：
-        // 1. 关键路径上的指令优先
-        // 2. 延迟长的指令优先
-        // 3. 依赖关系少的指令优先
-        
+        // 优先级启发式：关键路径、延迟、依赖关系
         int best_candidate = candidates[0];
-        int highest_priority = calculate_priority(best_candidate);
-        
-        for (int i = 1; i < candidates.size(); i++) {
-            int priority = calculate_priority(candidates[i]);
-            if (priority > highest_priority) {
-                highest_priority = priority;
-                best_candidate = candidates[i];
+        for (int candidate : candidates) {
+            if (calculate_priority(candidate) > calculate_priority(best_candidate)) {
+                best_candidate = candidate;
             }
         }
-        
         return best_candidate;
     }
 };
