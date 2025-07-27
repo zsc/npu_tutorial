@@ -1,6 +1,6 @@
 # 第7章：验证与测试
 
-## 7.1 验证方法学概述
+## <a name="71"></a>7.1 验证方法学概述
 
 ### 7.1.1 验证的重要性
 
@@ -90,7 +90,7 @@ class npu_verification_env extends uvm_env;
 endclass
 ```
 
-## 7.2 制定NPU验证计划
+## <a name="72"></a>7.2 制定NPU验证计划
 
 ### 7.2.1 验证计划的重要性
 
@@ -205,7 +205,7 @@ covergroup npu_operation_cg @(posedge clk);
 endgroup
 ```
 
-## 7.3 UVM验证环境构建
+## <a name="73"></a>7.3 UVM验证环境构建
 
 ### 7.3.1 UVM在NPU验证中的应用
 
@@ -689,7 +689,7 @@ class npu_scoreboard extends uvm_scoreboard;
 endclass
 ```
 
-## 7.4 形式化验证
+## <a name="74"></a>7.4 形式化验证
 
 ### 7.4.1 形式化验证在NPU中的应用
 

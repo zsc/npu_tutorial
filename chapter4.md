@@ -4,7 +4,7 @@
 
 我们将重点关注三个关键问题：**如何设计单个MAC单元以实现最高效率？如何将成千上万个MAC单元组织成阵列？如何通过不同的数据流模式（Weight Stationary、Output Stationary、Row Stationary）来优化不同场景下的计算效率？**通过回答这些问题，你将掌握NPU计算核心设计的精髓。
 
-## 4.1 MAC阵列设计
+## <a name="41"></a>4.1 MAC阵列设计
 
 ### 4.1.1 基础MAC单元
 
@@ -248,7 +248,7 @@ module MAC_Array_8x8 #(
 endmodule
 ```
 
-## 4.2 脉动阵列架构
+## <a name="42"></a>4.2 脉动阵列架构
 
 ### 4.2.1 脉动阵列原理
 
@@ -932,7 +932,7 @@ class OutputStationaryPE(dataWidth: Int = 8, accWidth: Int = 32) extends Module 
 | 延迟 | 较低 | 较高（需要数据对齐） | WS: 实时推理<br>OS: 批处理训练 |
 | 能效 | 权重读取能耗低 | 部分和读写能耗低 | WS: 边缘设备<br>OS: 数据中心 |
 
-## 4.3 向量处理单元
+## <a name="43"></a>4.3 向量处理单元
 
 ### 4.3.1 SIMD架构设计
 
@@ -1151,7 +1151,7 @@ TPU_VPU_MUL      output, vr3, vr5        // 乘法归一化
 | GPU (CUDA) | Warp级规约+共享内存 | ~0.5ms | 10x |
 | TPU v4 | VPU硬件+SFU+融合 | ~0.05ms | 100x |
 
-## 4.4 特殊计算单元
+## <a name="44"></a>4.4 特殊计算单元
 
 ### 4.4.1 Tensor Core设计
 

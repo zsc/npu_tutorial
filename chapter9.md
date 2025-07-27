@@ -1,6 +1,6 @@
 # 第9章：先进工艺与封装技术
 
-## 9.1 先进工艺节点概述
+## <a name="91"></a>9.1 先进工艺节点概述
 
 ### 9.1.1 工艺节点演进
 
@@ -91,7 +91,7 @@ class FinFETModel:
         return dynamic_power + static_power
 ```
 
-## 9.2 多阈值电压技术
+## <a name="92"></a>9.2 多阈值电压技术
 
 ### 9.2.1 阈值电压优化策略
 
@@ -273,7 +273,7 @@ end
 endmodule
 ```
 
-## 9.3 先进封装技术
+## <a name="93"></a>9.3 先进封装技术
 
 ### 9.3.1 2.5D与3D封装
 
@@ -380,7 +380,7 @@ class NPUChipletSystem:
         
         return chiplet_cost / monolithic_cost
 
-## 9.4 电源网络设计
+## <a name="94"></a>9.4 电源网络设计
 
 ### 9.4.1 NPU电源域划分
 
@@ -804,7 +804,7 @@ if __name__ == "__main__":
     print(f"违规区域比例: {analysis_results['ir_drop']['violation_percentage']:.1f}%")
 ```
 
-## 9.5 信号完整性与电源完整性
+## <a name="95"></a>9.5 信号完整性与电源完整性
 
 ### 9.5.1 高速信号设计
 
@@ -1276,7 +1276,7 @@ assign vout = enable ? (vin * 0.95) : vin;  // 5%的转换损耗
 endmodule
 ```
 
-## 9.6 练习题
+## <a name="96"></a>9.6 练习题
 
 ### 练习题9.1：FinFET建模
 **题目：** 对于7nm FinFET工艺，计算一个最小尺寸反相器的延迟和功耗特性。

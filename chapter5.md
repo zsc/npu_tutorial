@@ -6,7 +6,7 @@
 
 本章将揭示NPU存储系统设计的艺术与科学。我们将从片上SRAM的物理设计开始，探讨如何通过巧妙的Banking策略实现高带宽访问，如何设计智能的预取机制来隐藏访存延迟，以及如何通过压缩技术在有限的片上存储中塞入更多数据。更重要的是，我们将学习如何为脉动阵列这样的规则计算模式设计最优的存储层次结构。通过本章的学习，你将掌握设计高效NPU存储系统的核心技术，理解为什么Google TPU要配备如此巨大的片上存储，以及为什么NVIDIA在每一代GPU中都在不断增加缓存容量。
 
-## 5.1 片上SRAM设计
+## <a name="51"></a>5.1 片上SRAM设计
 
 片上SRAM是NPU存储层次结构的核心，为计算单元提供超低延迟、超高带宽的数据访问。
 
@@ -242,7 +242,7 @@ module TransposeSRAM #(
 endmodule
 ```
 
-## 5.2 Memory Banking策略
+## <a name="52"></a>5.2 Memory Banking策略
 
 Memory Banking通过将SRAM划分为多个独立的Bank，实现并行访问，成倍提升有效带宽。
 
@@ -634,7 +634,7 @@ module BankScheduler #(
 endmodule
 ```
 
-## 5.3 数据预取机制
+## <a name="53"></a>5.3 数据预取机制
 
 数据预取通过提前将数据从DRAM加载到片上SRAM，隐藏内存访问延迟，是提升NPU性能的关键技术。
 
@@ -928,7 +928,7 @@ void conv_layer_with_prefetch(
 }
 ```
 
-## 5.4 缓存一致性
+## <a name="54"></a>5.4 缓存一致性
 
 在多核NPU系统中，缓存一致性确保不同核心看到的数据是一致的，这对正确性至关重要。
 
@@ -1127,7 +1127,7 @@ module SoftwareManagedCoherence #(
 endmodule
 ```
 
-## 5.5 DMA设计
+## <a name="55"></a>5.5 DMA设计
 
 DMA（Direct Memory Access）是NPU中实现高效数据传输的关键组件，它允许数据在不占用处理器的情况下在内存之间移动。
 
@@ -1483,7 +1483,7 @@ module TensorLayoutDMA #(
 endmodule
 ```
 
-## 5.6 内存压缩技术
+## <a name="56"></a>5.6 内存压缩技术
 
 内存压缩可以显著提高NPU的有效带宽，特别是对于稀疏或冗余的数据。
 

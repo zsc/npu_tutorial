@@ -1,6 +1,6 @@
 # 第12章：NPU设计实战
 
-## 12.1 实战项目概述
+## <a name="121"></a>12.1 实战项目概述
 
 ### 12.1.1 项目目标与规格
 
@@ -101,7 +101,7 @@ class EdgeNPUArchitecture:
         return power_breakdown, total_power
 ```
 
-## 12.2 详细设计实现
+## <a name="122"></a>12.2 详细设计实现
 
 ### 12.2.1 MAC阵列设计
 
@@ -360,7 +360,7 @@ dma_engine dma0 (
 endmodule
 ```
 
-## 12.3 验证与测试
+## <a name="123"></a>12.3 验证与测试
 
 ### 12.3.1 功能验证环境
 
@@ -538,7 +538,7 @@ class NPUPerformanceValidator:
             return 1.0 / (1.0 + mse)
 ```
 
-## 12.4 综合与实现
+## <a name="124"></a>12.4 综合与实现
 
 ### 12.4.1 综合结果分析
 
@@ -635,7 +635,7 @@ def generate_synthesis_report():
             print(f"- {suggestion}")
 ```
 
-## 12.5 软件栈开发
+## <a name="125"></a>12.5 软件栈开发
 
 ### 12.5.1 编译器实现
 
@@ -1295,7 +1295,7 @@ class NPUProfiler:
         }
 ```
 
-## 12.6 系统集成与测试
+## <a name="126"></a>12.6 系统集成与测试
 
 ### 12.6.1 芯片级验证
 

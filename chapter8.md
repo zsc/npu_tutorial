@@ -1,6 +1,6 @@
 # 第8章：物理设计基础
 
-## 8.1 ASIC设计流程概述
+## <a name="81"></a>8.1 ASIC设计流程概述
 
 ### 8.1.1 从RTL到GDSII的完整流程
 
@@ -74,7 +74,7 @@ set_max_transition 0.1 [get_nets -hier *clk*]
 set_max_fanout 32 [all_inputs]
 ```
 
-## 8.2 综合与逻辑优化
+## <a name="82"></a>8.2 综合与逻辑优化
 
 ### 8.2.1 RTL综合基础
 
@@ -395,7 +395,7 @@ set_max_area 15000000 [get_designs npu_core]
 set_cost_priority -delay
 ```
 
-## 8.3 布图规划与布局优化
+## <a name="83"></a>8.3 布图规划与布局优化
 
 ### 8.3.1 NPU布图规划策略
 
@@ -708,7 +708,7 @@ report_placement_utilization -verbose
 analyze_placement_density
 ```
 
-## 8.4 时钟树综合
+## <a name="84"></a>8.4 时钟树综合
 
 ### 8.4.1 NPU时钟树设计挑战
 
@@ -983,7 +983,7 @@ verify_clock_tree
 check_timing -verbose
 ```
 
-## 8.5 布线与信号完整性
+## <a name="85"></a>8.5 布线与信号完整性
 
 ### 8.5.1 NPU布线挑战
 
@@ -1196,7 +1196,7 @@ add_filler_cells -cell_list {FILL1 FILL2 FILL4 FILL8}
 verify_filler_cells
 ```
 
-## 8.6 电源网络设计
+## <a name="86"></a>8.6 电源网络设计
 
 ### 8.6.1 NPU电源网络挑战
 
@@ -1501,7 +1501,7 @@ insert_power_switches \
     -cells {PWR_SW_X8}
 ```
 
-## 8.7 物理验证
+## <a name="87"></a>8.7 物理验证
 
 ### 8.7.1 设计规则检查(DRC)
 
@@ -1845,7 +1845,7 @@ class PowerVerificationSuite:
         return sorted(hotspots, key=lambda h: h['power_density'], reverse=True)
 ```
 
-## 8.8 时序收敛
+## <a name="88"></a>8.8 时序收敛
 
 ### 8.8.1 时序收敛策略
 
