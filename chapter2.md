@@ -99,17 +99,7 @@ Y = XW + B
 
 **矩阵乘法的计算模式：**
 
-```
-// 朴素的矩阵乘法实现
-for (i = 0; i < M; i++) {
-    for (j = 0; j < N; j++) {
-        C[i][j] = 0;
-        for (k = 0; k < K; k++) {
-            C[i][j] += A[i][k] * B[k][j];
-        }
-    }
-}
-```
+朴素的矩阵乘法实现使用三重嵌套循环：外两层循环遍历结果矩阵C的每个元素位置(i,j)，内层循环执行点积运算，累加A的第i行与B的第j列对应元素的乘积。这种实现方式直观但效率较低，时间复杂度为O(M×N×K)。
 
 这个三重循环暴露了几个重要特征：
 1. **高度的数据重用**：每个元素会被多次访问
@@ -186,21 +176,7 @@ endmodule
 
 分块技术通过优化数据局部性来提高缓存效率：
 
-```python
-# 分块矩阵乘法示例
-def blocked_matmul(A, B, C, block_size=64):
-    M, K = A.shape
-    K2, N = B.shape
-    
-    for i in range(0, M, block_size):
-        for j in range(0, N, block_size):
-            for k in range(0, K, block_size):
-                # 计算一个块
-                for ii in range(i, min(i+block_size, M)):
-                    for jj in range(j, min(j+block_size, N)):
-                        for kk in range(k, min(k+block_size, K)):
-                            C[ii][jj] += A[ii][kk] * B[kk][jj]
-```
+分块矩阵乘法通过将大矩阵分割成小块来优化缓存使用。算法首先按block_size将矩阵划分为多个子块，然后对每个块执行局部矩阵乘法。这种方法确保每个块的数据可以完全装入缓存，显著减少了主存访问次数。内层的三重循环处理单个块内的计算，保持了良好的空间局部性。
 
 分块的好处：
 - **提高缓存命中率**：块可以完全装入片上存储
@@ -252,29 +228,14 @@ im2col（image to column）是将卷积运算转换为矩阵乘法的经典技�
 2. **重排卷积核**：将卷积核展开成行
 3. **矩阵乘法**：执行标准的GEMM（通用矩阵乘法）
 
-```python
-def im2col(input, kernel_h, kernel_w, stride=1, pad=0):
-    N, C, H, W = input.shape
-    out_h = (H + 2*pad - kernel_h) // stride + 1
-    out_w = (W + 2*pad - kernel_w) // stride + 1
-    
-    # 为输入添加padding
-    input_pad = np.pad(input, ((0,0), (0,0), (pad,pad), (pad,pad)))
-    
-    # 创建列矩阵
-    col = np.zeros((N, C, kernel_h, kernel_w, out_h, out_w))
-    
-    # 展开每个窗口
-    for y in range(kernel_h):
-        for x in range(kernel_w):
-            col[:, :, y, x, :, :] = input_pad[:, :, 
-                y:y+out_h*stride:stride,
-                x:x+out_w*stride:stride]
-    
-    # 重塑为2D矩阵
-    col = col.transpose(0, 4, 5, 1, 2, 3).reshape(N*out_h*out_w, -1)
-    return col
-```
+im2col算法的实现步骤：
+1. 计算输出特征图尺寸：根据输入尺寸、卷积核大小、步长和padding计算
+2. 对输入进行padding：在边界填充指定数量的零值
+3. 创建列矩阵：为每个卷积窗口预分配存储空间
+4. 窗口展开：将每个卷积窗口位置的数据提取并重排成列向量
+5. 矩阵重塑：将多维数组转换为2D矩阵，其中每列对应一个卷积窗口，行数为卷积核元素总数
+
+最终得到的矩阵维度为[卷积核元素数×通道数, 输出位置总数]，可直接与展开的卷积核矩阵相乘。
 
 **im2col的优缺点：**
 
@@ -385,33 +346,15 @@ Y = A^T × [(G × g × G^T) ⊙ (B^T × d × B)] × A
 
 **3. F(2,3)详细实现**
 
-```
-// F(2,3)变换矩阵（最常用）
-B^T = [1   0  -1   0]     G = [1      0      0]     A^T = [1  1  1  0]
-      [0   1   1   0]         [1/2   1/2   1/2]           [0  1 -1 -1]
-      [0  -1   1   0]         [1/2  -1/2   1/2]
-      [0   1   0  -1]         [0      0      1]
+F(2,3) Winograd变换使用特定的变换矩阵B^T、G和A^T，将3×3卷积转换为更少的乘法运算：
 
-// 硬件友好的实现（避免浮点除法）
-// 步骤1: 输入变换 (只需加减法)
-U[0] = d[0] - d[2]
-U[1] = d[1] + d[2]
-U[2] = d[2] - d[1]
-U[3] = d[1] - d[3]
+**硬件友好的实现步骤：**
+1. **输入变换**：通过加减运算将4×4输入瓦块变换到Winograd域，完全避免乘法
+2. **卷积核变换**：将3×3卷积核变换到对应域（可预计算并存储）
+3. **逐元素乘法**：在变换域执行仅4次乘法（相比直接卷积的36次）
+4. **输出逆变换**：通过加减运算恢复2×2的输出瓦块
 
-// 步骤2: 卷积核变换 (可预计算)
-V[0] = g[0]
-V[1] = (g[0] + g[1] + g[2]) / 2
-V[2] = (g[0] - g[1] + g[2]) / 2
-V[3] = g[2]
-
-// 步骤3: 逐元素乘法 (仅4次乘法!)
-M[i] = U[i] * V[i], for i = 0,1,2,3
-
-// 步骤4: 输出变换 (只需加减法)
-Y[0] = M[0] + M[1] + M[2]
-Y[1] = M[1] - M[2] - M[3]
-```
+这种方法将乘法次数减少到原来的1/9，特别适合硬件实现，因为加减器的面积和功耗远小于乘法器。
 
 **4. NPU硬件实现架构**
 
@@ -716,20 +659,14 @@ zero_point = round(-min_val / scale)
 
 量化感知训练（QAT）在训练过程中模拟量化效果，使模型适应低精度：
 
-```python
-# 量化感知训练的前向传播
-def quantize_aware_forward(x, w, scale_x, scale_w):
-    # 模拟量化
-    x_q = fake_quantize(x, scale_x)  # 保持FP32但值被量化
-    w_q = fake_quantize(w, scale_w)
-    
-    # 正常计算
-    y = matmul(x_q, w_q)
-    
-    # 梯度直通（Straight-Through Estimator）
-    # 前向使用量化值，反向使用原始梯度
-    return y
-```
+量化感知训练（QAT）的核心思想是在训练过程中模拟量化效果：
+
+1. **伪量化（Fake Quantization）**：将浮点值量化后再反量化，保持FP32格式但数值已被量化
+2. **前向传播**：使用量化后的权重和激活值进行计算，让模型适应量化误差
+3. **梯度直通（STE）**：反向传播时使用原始梯度，避免量化操作的零梯度问题
+4. **逐步量化**：可以从高精度开始，逐渐降低量化位宽
+
+这种方法让模型在训练时就学会补偿量化带来的精度损失，相比训练后量化（PTQ）通常能获得更好的精度。
 
 ### 2.5.4 硬件量化单元设计
 
@@ -797,79 +734,46 @@ Flash Attention是算法-硬件协同设计的典范，通过理解GPU/NPU的内
 
 **在线Softmax算法：Flash Attention的基础**
 
-```python
-# 传统Softmax（两次遍历）
-def softmax_traditional(x):
-    max_x = max(x)                    # 第一次遍历
-    exp_x = [exp(xi - max_x) for xi in x]
-    sum_exp = sum(exp_x)              # 第二次遍历
-    return [ei / sum_exp for ei in exp_x]  # 第三次遍历
+**在线Softmax算法对比：**
 
-# 在线Softmax（单次遍历，增量更新）
-def softmax_online(x):
-    m = -inf  # 当前最大值
-    l = 0     # 当前指数和
-    y = []    # 输出
-    
-    for i, xi in enumerate(x):
-        # 更新最大值
-        m_new = max(m, xi)
-        
-        # 修正之前的和
-        l = l * exp(m - m_new) + exp(xi - m_new)
-        
-        # 更新所有之前的输出
-        for j in range(i):
-            y[j] = y[j] * exp(m - m_new)
-        
-        # 添加新元素
-        y.append(exp(xi - m_new))
-        m = m_new
-    
-    # 最终归一化
-    return [yi / l for yi in y]
-```
+**传统Softmax实现（需要三次遍历）：**
+1. 第一次遍历：找到最大值用于数值稳定
+2. 第二次遍历：计算指数并求和
+3. 第三次遍历：归一化得到最终结果
+
+**在线Softmax（单次遍历，增量更新）：**
+- 维护两个运行统计量：当前最大值m和指数和l
+- 每读入新元素时：
+  - 更新最大值并调整之前的指数和
+  - 修正已计算的输出值（乘以exp(m_old - m_new)）
+  - 将新元素加入输出序列
+- 最后统一归一化
+
+在线算法的优势：只需要一次数据遍历，特别适合流式处理和内存受限的硬件环境。
 
 **Flash Attention的分块计算：**
 
-```python
-# 分块注意力计算（简化版）
-def flash_attention(Q, K, V, block_size):
-    N = Q.shape[0]
-    d = Q.shape[1]
-    
-    # 输出和统计量
-    O = zeros(N, d)
-    l = zeros(N)
-    m = full(N, -inf)
-    
-    # 分块处理
-    for j in range(0, N, block_size):
-        # 加载KV块到SRAM
-        Kj = K[j:j+block_size]
-        Vj = V[j:j+block_size]
-        
-        for i in range(0, N, block_size):
-            # 加载Q块到SRAM
-            Qi = Q[i:i+block_size]
-            
-            # 在SRAM中计算注意力得分
-            Sij = Qi @ Kj.T
-            
-            # 在线更新统计量
-            m_new = max(m[i:i+block_size], rowmax(Sij))
-            P = exp(Sij - m_new)
-            l_new = l[i:i+block_size] * exp(m[i:i+block_size] - m_new) + rowsum(P)
-            
-            # 更新输出
-            O[i:i+block_size] = (O[i:i+block_size] * exp(m[i:i+block_size] - m_new) + P @ Vj) / l_new
-            
-            # 更新统计量
-            l[i:i+block_size] = l_new
-            m[i:i+block_size] = m_new
-    
-    return O
-```
+Flash Attention的分块计算策略：
+
+1. **双重循环分块**：
+   - 外循环：遍历K,V矩阵的块（列方向）
+   - 内循环：遍历Q矩阵的块（行方向）
+   - 每个块大小选择使得Q块、K块、V块能同时装入SRAM
+
+2. **增量更新机制**：
+   - 为每行维护运行最大值m和归一化因子l
+   - 处理新块时，使用在线算法更新这些统计量
+   - 已计算的输出通过乘以校正因子exp(m_old - m_new)来调整
+
+3. **内存访问模式**：
+   - Q的每个块被加载一次，与所有K,V块计算
+   - K,V的每个块被重复加载，但次数大大减少
+   - 输出O在SRAM中累积，减少HBM写入
+
+4. **硬件友好特性**：
+   - 块大小可根据SRAM容量调整
+   - 所有计算在片上完成，避免中间结果写回HBM
+   - 支持流水线和并行处理多个块
 
 **内存访问优化：**
 - 传统注意力：O(N²) HBM访问
@@ -913,19 +817,19 @@ endmodule
 
 **旋转位置编码（RoPE）的硬件友好性：**
 
-```python
-# RoPE实现
-def rotary_position_encoding(q, k, pos):
-    # 位置相关的旋转矩阵
-    cos = cos(pos * freqs)
-    sin = sin(pos * freqs)
-    
-    # 应用旋转（复数乘法）
-    q_rot = q * cos + rotate_half(q) * sin
-    k_rot = k * cos + rotate_half(k) * sin
-    
-    return q_rot, k_rot
-```
+旋转位置编码（RoPE）通过复数域的旋转操作编码位置信息：
+
+1. **频率计算**：根据位置和维度计算旋转频率
+2. **旋转矩阵**：生成位置相关的cos和sin值
+3. **复数旋转**：将特征向量视为复数，应用旋转变换
+   - 实部：x * cos - y * sin
+   - 虚部：x * sin + y * cos
+4. **特征重组**：将旋转后的复数转回实数特征
+
+硬件实现优势：
+- 只需要基本的乘加运算和三角函数查找表
+- 可以与注意力计算融合，减少内存访问
+- 支持任意长度序列，无需重新训练
 
 RoPE的优势：
 - 只需要复数乘法，硬件实现简单
@@ -938,104 +842,87 @@ RoPE的优势：
 
 Mamba通过选择性状态空间模型（Selective SSM）实现了O(n)的序列建模复杂度：
 
-```python
-# Mamba的核心：选择性扫描
-def selective_scan(x, A, B, C, D, delta):
-    """
-    x: 输入序列 [batch, length, d_in]
-    A, B, C: SSM参数
-    delta: 时间步长（输入相关）
-    """
-    batch, length, d_in = x.shape
-    d_state = A.shape[0]
-    
-    # 离散化
-    A_bar = exp(delta * A)  # [batch, length, d_state]
-    B_bar = delta * B       # [batch, length, d_state]
-    
-    # 状态递推（关键：可并行化）
-    h = zeros(batch, d_state)
-    y = []
-    
-    for t in range(length):
-        h = A_bar[:, t] * h + B_bar[:, t] * x[:, t]
-        y_t = C[:, t] @ h + D * x[:, t]
-        y.append(y_t)
-    
-    return stack(y, axis=1)
-```
+Mamba的选择性扫描算法核心步骤：
+
+1. **参数准备**：
+   - 输入序列x：[batch, length, d_in]维度
+   - SSM参数A、B、C控制状态空间模型的动态特性
+   - 时间步长delta使模型能够自适应调整时间尺度
+
+2. **连续到离散转换**：
+   - A_bar = exp(delta × A)：将连续系统离散化
+   - B_bar = delta × B：调整输入增益
+
+3. **状态递推计算**：
+   - 维护隐藏状态h，初始为零
+   - 每个时间步：h_new = A_bar × h_old + B_bar × x
+   - 输出计算：y = C × h + D × x（包含跳跃连接）
+
+4. **并行化关键**：
+   - 虽然看似顺序依赖，但可通过并行前缀和算法加速
+   - 分块处理时，块间状态传递可并行计算
 
 **硬件友好的并行扫描算法：**
 
-```python
-# 并行前缀和（Parallel Prefix Sum）启发的实现
-def parallel_selective_scan(x, params, chunk_size=16):
-    # 1. 分块计算局部状态
-    chunks = split(x, chunk_size)
-    local_states = []
-    
-    for chunk in chunks:
-        state = compute_chunk_state(chunk, params)
-        local_states.append(state)
-    
-    # 2. 计算全局状态（并行前缀）
-    global_states = parallel_prefix(local_states)
-    
-    # 3. 组合得到最终输出
-    outputs = []
-    for chunk, global_state in zip(chunks, global_states):
-        output = apply_state(chunk, global_state)
-        outputs.append(output)
-    
-    return concat(outputs)
-```
+硬件友好的并行选择性扫描实现采用分块并行策略：
+
+1. **分块局部计算**：
+   - 将长序列分成固定大小的块（如16个元素）
+   - 每个块独立计算其局部状态，完全并行
+   - 保存每个块的最终状态用于后续传递
+
+2. **并行前缀计算**：
+   - 使用并行前缀和算法计算块间的状态传递
+   - 类似于GPU中的scan操作，log(n)的时间复杂度
+   - 每个块获得所有前序块的累积状态
+
+3. **输出组合**：
+   - 将全局状态应用到每个块的局部计算
+   - 并行处理所有块的最终输出
+   - 拼接得到完整序列结果
+
+这种方法将O(n)的顺序计算转换为O(log n)的并行计算深度。
 
 ### 2.7.2 Diffusion模型的迭代计算
 
 Diffusion模型通过迭代去噪过程生成高质量样本：
 
-```python
-# Diffusion模型的推理过程
-def diffusion_sampling(model, latent_shape, num_steps=50):
-    # 初始化为纯噪声
-    x = randn(latent_shape)
-    
-    # 反向去噪过程
-    for t in reversed(range(num_steps)):
-        # 预测噪声
-        noise_pred = model(x, t)
-        
-        # 去噪步骤
-        x = denoise_step(x, noise_pred, t)
-    
-    return x
-```
+Diffusion模型的推理过程包含以下关键步骤：
+
+1. **初始化**：从标准正态分布采样纯噪声作为起点
+2. **迭代去噪**：
+   - 反向遍历时间步（通常50-1000步）
+   - 每步使用神经网络预测当前噪声水平
+   - 根据预测的噪声和时间步参数更新图像
+3. **去噪更新**：x_new = (x_old - 噪声预测) × 缩放因子 + 随机扰动
+4. **最终输出**：经过所有时间步后得到清晰图像
+
+硬件挑战：
+- 需要多次迭代，每次都要运行完整的神经网络
+- 中间状态必须保存，内存需求大
+- 时间步之间存在依赖，难以并行化
 
 **U-Net架构的内存挑战：**
 
-```python
-# U-Net架构特点
-class UNet:
-    def __init__(self):
-        # 编码器路径
-        self.down_blocks = [
-            ResBlock(64, 128),    # 1/2分辨率
-            ResBlock(128, 256),   # 1/4分辨率
-            ResBlock(256, 512),   # 1/8分辨率
-            ResBlock(512, 512)    # 1/16分辨率
-        ]
-        
-        # 解码器路径
-        self.up_blocks = [
-            ResBlock(512, 512),   # 1/16→1/8
-            ResBlock(512, 256),   # 1/8→1/4
-            ResBlock(256, 128),   # 1/4→1/2
-            ResBlock(128, 64)     # 1/2→1
-        ]
-        
-        # 关键：skip connections
-        # 需要保存所有编码器的中间特征！
-```
+U-Net架构的特点和内存需求：
+
+**编码器路径（下采样）**：
+- 逐层降低分辨率：1 → 1/2 → 1/4 → 1/8 → 1/16
+- 逐层增加通道数：64 → 128 → 256 → 512
+- 每层输出需要保存，用于skip connection
+
+**解码器路径（上采样）**：
+- 逐层恢复分辨率：1/16 → 1/8 → 1/4 → 1/2 → 1
+- 逐层减少通道数：512 → 256 → 128 → 64
+- 每层需要拼接对应编码器层的特征
+
+**内存挑战**：
+- Skip connections要求同时保存所有编码器中间特征
+- 对于512×512输入，峰值内存需求可达数GB
+- 特征图在不同分辨率下的存储开销：
+  - 1/2分辨率：256×256×128×4字节 = 32MB
+  - 1/4分辨率：128×128×256×4字节 = 16MB
+  - 依此类推，总计需要大量片上或片外存储
 
 ### 2.7.3 Diffusion Transformer (DiT) 的新需求
 
@@ -1053,31 +940,23 @@ DiT将Diffusion与Transformer结合，带来新的硬件需求：
 
 针对新兴架构的优化策略：
 
-```verilog
-// 1. 时间步并行优化
-module DiffusionTimeParallel {
-    // 多个时间步同时计算
-    parallel for t in [t1, t2, t3, t4]:
-        noise[t] = model(x[t], t, cond)
-}
+**针对新兴架构的NPU优化策略：**
 
-// 2. 空间分块策略
-module SpatialTiling {
-    // 将高分辨率图像分块处理
-    tiles = split_image(x, tile_size=512)
-    
-    parallel for tile in tiles:
-        tile_out = process_tile(tile)
-    
-    output = merge_tiles_with_blending(tile_outs)
-}
+1. **时间步并行优化**
+   - 多个去噪时间步可以并行计算，提高硬件利用率
+   - 每个时间步使用独立的计算单元，共享模型权重
+   - 通过流水线技术重叠不同时间步的计算
 
-// 3. 算子融合优化
-module FusedDiffusionOps {
-    // 融合实现：一次内存读写
-    output = fused_conv_norm_act(x)
-}
-```
+2. **空间分块策略**
+   - 将高分辨率图像划分为多个重叠的小块（如512×512）
+   - 每个块独立处理，减少内存需求
+   - 重叠区域通过加权混合确保无缝拼接
+   - 多个块可以在不同的计算单元上并行处理
+
+3. **算子融合优化**
+   - 将卷积、归一化和激活函数融合为单个硬件模块
+   - 减少中间结果的内存读写，数据直接在计算单元间流动
+   - 典型融合模式：Conv+BN+ReLU、Linear+LayerNorm+GELU
 
 ## 习题集 2
 

@@ -92,99 +92,35 @@ NPU架构的演进反映了AI算法和应用需求的变化：
 
 处理单元（PE）是NPU的基本计算单元，其设计直接影响整体性能：
 
-```verilog
-// 基本PE单元结构
-module ProcessingElement #(
-    parameter DATA_WIDTH = 16,
-    parameter ACC_WIDTH = 32
-)(
-    input clk, rst_n,
-    input [DATA_WIDTH-1:0] a_in,    // 输入激活
-    input [DATA_WIDTH-1:0] w_in,    // 权重
-    input [ACC_WIDTH-1:0] psum_in,  // 部分和输入
-    
-    output reg [DATA_WIDTH-1:0] a_out,   // 激活传递
-    output reg [DATA_WIDTH-1:0] w_out,   // 权重传递
-    output reg [ACC_WIDTH-1:0] psum_out  // 部分和输出
-);
-    // MAC运算
-    wire [2*DATA_WIDTH-1:0] mult_result;
-    wire [ACC_WIDTH-1:0] add_result;
-    
-    assign mult_result = a_in * w_in;
-    assign add_result = psum_in + mult_result;
-    
-    // 寄存器传递
-    always @(posedge clk) begin
-        if (!rst_n) begin
-            a_out <= 0;
-            w_out <= 0;
-            psum_out <= 0;
-        end else begin
-            a_out <= a_in;      // 向右传递激活
-            w_out <= w_in;      // 向下传递权重
-            psum_out <= add_result;  // 输出部分和
-        end
-    end
-endmodule
-```
+**基本PE单元结构包含：**
+- **输入接口：** 激活值输入（a_in）、权重输入（w_in）、部分和输入（psum_in）
+- **输出接口：** 激活值输出（a_out）、权重输出（w_out）、部分和输出（psum_out）
+- **核心运算：** MAC（乘加）运算，执行 psum_out = psum_in + (a_in × w_in)
+- **数据流控制：** 通过寄存器实现数据的同步传递，激活值向右流动，权重向下流动
+
+**PE设计的关键考虑：**
+1. **数据位宽选择：** 通常激活和权重使用16位（INT16或FP16），累加器使用32位避免溢出
+2. **流水线设计：** MAC运算可进一步流水线化，提高频率
+3. **数据传递机制：** 采用寄存器链实现脉动阵列的数据流动模式
 
 ### 3.2.2 MAC阵列组织
 
 MAC阵列的组织方式决定了数据流模式和硬件利用率：
 
-```verilog
-// 脉动阵列顶层模块
-module SystolicArray #(
-    parameter ARRAY_SIZE = 16,
-    parameter DATA_WIDTH = 16,
-    parameter ACC_WIDTH = 32
-)(
-    input clk, rst_n,
-    input enable,
-    
-    // 输入接口
-    input [DATA_WIDTH-1:0] act_in [0:ARRAY_SIZE-1],
-    input [DATA_WIDTH-1:0] weight_in [0:ARRAY_SIZE-1],
-    
-    // 输出接口
-    output [ACC_WIDTH-1:0] result_out [0:ARRAY_SIZE-1]
-);
-    // PE阵列实例化
-    wire [DATA_WIDTH-1:0] act_h [0:ARRAY_SIZE][0:ARRAY_SIZE];
-    wire [DATA_WIDTH-1:0] weight_v [0:ARRAY_SIZE][0:ARRAY_SIZE];
-    wire [ACC_WIDTH-1:0] psum [0:ARRAY_SIZE][0:ARRAY_SIZE];
-    
-    genvar i, j;
-    generate
-        for (i = 0; i < ARRAY_SIZE; i = i + 1) begin : row
-            for (j = 0; j < ARRAY_SIZE; j = j + 1) begin : col
-                ProcessingElement pe_inst (
-                    .clk(clk),
-                    .rst_n(rst_n),
-                    .a_in(act_h[i][j]),
-                    .w_in(weight_v[i][j]),
-                    .psum_in(i == 0 ? 32'h0 : psum[i-1][j]),
-                    .a_out(act_h[i][j+1]),
-                    .w_out(weight_v[i+1][j]),
-                    .psum_out(psum[i][j])
-                );
-            end
-        end
-    endgenerate
-    
-    // 连接输入
-    for (i = 0; i < ARRAY_SIZE; i = i + 1) begin
-        assign act_h[i][0] = act_in[i];
-        assign weight_v[0][i] = weight_in[i];
-    end
-    
-    // 连接输出
-    for (j = 0; j < ARRAY_SIZE; j = j + 1) begin
-        assign result_out[j] = psum[ARRAY_SIZE-1][j];
-    end
-endmodule
-```
+**脉动阵列架构特点：**
+- **二维PE阵列：** 典型规模为16×16或32×32，根据芯片面积和功耗预算确定
+- **数据流动模式：** 激活值从左向右流动，权重从上向下流动，部分和垂直累加
+- **时序同步：** 所有PE在同一时钟域工作，数据像脉搏一样有节奏地流动
+
+**阵列连接方式：**
+1. **水平连接：** 每个PE的激活输出连接到右侧PE的激活输入
+2. **垂直连接：** 每个PE的权重输出连接到下方PE的权重输入
+3. **部分和传递：** 每行的部分和向下累加，最底行输出最终结果
+
+**设计参数权衡：**
+- **阵列大小：** 更大的阵列提供更高的并行度，但增加面积和功耗
+- **数据位宽：** 平衡精度需求和硬件成本
+- **流水线深度：** 影响吞吐量和延迟的平衡
 
 ### 3.2.3 数据流模式
 
@@ -221,30 +157,22 @@ endmodule
 
 随着Transformer模型的流行，现代NPU需要支持注意力机制：
 
-```verilog
-// 注意力计算单元框架
-module AttentionUnit #(
-    parameter SEQ_LEN = 512,
-    parameter HEAD_DIM = 64,
-    parameter DATA_WIDTH = 16
-)(
-    input clk, rst_n,
-    input [DATA_WIDTH-1:0] Q [0:SEQ_LEN-1][0:HEAD_DIM-1],
-    input [DATA_WIDTH-1:0] K [0:SEQ_LEN-1][0:HEAD_DIM-1],
-    input [DATA_WIDTH-1:0] V [0:SEQ_LEN-1][0:HEAD_DIM-1],
-    
-    output [DATA_WIDTH-1:0] output [0:SEQ_LEN-1][0:HEAD_DIM-1]
-);
-    // 1. 计算QK^T
-    wire [DATA_WIDTH-1:0] scores [0:SEQ_LEN-1][0:SEQ_LEN-1];
-    
-    // 2. Softmax（简化版）
-    wire [DATA_WIDTH-1:0] attn_weights [0:SEQ_LEN-1][0:SEQ_LEN-1];
-    
-    // 3. 注意力权重与V相乘
-    // 实现细节...
-endmodule
-```
+**注意力计算单元的关键组件：**
+
+1. **QKV矩阵处理：**
+   - Query (Q)、Key (K)、Value (V) 矩阵的高效存储和访问
+   - 支持多头注意力的并行计算
+   - 典型参数：序列长度512-2048，头维度64-128
+
+2. **注意力分数计算：**
+   - **第一步：** 计算 Q×K^T，得到注意力分数矩阵
+   - **第二步：** 缩放因子调整：score = QK^T / √d_k
+   - **第三步：** Softmax归一化，得到注意力权重
+
+3. **优化策略：**
+   - **FlashAttention：** 通过分块计算减少内存访问
+   - **稀疏注意力：** 只计算部分注意力权重，降低计算复杂度
+   - **量化技术：** 使用INT8或混合精度计算
 
 ## <a name="33"></a>3.3 存储层次结构
 
@@ -274,52 +202,27 @@ NPU的存储层次设计遵循以下原则：
 
 片上缓冲是NPU性能的关键：
 
-```verilog
-// 可配置的片上缓冲模块
-module OnChipBuffer #(
-    parameter DEPTH = 1024,
-    parameter WIDTH = 256,
-    parameter BANKS = 8
-)(
-    input clk, rst_n,
-    
-    // 写接口
-    input wr_en,
-    input [$clog2(DEPTH)-1:0] wr_addr,
-    input [WIDTH-1:0] wr_data,
-    
-    // 读接口（多个读口）
-    input rd_en [0:BANKS-1],
-    input [$clog2(DEPTH)-1:0] rd_addr [0:BANKS-1],
-    output reg [WIDTH-1:0] rd_data [0:BANKS-1]
-);
-    // 分bank存储减少冲突
-    reg [WIDTH/BANKS-1:0] mem [0:BANKS-1][0:DEPTH/BANKS-1];
-    
-    // 写逻辑
-    always @(posedge clk) begin
-        if (wr_en) begin
-            integer bank_id = wr_addr % BANKS;
-            integer bank_addr = wr_addr / BANKS;
-            mem[bank_id][bank_addr] <= wr_data[bank_id*WIDTH/BANKS +: WIDTH/BANKS];
-        end
-    end
-    
-    // 读逻辑（支持并行读）
-    genvar i;
-    generate
-        for (i = 0; i < BANKS; i = i + 1) begin
-            always @(posedge clk) begin
-                if (rd_en[i]) begin
-                    integer bank_id = rd_addr[i] % BANKS;
-                    integer bank_addr = rd_addr[i] / BANKS;
-                    rd_data[i] <= {BANKS{mem[bank_id][bank_addr]}};
-                end
-            end
-        end
-    endgenerate
-endmodule
-```
+**片上缓冲的设计要点：**
+
+1. **多Bank架构：**
+   - 将存储空间划分为多个Bank（典型8-16个）
+   - 支持多个PE同时访问不同Bank，减少访问冲突
+   - Bank数量与PE阵列规模匹配，确保带宽充足
+
+2. **访问模式优化：**
+   - **写接口：** 支持连续写入和突发传输
+   - **读接口：** 多读口设计，每个Bank独立读取
+   - **地址映射：** 交织式地址映射，将连续地址分配到不同Bank
+
+3. **容量配置：**
+   - **深度（Depth）：** 典型1K-4K个条目，根据数据块大小确定
+   - **宽度（Width）：** 匹配数据总线宽度，通常256-512位
+   - **总容量：** 128KB-2MB，平衡面积和性能需求
+
+4. **性能优化技术：**
+   - **双缓冲（Double Buffering）：** 一块用于当前计算，一块用于数据预取
+   - **预取机制：** 根据访问模式提前加载数据
+   - **仲裁逻辑：** 处理多个请求的优先级和冲突
 
 ### 3.3.3 数据复用策略
 
@@ -327,36 +230,27 @@ endmodule
 
 #### 1. 输入复用（Input Reuse）
 
-```python
-# 输入特征图在不同输出通道间复用
-for oc in range(output_channels):
-    for ic in range(input_channels):
-        for y in range(output_height):
-            for x in range(output_width):
-                # 输入[ic,y,x]被所有输出通道复用
-                output[oc,y,x] += input[ic,y,x] * weight[oc,ic]
-```
+**复用策略：**
+- 同一输入特征图元素被所有输出通道使用
+- 嵌套循环顺序：输出通道 → 输入通道 → 空间位置
+- 复用次数：每个输入被复用output_channels次
+- 适用场景：1×1卷积、全连接层
 
 #### 2. 权重复用（Weight Reuse）
 
-```python
-# 权重在不同输入位置间复用
-for n in range(batch_size):
-    for y in range(output_height):
-        for x in range(output_width):
-            # 权重[oc,ic]被所有空间位置复用
-            output[n,oc,y,x] = conv(input[n,:,y:y+k,x:x+k], weight[oc,ic])
-```
+**复用策略：**
+- 同一权重参数被所有空间位置和batch使用
+- 嵌套循环顺序：batch → 空间位置 → 通道
+- 复用次数：每个权重被复用batch_size × H × W次
+- 适用场景：标准卷积层、深度可分离卷积
 
 #### 3. 部分和复用（Partial Sum Reuse）
 
-```python
-# 部分和在计算过程中累加
-partial_sum = 0
-for ic in range(input_channels):
-    partial_sum += input[ic] * weight[ic]
-output = activation(partial_sum + bias)
-```
+**复用策略：**
+- 中间累加结果保存在寄存器或片上存储
+- 避免重复读写完整结果
+- 累加完成后一次性写回
+- 适用场景：深度方向的大规模累加运算
 
 ## <a name="34"></a>3.4 互连网络设计
 
@@ -364,29 +258,26 @@ output = activation(partial_sum + bias)
 
 片上网络负责连接NPU内部的各个组件：
 
-```verilog
-// 简化的2D Mesh NoC路由器
-module NoCRouter #(
-    parameter DATA_WIDTH = 256,
-    parameter ADDR_WIDTH = 32,
-    parameter X_COORD = 0,
-    parameter Y_COORD = 0
-)(
-    input clk, rst_n,
-    
-    // 五个方向的输入输出（东南西北+本地）
-    input [DATA_WIDTH-1:0] data_in_n, data_in_s, data_in_e, data_in_w, data_in_local,
-    input valid_in_n, valid_in_s, valid_in_e, valid_in_w, valid_in_local,
-    
-    output reg [DATA_WIDTH-1:0] data_out_n, data_out_s, data_out_e, data_out_w, data_out_local,
-    output reg valid_out_n, valid_out_s, valid_out_e, valid_out_w, valid_out_local
-);
-    // XY路由算法实现
-    // 先沿X方向路由，再沿Y方向
-    
-    // 路由逻辑...
-endmodule
-```
+**2D Mesh NoC路由器设计要点：**
+
+1. **五方向接口：**
+   - 四个方向端口：东（E）、南（S）、西（W）、北（N）
+   - 一个本地端口：连接到本地PE或存储单元
+   - 每个端口包含数据通道和控制信号
+
+2. **路由算法：**
+   - **XY路由：** 先沿X方向路由到目标列，再沿Y方向路由到目标行
+   - **优点：** 无死锁、实现简单、延迟可预测
+   - **缺点：** 路径固定，可能造成局部拥塞
+
+3. **设计参数：**
+   - **数据宽度：** 典型256-512位，匹配PE阵列数据宽度
+   - **缓冲深度：** 每个端口2-4级FIFO，平衡延迟和面积
+   - **虚拟通道：** 支持多个逻辑通道，提高网络利用率
+
+4. **流控机制：**
+   - **信用流控：** 下游节点向上游反馈可用缓冲空间
+   - **反压机制：** 缓冲满时暂停上游传输
 
 ### 3.4.2 数据通路设计
 
@@ -401,35 +292,27 @@ endmodule
 
 大规模NPU需要高效的同步机制：
 
-```verilog
-// 屏障同步模块
-module BarrierSync #(
-    parameter NUM_UNITS = 16
-)(
-    input clk, rst_n,
-    input [NUM_UNITS-1:0] sync_req,    // 同步请求
-    output reg [NUM_UNITS-1:0] sync_ack // 同步确认
-);
-    reg [NUM_UNITS-1:0] sync_status;
-    
-    always @(posedge clk) begin
-        if (!rst_n) begin
-            sync_status <= 0;
-            sync_ack <= 0;
-        end else begin
-            sync_status <= sync_status | sync_req;
-            
-            // 所有单元都到达屏障
-            if (sync_status == {NUM_UNITS{1'b1}}) begin
-                sync_ack <= {NUM_UNITS{1'b1}};
-                sync_status <= 0;
-            end else begin
-                sync_ack <= 0;
-            end
-        end
-    end
-endmodule
-```
+**屏障同步设计要点：**
+
+1. **同步原理：**
+   - 所有参与单元发送同步请求（sync_req）
+   - 屏障模块收集所有请求，等待全部到达
+   - 当所有单元就绪后，广播同步确认（sync_ack）
+
+2. **实现方式：**
+   - **集中式：** 单个同步控制器，简单但可能成为瓶颈
+   - **分布式：** 分层同步树，可扩展性好但延迟较大
+   - **混合式：** 局部集中、全局分布，平衡性能和复杂度
+
+3. **优化技术：**
+   - **提前释放：** 部分计算完成即可释放资源
+   - **重叠执行：** 同步等待期间执行其他任务
+   - **异步屏障：** 支持不同速度的计算单元
+
+4. **应用场景：**
+   - 层间同步：确保前一层计算完成
+   - 数据一致性：多个PE更新共享数据
+   - 流水线控制：协调不同阶段的执行
 
 ## 习题集 3
 
@@ -536,70 +419,31 @@ endmodule
 <details>
 <summary>参考答案</summary>
 
-```verilog
-module FlexiblePE #(
-    parameter MAX_WIDTH = 16
-)(
-    input clk, rst_n,
-    input [1:0] precision_mode,  // 00: INT8, 01: INT16, 10: FP16
-    input [MAX_WIDTH-1:0] a_in, w_in,
-    input [2*MAX_WIDTH-1:0] psum_in,
-    
-    output reg [MAX_WIDTH-1:0] a_out, w_out,
-    output reg [2*MAX_WIDTH-1:0] psum_out
-);
-    // 内部信号
-    wire [2*MAX_WIDTH-1:0] mult_result;
-    reg [2*MAX_WIDTH-1:0] mult_result_aligned;
-    
-    // 可配置乘法器
-    FlexibleMultiplier mult_inst (
-        .mode(precision_mode),
-        .a(a_in),
-        .b(w_in),
-        .result(mult_result)
-    );
-    
-    // 根据精度模式对齐结果
-    always @(*) begin
-        case (precision_mode)
-            2'b00: begin  // INT8
-                // 符号扩展INT8结果
-                mult_result_aligned = {{16{mult_result[15]}}, mult_result[15:0]};
-            end
-            2'b01: begin  // INT16
-                mult_result_aligned = mult_result;
-            end
-            2'b10: begin  // FP16
-                mult_result_aligned = mult_result;  // FP16需要特殊处理
-            end
-            default: mult_result_aligned = 0;
-        endcase
-    end
-    
-    // 累加
-    wire [2*MAX_WIDTH-1:0] add_result;
-    FlexibleAdder add_inst (
-        .mode(precision_mode),
-        .a(psum_in),
-        .b(mult_result_aligned),
-        .result(add_result)
-    );
-    
-    // 寄存器输出
-    always @(posedge clk) begin
-        if (!rst_n) begin
-            a_out <= 0;
-            w_out <= 0;
-            psum_out <= 0;
-        end else begin
-            a_out <= a_in;
-            w_out <= w_in;
-            psum_out <= add_result;
-        end
-    end
-endmodule
-```
+**动态精度PE单元设计：**
+
+**1. 支持的精度模式：**
+- INT8: 8位整数，适用于推理任务
+- INT16: 16位整数，平衡精度和性能
+- FP16: 16位浮点，用于训练或高精度需求
+
+**2. 可配置乘法器设计：**
+- 根据精度模式选择不同的乘法器逻辑
+- INT8可以复用INT16的部分逻辑
+- FP16需要专用的浮点运算单元
+
+**3. 结果对齐处理：**
+- INT8: 符号扩展到32位
+- INT16: 直接使用
+- FP16: 需要格式转换
+
+**4. 累加器设计：**
+- 动态选择整数或浮点加法器
+- 保持足够的位宽避免溢出
+- 支持饱和模式
+
+**5. 流水线考虑：**
+- 切换精度时需要清空流水线
+- 不同精度可能有不同的延迟
 
 </details>
 
@@ -663,77 +507,35 @@ XY路由：先沿X方向路由到目标列，再沿Y方向路由到目标行。�
 <details>
 <summary>参考答案</summary>
 
-```verilog
-module XYRouter #(
-    parameter DATA_WIDTH = 32,
-    parameter X_BITS = 4,
-    parameter Y_BITS = 4,
-    parameter X_COORD = 0,
-    parameter Y_COORD = 0
-)(
-    input clk, rst_n,
-    
-    // 输入端口 (5个方向: N, S, E, W, Local)
-    input [DATA_WIDTH-1:0] data_in [0:4],
-    input [4:0] valid_in,
-    input [X_BITS-1:0] dest_x [0:4],
-    input [Y_BITS-1:0] dest_y [0:4],
-    
-    // 输出端口
-    output reg [DATA_WIDTH-1:0] data_out [0:4],
-    output reg [4:0] valid_out
-);
-    // 方向定义
-    localparam NORTH = 0, SOUTH = 1, EAST = 2, WEST = 3, LOCAL = 4;
-    
-    // 路由决策
-    reg [2:0] route_port [0:4];
-    
-    genvar i;
-    generate
-        for (i = 0; i < 5; i = i + 1) begin : routing
-            always @(*) begin
-                if (dest_x[i] == X_COORD && dest_y[i] == Y_COORD) begin
-                    route_port[i] = LOCAL;
-                end else if (dest_x[i] != X_COORD) begin
-                    // 需要X方向路由
-                    if (dest_x[i] > X_COORD)
-                        route_port[i] = EAST;
-                    else
-                        route_port[i] = WEST;
-                end else begin
-                    // 需要Y方向路由
-                    if (dest_y[i] > Y_COORD)
-                        route_port[i] = SOUTH;
-                    else
-                        route_port[i] = NORTH;
-                end
-            end
-        end
-    endgenerate
-    
-    // 仲裁和交换逻辑
-    reg [4:0] grant [0:4];  // grant[output][input]
-    
-    // 简化的轮询仲裁
-    always @(posedge clk) begin
-        if (!rst_n) begin
-            valid_out <= 0;
-        end else begin
-            // 对每个输出端口进行仲裁
-            for (integer out_port = 0; out_port < 5; out_port++) begin
-                valid_out[out_port] <= 0;
-                for (integer in_port = 0; in_port < 5; in_port++) begin
-                    if (valid_in[in_port] && route_port[in_port] == out_port && !valid_out[out_port]) begin
-                        data_out[out_port] <= data_in[in_port];
-                        valid_out[out_port] <= 1;
-                    end
-                end
-            end
-        end
-    end
-endmodule
+**XY路由器设计实现：**
+
+**1. 接口定义：**
+- **输入端口：** 5个方向（N、S、E、W、Local），每个包含数据、有效信号和目标地址
+- **输出端口：** 5个方向的数据输出和有效信号
+- **参数配置：** 数据宽度（32位）、坐标位宽（4位）、当前节点坐标
+
+**2. 路由决策逻辑：**
 ```
+如果 (目标坐标 == 当前坐标):
+    路由到LOCAL端口
+否则如果 (目标X != 当前X):
+    如果 (目标X > 当前X): 路由到EAST
+    否则: 路由到WEST
+否则:
+    如果 (目标Y > 当前Y): 路由到SOUTH
+    否则: 路由到NORTH
+```
+
+**3. 仲裁机制：**
+- 使用轮询仲裁处理多个输入竞争同一输出
+- 每个输出端口独立仲裁
+- 保证公平性和无饥饿
+
+**4. 实现要点：**
+- 方向常量定义：NORTH=0, SOUTH=1, EAST=2, WEST=3, LOCAL=4
+- 路由决策表：存储每个输入的目标输出端口
+- 授权矩阵：记录仲裁结果
+- 同步逻辑：在时钟边沿更新输出
 
 </details>
 
@@ -744,122 +546,38 @@ endmodule
 <details>
 <summary>参考答案</summary>
 
-```verilog
-module SparseSystolicArray #(
-    parameter ARRAY_SIZE = 8,
-    parameter DATA_WIDTH = 16
-)(
-    input clk, rst_n,
-    
-    // 稠密输入接口
-    input [DATA_WIDTH-1:0] act_values [0:ARRAY_SIZE-1],
-    input [7:0] act_indices [0:ARRAY_SIZE-1],  // 列索引
-    input act_valid [0:ARRAY_SIZE-1],
-    
-    // 稀疏权重接口 (CSR格式)
-    input [DATA_WIDTH-1:0] weight_values [0:ARRAY_SIZE-1],
-    input [7:0] weight_col_idx [0:ARRAY_SIZE-1],
-    input weight_valid [0:ARRAY_SIZE-1],
-    
-    // 输出接口
-    output reg [DATA_WIDTH+16-1:0] results [0:ARRAY_SIZE-1],
-    output reg result_valid [0:ARRAY_SIZE-1]
-);
-    // 稀疏PE阵列
-    wire [DATA_WIDTH-1:0] act_data [0:ARRAY_SIZE][0:ARRAY_SIZE];
-    wire [7:0] act_idx [0:ARRAY_SIZE][0:ARRAY_SIZE];
-    wire act_v [0:ARRAY_SIZE][0:ARRAY_SIZE];
-    
-    genvar i, j;
-    generate
-        for (i = 0; i < ARRAY_SIZE; i = i + 1) begin : row
-            for (j = 0; j < ARRAY_SIZE; j = j + 1) begin : col
-                SparsePE pe_inst (
-                    .clk(clk),
-                    .rst_n(rst_n),
-                    
-                    // 激活输入
-                    .act_value_in(act_data[i][j]),
-                    .act_idx_in(act_idx[i][j]),
-                    .act_valid_in(act_v[i][j]),
-                    
-                    // 权重输入
-                    .weight_value(weight_values[j]),
-                    .weight_idx(weight_col_idx[j]),
-                    .weight_valid(weight_valid[j]),
-                    
-                    // 传递输出
-                    .act_value_out(act_data[i][j+1]),
-                    .act_idx_out(act_idx[i][j+1]),
-                    .act_valid_out(act_v[i][j+1]),
-                    
-                    // 结果累加
-                    .psum_in(i == 0 ? 0 : results[j]),
-                    .psum_out(results[j]),
-                    .psum_valid(result_valid[j])
-                );
-            end
-        end
-    endgenerate
-endmodule
+**稀疏脉动阵列设计：**
 
-// 稀疏PE单元
-module SparsePE #(
-    parameter DATA_WIDTH = 16
-)(
-    input clk, rst_n,
-    
-    // 激活输入和传递
-    input [DATA_WIDTH-1:0] act_value_in,
-    input [7:0] act_idx_in,
-    input act_valid_in,
-    
-    output reg [DATA_WIDTH-1:0] act_value_out,
-    output reg [7:0] act_idx_out,
-    output reg act_valid_out,
-    
-    // 权重输入
-    input [DATA_WIDTH-1:0] weight_value,
-    input [7:0] weight_idx,
-    input weight_valid,
-    
-    // 部分和
-    input [DATA_WIDTH+16-1:0] psum_in,
-    output reg [DATA_WIDTH+16-1:0] psum_out,
-    output reg psum_valid
-);
-    // 索引匹配检测
-    wire index_match = (act_idx_in == weight_idx) && act_valid_in && weight_valid;
-    
-    // MAC运算
-    wire [2*DATA_WIDTH-1:0] mult_result = act_value_in * weight_value;
-    wire [DATA_WIDTH+16-1:0] add_result = psum_in + mult_result;
-    
-    always @(posedge clk) begin
-        if (!rst_n) begin
-            act_value_out <= 0;
-            act_idx_out <= 0;
-            act_valid_out <= 0;
-            psum_out <= 0;
-            psum_valid <= 0;
-        end else begin
-            // 传递激活数据
-            act_value_out <= act_value_in;
-            act_idx_out <= act_idx_in;
-            act_valid_out <= act_valid_in;
-            
-            // 条件MAC
-            if (index_match) begin
-                psum_out <= add_result;
-                psum_valid <= 1;
-            end else begin
-                psum_out <= psum_in;
-                psum_valid <= psum_valid;
-            end
-        end
-    end
-endmodule
-```
+**1. 整体架构：**
+- **阵列规模：** 8×8稀疏PE阵列
+- **数据格式：** 激活值使用(value, index)对，权重使用CSR格式
+- **处理流程：** 只在索引匹配时执行MAC运算，跳过零值
+
+**2. 稀疏数据接口：**
+- **激活输入：** 
+  - act_values: 非零激活值数组
+  - act_indices: 对应的列索引
+  - act_valid: 有效标志
+- **权重输入（CSR格式）：**
+  - weight_values: 非零权重值
+  - weight_col_idx: 列索引
+  - weight_valid: 有效标志
+
+**3. 稀疏PE单元设计：**
+- **索引匹配：** 比较激活和权重的列索引
+- **条件计算：** 仅在索引匹配时执行乘加运算
+- **数据传递：** 激活数据向右流动，保持稀疏格式
+- **部分和累加：** 垂直方向累加匹配的结果
+
+**4. 优化效果：**
+- **计算效率：** 跳过零值，有效计算量与稀疏度成正比
+- **功耗节省：** 减少无效运算，降低动态功耗
+- **带宽利用：** 只传输非零数据，提高带宽效率
+
+**5. 实现细节：**
+- 索引匹配检测：`index_match = (act_idx == weight_idx) && valid`
+- 条件MAC执行：仅在匹配时更新部分和
+- 流水线传递：保持数据同步流动
 
 </details>
 
@@ -871,28 +589,21 @@ endmodule
 **NPU功耗优化技术：**
 
 **1. 时钟门控（Clock Gating）**
-```verilog
-// 细粒度时钟门控
-module ClockGatedPE (
-    input clk, rst_n,
-    input enable,
-    input [15:0] a_in, w_in,
-    output reg [31:0] psum_out
-);
-    // 局部时钟生成
-    wire gated_clk;
-    ClockGate cg_inst (
-        .clk(clk),
-        .enable(enable || (a_in != 0 && w_in != 0)),
-        .gated_clk(gated_clk)
-    );
-    
-    // 只在有效数据时计算
-    always @(posedge gated_clk) begin
-        psum_out <= psum_out + a_in * w_in;
-    end
-endmodule
+
+**实现原理：**
+- 检测PE的使能信号和输入数据有效性
+- 当PE空闲或输入为零时，关闭局部时钟
+- 使用专用的时钟门控单元（Clock Gating Cell）
+
+**门控条件：**
 ```
+gated_clk_enable = enable || (a_in != 0 && w_in != 0)
+```
+
+**优化效果：**
+- 减少时钟树功耗（占总功耗的20-30%）
+- 降低寄存器翻转功耗
+- 典型节能15-25%
 
 **2. 数据门控（Data Gating）**
 - 零值检测和跳过
@@ -900,19 +611,12 @@ endmodule
 - 减少数据翻转
 
 **3. 电压频率调节（DVFS）**
-```python
-# 根据工作负载动态调整
-def adaptive_dvfs(workload_type):
-    if workload_type == "compute_bound":
-        set_voltage(1.0)  # 高电压
-        set_frequency(2.0) # 高频率
-    elif workload_type == "memory_bound":
-        set_voltage(0.8)  # 低电压
-        set_frequency(1.0) # 低频率
-    else:  # idle
-        set_voltage(0.6)  # 最低电压
-        set_frequency(0.5) # 最低频率
-```
+- **工作负载检测：** 监控计算单元利用率和内存带宽
+- **动态调节策略：**
+  - 计算密集型：高电压(1.0V)、高频率(2.0GHz)
+  - 内存密集型：中电压(0.8V)、中频率(1.0GHz)  
+  - 空闲状态：低电压(0.6V)、低频率(0.5GHz)
+- **切换延迟：** 典型10-100μs，需要预测算法优化
 
 **4. 分层存储优化**
 - 数据尽量在低层次存储间移动
@@ -947,177 +651,52 @@ def adaptive_dvfs(workload_type):
 <details>
 <summary>参考答案</summary>
 
-```python
-class NPUTaskScheduler:
-    def __init__(self, num_compute_units, memory_size):
-        self.compute_units = num_compute_units
-        self.memory_size = memory_size
-        self.task_queue = PriorityQueue()
-        self.resource_map = ResourceMap()
-        
-    def schedule_task(self, task):
-        """任务调度主函数"""
-        # 1. 资源检查
-        required_compute = task.compute_requirement
-        required_memory = task.memory_requirement
-        
-        if not self.check_resources(required_compute, required_memory):
-            # 资源不足，进入等待队列
-            self.task_queue.put((task.priority, task))
-            return
-        
-        # 2. 资源分配
-        allocated_units = self.allocate_compute_units(required_compute)
-        allocated_memory = self.allocate_memory(required_memory)
-        
-        # 3. 任务映射
-        mapping = self.generate_mapping(task, allocated_units)
-        
-        # 4. 配置硬件
-        self.configure_hardware(mapping, allocated_memory)
-        
-        # 5. 启动执行
-        self.execute_task(task, mapping)
-    
-    def generate_mapping(self, task, compute_units):
-        """生成任务到硬件的映射"""
-        mapping = {}
-        
-        if task.type == "convolution":
-            # 卷积层映射策略
-            mapping = self.map_convolution(task, compute_units)
-        elif task.type == "attention":
-            # 注意力层映射策略
-            mapping = self.map_attention(task, compute_units)
-        elif task.type == "fully_connected":
-            # 全连接层映射策略
-            mapping = self.map_fc(task, compute_units)
-            
-        return mapping
-    
-    def map_convolution(self, task, units):
-        """卷积层的优化映射"""
-        # 考虑因素：
-        # 1. 输入/输出通道并行
-        # 2. 空间维度分块
-        # 3. 数据复用模式
-        
-        batch_size = task.batch_size
-        channels = task.channels
-        spatial_size = task.spatial_size
-        
-        # 动态选择最佳分块策略
-        if channels > units:
-            # 通道并行
-            strategy = "channel_parallel"
-            tile_size = channels // units
-        else:
-            # 空间并行
-            strategy = "spatial_parallel"
-            tile_size = spatial_size // math.sqrt(units)
-            
-        return {
-            "strategy": strategy,
-            "tile_size": tile_size,
-            "units": units
-        }
-    
-    def handle_resource_conflict(self):
-        """处理资源冲突"""
-        # 抢占式调度
-        if self.preemption_enabled:
-            # 检查是否有低优先级任务可以暂停
-            running_tasks = self.get_running_tasks()
-            for task in running_tasks:
-                if task.priority < self.task_queue.peek().priority:
-                    self.preempt_task(task)
-                    break
-        
-        # 任务迁移
-        if self.migration_enabled:
-            # 将任务迁移到其他可用NPU
-            self.migrate_task_to_peer_npu()
-```
+**NPU任务调度器设计：**
 
-**硬件支持模块：**
+**1. 调度器架构：**
+- **任务队列：** 优先级队列管理待执行任务
+- **资源管理器：** 跟踪计算单元和内存使用情况
+- **映射生成器：** 根据任务类型生成最佳映射方案
 
-```verilog
-module TaskSchedulerHW #(
-    parameter MAX_TASKS = 16,
-    parameter COMPUTE_UNITS = 64
-)(
-    input clk, rst_n,
-    
-    // 任务接口
-    input task_valid,
-    input [31:0] task_id,
-    input [15:0] task_priority,
-    input [31:0] task_compute_req,
-    input [31:0] task_memory_req,
-    
-    // 资源状态
-    input [COMPUTE_UNITS-1:0] unit_busy,
-    input [31:0] free_memory,
-    
-    // 调度输出
-    output reg schedule_valid,
-    output reg [31:0] scheduled_task_id,
-    output reg [COMPUTE_UNITS-1:0] allocated_units,
-    output reg [31:0] memory_base_addr
-);
-    // 任务队列
-    reg [31:0] task_queue [0:MAX_TASKS-1];
-    reg [15:0] priority_queue [0:MAX_TASKS-1];
-    reg [4:0] queue_head, queue_tail;
-    
-    // 资源分配器
-    wire [COMPUTE_UNITS-1:0] available_units = ~unit_busy;
-    wire [6:0] free_unit_count;
-    
-    // 计算可用单元数
-    PopCount #(.WIDTH(COMPUTE_UNITS)) pc_inst (
-        .in(available_units),
-        .count(free_unit_count)
-    );
-    
-    // 调度决策
-    always @(posedge clk) begin
-        if (!rst_n) begin
-            schedule_valid <= 0;
-            queue_head <= 0;
-            queue_tail <= 0;
-        end else begin
-            // 新任务入队
-            if (task_valid) begin
-                task_queue[queue_tail] <= task_id;
-                priority_queue[queue_tail] <= task_priority;
-                queue_tail <= queue_tail + 1;
-            end
-            
-            // 调度逻辑
-            if (queue_head != queue_tail) begin
-                if (free_unit_count >= task_compute_req &&
-                    free_memory >= task_memory_req) begin
-                    // 可以调度
-                    schedule_valid <= 1;
-                    scheduled_task_id <= task_queue[queue_head];
-                    allocated_units <= allocate_units(task_compute_req);
-                    memory_base_addr <= allocate_memory(task_memory_req);
-                    queue_head <= queue_head + 1;
-                end else begin
-                    schedule_valid <= 0;
-                end
-            end
-        end
-    end
-    
-    // 资源分配函数
-    function [COMPUTE_UNITS-1:0] allocate_units(input [6:0] count);
-        // 实现最适合或首次适合算法
-        // ...
-    endfunction
-endmodule
-```
+**2. 调度流程：**
+1. **资源检查：** 检查计算单元和内存是否满足需求
+2. **资源分配：** 使用最适合算法分配硬件资源
+3. **任务映射：** 根据任务类型选择映射策略
+4. **硬件配置：** 配置互连、存储地址等
+5. **任务执行：** 启动计算并监控进度
+
+**3. 映射策略：**
+- **卷积层：** 考虑通道/空间并行，数据复用模式
+- **注意力层：** 分块处理长序列，多头并行
+- **全连接层：** 矩阵分块，流水线执行
+
+**4. 资源冲突处理：**
+- **抢占式调度：** 高优先级任务可抢占低优先级资源
+- **任务迁移：** 在多NPU间迁移任务平衡负载
+- **动态分块：** 根据可用资源调整分块大小
+
+**硬件调度器模块设计：**
+
+**1. 接口定义：**
+- **任务输入：** ID、优先级、计算需求、内存需求
+- **资源状态：** 单元忙闲状态、可用内存大小
+- **调度输出：** 任务ID、分配的单元、内存基址
+
+**2. 内部组件：**
+- **任务队列：** FIFO存储待调度任务
+- **优先级队列：** 存储对应的优先级
+- **资源分配器：** 实现最适合算法
+
+**3. 调度算法：**
+1. 新任务到达时入队
+2. 检查资源可用性
+3. 如果资源满足，分配并启动
+4. 否则等待资源释放
+
+**4. 资源分配策略：**
+- **首次适合：** 找到第一个满足的资源块
+- **最佳适合：** 找到最小满足的资源块
+- **伙伴系统：** 二进制分块分配
 
 </details>
 
@@ -1299,26 +878,17 @@ SRC2:   8-bit 源操作数2或立即数
 **详细分析：**
 
 1. **时钟门控实现：**
-```verilog
-// 细粒度时钟门控
-always @(*) begin
-    pe_clk_en = (data_valid && weight_valid) || 
-                (pipeline_stage > 0);
-end
-// 节能：避免无效翻转，减少15-25%动态功耗
-```
+- **门控条件：** `pe_clk_en = (data_valid && weight_valid) || (pipeline_stage > 0)`
+- **节能效果：** 避免无效翻转，减少15-25%动态功耗
+- **实现级别：** PE级、模块级、系统级
 
 2. **DVFS策略：**
-```python
-# 根据负载调节
-if utilization < 0.3:
-    set_vf_level(0)  # 0.6V, 500MHz
-elif utilization < 0.7:
-    set_vf_level(1)  # 0.8V, 750MHz
-else:
-    set_vf_level(2)  # 1.0V, 1GHz
-# 节能：P ∝ V²F，可节省30-40%
-```
+- **负载检测：** 监控PE利用率和内存带宽使用情况
+- **调节策略：**
+  - 低负载 (<30%): 0.6V, 500MHz
+  - 中负载 (30-70%): 0.8V, 750MHz
+  - 高负载 (>70%): 1.0V, 1GHz
+- **节能原理：** 功耗 ∝ V²F，可节省30-40%
 
 3. **混合精度计算：**
 - 第一层：INT8（保持精度）

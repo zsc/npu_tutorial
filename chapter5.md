@@ -83,164 +83,48 @@ SRAM设计的关键权衡：
 
 ### 5.1.2 多级存储层次
 
-```verilog
-// 典型的三级存储层次设计
-module MemoryHierarchy (
-    input wire clk,
-    input wire rst_n,
-    // L0: PE本地寄存器文件
-    // L1: PE集群共享缓存
-    // L2: 全局共享缓存
-);
+**典型的三级存储层次设计：**
+- **L0级：PE本地寄存器文件** - 16个256位寄存器，单周期访问
+- **L1级：PE集群共享缓存** - 64KB容量，2-3周期延迟
+- **L2级：全局共享缓存** - MB级容量，5-10周期延迟
 
-// 优化的L0寄存器文件 - SystemVerilog版本（带流水线和旁路）
-module L0_RegisterFile #(
-    parameter DEPTH = 16,       // 16个寄存器
-    parameter WIDTH = 256       // 256-bit宽度
-)(
-    input wire clk,
-    input wire rst_n,
-    input wire [3:0] rd_addr,
-    input wire [3:0] wr_addr,
-    input wire wr_en,
-    input wire [WIDTH-1:0] wr_data,
-    output reg [WIDTH-1:0] rd_data
-);
-    reg [WIDTH-1:0] regs [0:DEPTH-1];
-    
-    // 写数据流水线寄存器
-    reg wr_en_r;
-    reg [3:0] wr_addr_r;
-    reg [WIDTH-1:0] wr_data_r;
-    
-    // 旁路逻辑（处理读写同地址情况）
-    wire bypass_enable;
-    assign bypass_enable = wr_en && (rd_addr == wr_addr);
-    
-    // 写操作流水线
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            wr_en_r <= 0;
-            wr_addr_r <= 0;
-            wr_data_r <= 0;
-        end else begin
-            wr_en_r <= wr_en;
-            wr_addr_r <= wr_addr;
-            wr_data_r <= wr_data;
-        end
-    end
-    
-    // 寄存器写入
-    always @(posedge clk) begin
-        if (wr_en_r)
-            regs[wr_addr_r] <= wr_data_r;
-    end
-    
-    // 读操作（带旁路）
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            rd_data <= 0;
-        end else begin
-            if (bypass_enable)
-                rd_data <= wr_data;  // 旁路当前写入数据
-            else
-                rd_data <= regs[rd_addr];  // 正常读取
-        end
-    end
-endmodule
-```
+**L0寄存器文件的关键设计要点：**
+1. **流水线设计**：写操作流水线化，减少关键路径延迟
+2. **旁路逻辑**：当读写地址相同时，直接转发写入数据，避免数据冒险
+3. **参数化设计**：深度和宽度可配置，适应不同PE架构需求
+4. **同步复位**：确保初始状态可控
 
-Chisel版本的L0寄存器文件：
+**L0寄存器文件的Chisel实现特点：**
+- 使用`RegNext`实现流水线寄存器，自动处理时序
+- `Mux`选择器实现旁路逻辑，简洁高效
+- `VecInit`创建寄存器数组，支持参数化深度
+- Chisel的类型推断减少了代码量，提高可读性
 
-```scala
-import chisel3._
-import chisel3.util._
-
-class L0RegisterFile(depth: Int = 16, width: Int = 256) extends Module {
-    val io = IO(new Bundle {
-        val rdAddr = Input(UInt(log2Ceil(depth).W))
-        val wrAddr = Input(UInt(log2Ceil(depth).W))
-        val wrEn = Input(Bool())
-        val wrData = Input(UInt(width.W))
-        val rdData = Output(UInt(width.W))
-    })
-    
-    // 寄存器文件
-    val regs = RegInit(VecInit(Seq.fill(depth)(0.U(width.W))))
-    
-    // 写操作流水线
-    val wrEnR = RegNext(io.wrEn, false.B)
-    val wrAddrR = RegNext(io.wrAddr)
-    val wrDataR = RegNext(io.wrData)
-    
-    // 写入寄存器
-    when(wrEnR) {
-        regs(wrAddrR) := wrDataR
-    }
-    
-    // 旁路检测
-    val bypassEnable = wrEnR && (io.rdAddr === wrAddrR)
-    
-    // 读操作（带旁路）
-    io.rdData := RegNext(Mux(bypassEnable, wrDataR, regs(io.rdAddr)))
-}
-
-// L1 Cluster Buffer (PE集群共享)
-module L1_ClusterBuffer #(
-    parameter SIZE = 64 * 1024,     // 64KB
-    parameter PORTS = 4,            // 4个访问端口
-    parameter WIDTH = 256
-)(
-    input wire clk,
-    input wire [PORTS-1:0] rd_en,
-    input wire [PORTS-1:0] wr_en,
-    input wire [15:0] rd_addr [PORTS-1:0],
-    input wire [15:0] wr_addr [PORTS-1:0],
-    input wire [WIDTH-1:0] wr_data [PORTS-1:0],
-    output wire [WIDTH-1:0] rd_data [PORTS-1:0]
-);
-    // 多端口SRAM实现
-endmodule
-```
+**L1集群缓存设计要点：**
+- **容量**：64KB，平衡面积与性能
+- **端口数**：4个独立端口，支持多PE并行访问
+- **数据宽度**：256位，匹配矩阵运算的数据粒度
+- **访问仲裁**：需要处理多端口冲突，保证公平性
 
 ### 5.1.3 特殊SRAM结构
 
-```verilog
-// 转置SRAM：支持行列双向访问
-module TransposeSRAM #(
-    parameter ROWS = 64,
-    parameter COLS = 64,
-    parameter DATA_WIDTH = 8
-)(
-    input wire clk,
-    input wire row_mode,    // 1: 行访问, 0: 列访问
-    input wire [5:0] addr_major,
-    input wire [5:0] addr_minor,
-    input wire wr_en,
-    input wire [DATA_WIDTH*COLS-1:0] wr_data,
-    output wire [DATA_WIDTH*COLS-1:0] rd_data
-);
-    // 实现支持行列转置访问的SRAM
-    reg [DATA_WIDTH-1:0] mem [0:ROWS-1][0:COLS-1];
-    
-    genvar i;
-    generate
-        for (i = 0; i < COLS; i = i + 1) begin
-            always @(posedge clk) begin
-                if (wr_en) begin
-                    if (row_mode)
-                        mem[addr_major][i] <= wr_data[i*DATA_WIDTH +: DATA_WIDTH];
-                    else
-                        mem[i][addr_major] <= wr_data[i*DATA_WIDTH +: DATA_WIDTH];
-                end
-            end
-            
-            assign rd_data[i*DATA_WIDTH +: DATA_WIDTH] = 
-                row_mode ? mem[addr_major][i] : mem[i][addr_major];
-        end
-    endgenerate
-endmodule
-```
+**转置SRAM的设计动机与实现：**
+
+转置SRAM是NPU中的特殊存储结构，专门优化矩阵转置操作：
+
+1. **双模式访问**：
+   - 行模式：按行读写，适合正常的矩阵运算
+   - 列模式：按列读写，实现零开销转置
+
+2. **硬件实现要点**：
+   - 使用二维存储阵列 `mem[ROWS][COLS]`
+   - 通过`row_mode`信号切换访问模式
+   - `generate`块并行处理所有列的读写
+
+3. **性能优势**：
+   - 转置操作从O(n²)降至O(1)
+   - 消除了数据搬运的功耗开销
+   - 特别适合Transformer中的注意力计算
 
 ## <a name="52"></a>5.2 Memory Banking策略
 
@@ -593,46 +477,24 @@ endmodule
 
 ### 5.2.3 Bank冲突解决
 
-```verilog
-// 带冲突缓冲的Bank访问调度器
-module BankScheduler #(
-    parameter NUM_BANKS = 8,
-    parameter NUM_REQUESTORS = 16,
-    parameter QUEUE_DEPTH = 4
-)(
-    input wire clk,
-    input wire rst_n,
-    
-    // 请求端口
-    input wire [NUM_REQUESTORS-1:0] req_valid,
-    input wire [2:0] req_bank [NUM_REQUESTORS-1:0],
-    input wire [15:0] req_addr [NUM_REQUESTORS-1:0],
-    output reg [NUM_REQUESTORS-1:0] req_ready,
-    
-    // Bank接口
-    output reg [NUM_BANKS-1:0] bank_valid,
-    output reg [15:0] bank_addr [NUM_BANKS-1:0],
-    input wire [NUM_BANKS-1:0] bank_ready
-);
+**Bank冲突解决的硬件实现：**
 
-    // 每个请求者的请求队列
-    reg [2:0] req_queue_bank [NUM_REQUESTORS-1:0][QUEUE_DEPTH-1:0];
-    reg [15:0] req_queue_addr [NUM_REQUESTORS-1:0][QUEUE_DEPTH-1:0];
-    reg [1:0] req_queue_head [NUM_REQUESTORS-1:0];
-    reg [1:0] req_queue_tail [NUM_REQUESTORS-1:0];
-    
-    // 冲突检测与调度
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            // 复位逻辑
-        end else begin
-            // 1. 将新请求加入队列
-            // 2. 从每个队列头部选择无冲突的请求
-            // 3. 发送到对应的Bank
-        end
-    end
-endmodule
-```
+带冲突缓冲的Bank访问调度器是处理多请求者竞争的关键组件：
+
+1. **请求队列管理**：
+   - 每个请求者配备4深度的FIFO队列
+   - 支持16个并发请求者
+   - 使用头尾指针管理循环队列
+
+2. **冲突检测算法**：
+   - 每周期扫描所有队列头部
+   - 检测目标Bank冲突
+   - 选择无冲突的请求发送
+
+3. **调度策略**：
+   - 优先级基于队列深度
+   - 避免饥饿：长时间等待的请求提升优先级
+   - 支持QoS（服务质量）级别
 
 ## <a name="53"></a>5.3 数据预取机制
 
@@ -676,145 +538,49 @@ NPU的预取相比CPU有独特优势：
 
 ### 5.3.2 硬件预取引擎
 
-```verilog
-// 智能预取引擎
-module PrefetchEngine #(
-    parameter ADDR_WIDTH = 32,
-    parameter DATA_WIDTH = 256,
-    parameter PREFETCH_DEPTH = 4
-)(
-    input wire clk,
-    input wire rst_n,
-    
-    // 控制接口
-    input wire prefetch_enable,
-    input wire [ADDR_WIDTH-1:0] base_addr,
-    input wire [15:0] stride,
-    input wire [15:0] count,
-    
-    // 计算进度监控
-    input wire [15:0] compute_progress,
-    
-    // DRAM接口
-    output reg dram_req_valid,
-    output reg [ADDR_WIDTH-1:0] dram_req_addr,
-    output reg [7:0] dram_req_len,
-    input wire dram_req_ready,
-    
-    // SRAM写接口
-    output reg sram_wr_valid,
-    output reg [15:0] sram_wr_addr,
-    output reg [DATA_WIDTH-1:0] sram_wr_data,
-    input wire sram_wr_ready
-);
+**智能预取引擎的设计要点：**
 
-    // 预取状态机
-    localparam IDLE = 0, MONITOR = 1, ISSUE_REQ = 2, WAIT_RESP = 3;
-    reg [1:0] state, next_state;
-    
-    // 预取队列
-    reg [ADDR_WIDTH-1:0] prefetch_queue [PREFETCH_DEPTH-1:0];
-    reg [2:0] queue_head, queue_tail;
-    reg [3:0] queue_count;
-    
-    // 地址生成器
-    reg [ADDR_WIDTH-1:0] next_addr;
-    reg [15:0] fetch_count;
-    
-    // 预取距离计算
-    wire [15:0] prefetch_distance;
-    assign prefetch_distance = queue_count * 16; // 假设每次预取16个元素
-    
-    // 状态机逻辑
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            state <= IDLE;
-            queue_head <= 0;
-            queue_tail <= 0;
-            queue_count <= 0;
-        end else begin
-            state <= next_state;
-            
-            case (state)
-                IDLE: begin
-                    if (prefetch_enable) begin
-                        next_addr <= base_addr;
-                        fetch_count <= 0;
-                    end
-                end
-                
-                MONITOR: begin
-                    // 监控计算进度，决定是否发起预取
-                    if (compute_progress + prefetch_distance < count && 
-                        queue_count < PREFETCH_DEPTH - 1) begin
-                        // 需要预取更多数据
-                        prefetch_queue[queue_tail] <= next_addr;
-                        queue_tail <= queue_tail + 1;
-                        queue_count <= queue_count + 1;
-                        next_addr <= next_addr + stride;
-                        fetch_count <= fetch_count + 1;
-                    end
-                end
-                
-                ISSUE_REQ: begin
-                    if (dram_req_ready && queue_count > 0) begin
-                        dram_req_valid <= 1'b1;
-                        dram_req_addr <= prefetch_queue[queue_head];
-                        dram_req_len <= 8'd16; // 预取16个元素
-                        queue_head <= queue_head + 1;
-                        queue_count <= queue_count - 1;
-                    end
-                end
-            endcase
-        end
-    end
-    
-    // 下一状态逻辑
-    always @(*) begin
-        next_state = state;
-        case (state)
-            IDLE: 
-                if (prefetch_enable) next_state = MONITOR;
-            MONITOR:
-                if (queue_count > 0) next_state = ISSUE_REQ;
-            ISSUE_REQ:
-                if (dram_req_ready) next_state = WAIT_RESP;
-            WAIT_RESP:
-                if (/* DRAM响应完成 */) next_state = MONITOR;
-        endcase
-    end
-endmodule
+该预取引擎采用4级状态机和自适应预取算法：
 
-// 双缓冲预取控制器
-module DoubleBufferPrefetch #(
-    parameter BUFFER_SIZE = 16384,  // 16KB per buffer
-    parameter DATA_WIDTH = 256
-)(
-    input wire clk,
-    input wire rst_n,
-    
-    // 计算单元接口
-    input wire compute_req,
-    input wire [13:0] compute_addr,
-    output wire [DATA_WIDTH-1:0] compute_data,
-    output wire compute_ready,
-    
-    // 预取控制
-    input wire [31:0] prefetch_base_addr,
-    input wire [15:0] prefetch_length,
-    input wire prefetch_start,
-    
-    // DRAM接口
-    output wire dram_req_valid,
-    output wire [31:0] dram_req_addr,
-    input wire dram_resp_valid,
-    input wire [DATA_WIDTH-1:0] dram_resp_data
-);
-    
-    // 双缓冲控制
-    reg buffer_sel;  // 0: Buffer A用于计算, 1: Buffer B用于计算
-    reg [13:0] buffer_write_addr [1:0];
-    reg buffer_ready [1:0];
+1. **状态机设计**：
+   - **IDLE**：等待预取启动
+   - **MONITOR**：监控计算进度，决策预取时机
+   - **ISSUE_REQ**：发出DRAM读取请求
+   - **WAIT_RESP**：等待DRAM响应
+
+2. **预取距离算法**：
+   - 基于计算进度动态调整
+   - 公式：`prefetch_distance = queue_count × 16`
+   - 确保数据在需要前到达
+
+3. **队列管理**：
+   - 4深度预取队列
+   - 循环缓冲区设计
+   - 避免过度预取造成内存浪费
+
+4. **地址生成**：
+   - 基于stride的规则访问模式
+   - 支持2D/3D数据结构
+   - 编译器指导的预取提示
+
+**双缓冲预取控制器设计：**
+
+双缓冲是NPU中最常用的隐藏访存延迟技术：
+
+1. **缓冲区配置**：
+   - 两个16KB缓冲区（A和B）
+   - 256位数据宽度，匹配计算单元
+   - 乒乓切换机制
+
+2. **工作流程**：
+   - 缓冲区A供计算时，缓冲区B从DRAM预取
+   - 计算完成后切换角色
+   - 通过`buffer_sel`信号控制当前活跃缓冲区
+
+3. **同步机制**：
+   - `buffer_ready`标志数据就绪
+   - 确保计算不会访问未完成的缓冲区
+   - 支持变长预取（prefetch_length）
     
     // 缓冲区实例
     wire [DATA_WIDTH-1:0] buffer_rdata [1:0];
@@ -853,80 +619,30 @@ endmodule
 
 ### 5.3.3 软件控制预取
 
-```c
-// 预取指令格式
-typedef struct {
-    uint32_t opcode : 8;      // PREFETCH指令码
-    uint32_t buffer_id : 4;   // 目标缓冲区ID
-    uint32_t pattern : 4;     // 访问模式（线性/2D/3D）
-    uint32_t priority : 2;    // 预取优先级
-    uint32_t reserved : 14;
-} prefetch_inst_t;
+**软件控制预取的关键设计：**
 
-// 预取描述符
-typedef struct {
-    uint32_t src_addr;        // 源地址（DRAM）
-    uint32_t dst_addr;        // 目标地址（SRAM）
-    uint16_t dim0_size;       // 第一维大小
-    uint16_t dim0_stride;     // 第一维步长
-    uint16_t dim1_size;       // 第二维大小
-    uint16_t dim1_stride;     // 第二维步长
-    uint16_t dim2_size;       // 第三维大小
-    uint16_t dim2_stride;     // 第三维步长
-} prefetch_desc_t;
+1. **预取指令格式**：
+   - 8位操作码指定PREFETCH指令
+   - 4位缓冲区ID，支持16个独立缓冲区
+   - 访问模式：线性、2D、3D数据布局
+   - 优先级控制，确保关键数据优先
 
-// 软件预取示例（卷积层）
-void conv_layer_with_prefetch(
-    float* input,     // [N, H, W, C_in]
-    float* weights,   // [K, K, C_in, C_out]
-    float* output,    // [N, H_out, W_out, C_out]
-    conv_params_t params
-) {
-    // 设置权重预取（权重复用率高，优先预取）
-    prefetch_desc_t weight_pf = {
-        .src_addr = (uint32_t)weights,
-        .dst_addr = WEIGHT_BUFFER_BASE,
-        .dim0_size = params.kernel_size,
-        .dim0_stride = params.kernel_size * params.c_in * sizeof(float),
-        .dim1_size = params.kernel_size,
-        .dim1_stride = params.c_in * sizeof(float),
-        .dim2_size = params.c_in,
-        .dim2_stride = sizeof(float)
-    };
-    
-    // 发起权重预取
-    issue_prefetch(WEIGHT_PREFETCH_ENGINE, &weight_pf);
-    
-    // 双缓冲处理输入特征图
-    for (int tile_y = 0; tile_y < params.h_out; tile_y += TILE_SIZE) {
-        // 预取下一个tile的输入数据
-        if (tile_y + TILE_SIZE < params.h_out) {
-            prefetch_desc_t input_pf = {
-                .src_addr = (uint32_t)&input[tile_y + TILE_SIZE][0][0],
-                .dst_addr = INPUT_BUFFER_B,
-                .dim0_size = TILE_SIZE + params.kernel_size - 1,
-                .dim0_stride = params.w * params.c_in * sizeof(float),
-                .dim1_size = params.w,
-                .dim1_stride = params.c_in * sizeof(float),
-                .dim2_size = params.c_in,
-                .dim2_stride = sizeof(float)
-            };
-            issue_prefetch(INPUT_PREFETCH_ENGINE, &input_pf);
-        }
-        
-        // 等待当前tile数据就绪
-        wait_prefetch_complete(current_buffer);
-        
-        // 执行计算
-        compute_conv_tile(current_buffer, WEIGHT_BUFFER_BASE, 
-                         OUTPUT_BUFFER + tile_y * params.w_out * params.c_out);
-        
-        // 切换缓冲区
-        current_buffer = (current_buffer == INPUT_BUFFER_A) ? 
-                        INPUT_BUFFER_B : INPUT_BUFFER_A;
-    }
-}
-```
+2. **预取描述符结构**：
+   - 源/目标地址对
+   - 三维数据描述：size和stride
+   - 支持复杂的张量访问模式
+   - 适合神经网络的NHWC/NCHW布局
+
+3. **卷积层预取策略**：
+   - **权重预取**：一次性加载全部权重（复用率高）
+   - **输入Tile化**：按Tile大小分块预取
+   - **双缓冲调度**：计算当前Tile时预取下一Tile
+   - **同步机制**：`wait_prefetch_complete`确保数据就绪
+
+4. **性能优化要点**：
+   - 预取粒度与Tile大小匹配
+   - 预取时机基于计算进度
+   - 多级预取引擎并行工作
 
 ## <a name="54"></a>5.4 缓存一致性
 
@@ -955,139 +671,48 @@ NPU缓存一致性的特点：
 
 ### 5.4.2 软件管理的缓存一致性
 
-```verilog
-// 缓存控制单元
-module CacheController #(
-    parameter CACHE_SIZE = 32768,
-    parameter LINE_SIZE = 64,
-    parameter NUM_CORES = 4
-)(
-    input wire clk,
-    input wire rst_n,
-    
-    // 控制命令
-    input wire [NUM_CORES-1:0] cmd_valid,
-    input wire [2:0] cmd_type [NUM_CORES-1:0], // 0:Flush, 1:Invalidate, 2:Clean
-    input wire [31:0] cmd_addr [NUM_CORES-1:0],
-    input wire [31:0] cmd_size [NUM_CORES-1:0],
-    
-    // 同步屏障
-    input wire [NUM_CORES-1:0] barrier_req,
-    output reg [NUM_CORES-1:0] barrier_ack,
-    
-    // Cache接口
-    output reg [NUM_CORES-1:0] cache_flush,
-    output reg [NUM_CORES-1:0] cache_inv,
-    output reg [31:0] flush_addr [NUM_CORES-1:0],
-    output reg [31:0] flush_size [NUM_CORES-1:0]
-);
+**缓存控制单元的硬件实现：**
 
-    // 同步状态
-    reg [NUM_CORES-1:0] sync_pending;
-    reg [NUM_CORES-1:0] sync_complete;
-    
-    // 命令执行
-    always @(posedge clk) begin
-        for (int i = 0; i < NUM_CORES; i++) begin
-            if (cmd_valid[i]) begin
-                case (cmd_type[i])
-                    3'b000: begin // Flush
-                        cache_flush[i] <= 1;
-                        flush_addr[i] <= cmd_addr[i];
-                        flush_size[i] <= cmd_size[i];
-                    end
-                    
-                    3'b001: begin // Invalidate
-                        cache_inv[i] <= 1;
-                        flush_addr[i] <= cmd_addr[i];
-                        flush_size[i] <= cmd_size[i];
-                    end
-                    
-                    3'b010: begin // Clean (写回但保留)
-                        cache_flush[i] <= 1;
-                        cache_inv[i] <= 0;
-                    end
-                endcase
-            end
-        end
-    end
-    
-    // 全局屏障同步
-    reg [2:0] barrier_state;
-    localparam IDLE = 0, WAIT_ALL = 1, SYNC = 2, RELEASE = 3;
-    
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            barrier_state <= IDLE;
-            barrier_ack <= 0;
-            sync_pending <= 0;
-        end else begin
-            case (barrier_state)
-                IDLE: begin
-                    if (|barrier_req) begin
-                        sync_pending <= barrier_req;
-                        barrier_state <= WAIT_ALL;
-                    end
-                end
-                
-                WAIT_ALL: begin
-                    // 等待所有请求的核心到达屏障
-                    if ((sync_pending & barrier_req) == sync_pending) begin
-                        barrier_state <= SYNC;
-                    end
-                end
-                
-                SYNC: begin
-                    // 执行全局同步操作
-                    // 刷新所有脏数据，失效共享行
-                    for (int i = 0; i < NUM_CORES; i++) begin
-                        if (sync_pending[i]) begin
-                            cache_flush[i] <= 1;
-                        end
-                    end
-                    barrier_state <= RELEASE;
-                end
-                
-                RELEASE: begin
-                    // 释放所有等待的核心
-                    barrier_ack <= sync_pending;
-                    if (barrier_ack == sync_pending) begin
-                        barrier_ack <= 0;
-                        sync_pending <= 0;
-                        barrier_state <= IDLE;
-                    end
-                end
-            endcase
-        end
-    end
-endmodule
+NPU缓存控制单元主要提供软件管理的一致性支持：
 
-// 软件管理的一致性协议示例
-module SoftwareManagedCoherence #(
-    parameter ADDR_WIDTH = 32,
-    parameter DATA_WIDTH = 256
-)(
-    input wire clk,
-    input wire rst_n,
-    
-    // 核心请求
-    input wire [3:0] core_req,
-    input wire [1:0] core_op [3:0], // 0:Read, 1:Write, 2:Exclusive
-    input wire [ADDR_WIDTH-1:0] core_addr [3:0],
-    
-    // 共享内存目录
-    output reg [3:0] owner_vector [1023:0], // 简化的目录
-    output reg [3:0] sharer_vector [1023:0],
-    
-    // 同步操作
-    output reg [3:0] invalidate_req,
-    output reg [3:0] writeback_req
-);
+1. **核心操作**：
+   - **Flush**：将脏数据写回内存并失效
+   - **Invalidate**：失效缓存行，不写回
+   - **Clean**：写回脏数据但保留在缓存中
 
-    // 地址到目录索引的映射
-    function [9:0] addr_to_dir_idx(input [ADDR_WIDTH-1:0] addr);
-        addr_to_dir_idx = addr[19:10]; // 1K entries, 1KB粒度
-    endfunction
+2. **全局屏障同步机制**：
+   - 4状态机：IDLE → WAIT_ALL → SYNC → RELEASE
+   - 等待所有核心到达屏障点
+   - 统一执行缓存同步操作
+   - 同时释放所有等待核心
+
+3. **多核协调**：
+   - 每个核心独立的命令端口
+   - 支持地址范围操作
+   - 并行处理多个核心请求
+
+4. **性能优化**：
+   - 流水线化命令处理
+   - 批量缓存操作合并
+   - 避免不必要的全局同步
+
+**软件管理一致性协议的设计要点：**
+
+1. **目录结构**：
+   - 1024个目录项，每项覆癖1KB地址空间
+   - `owner_vector`：记录数据的独占拥有者
+   - `sharer_vector`：记录所有共享者
+   - 支持4核心系统
+
+2. **操作类型**：
+   - **Read**：共享读取，加入sharer_vector
+   - **Write**：写操作，需要失效其他共享者
+   - **Exclusive**：独占访问，获得所有权
+
+3. **地址映射策略**：
+   - 使用地址位[19:10]作为目录索引
+   - 1KB粒度的跟踪
+   - 平衡目录开销和精度
     
     // 处理核心请求
     always @(posedge clk) begin
@@ -1133,355 +758,103 @@ DMA（Direct Memory Access）是NPU中实现高效数据传输的关键组件，
 
 ### 5.5.1 多通道DMA架构
 
-```verilog
-// 高性能DMA引擎
-module HighPerformanceDMA #(
-    parameter NUM_CHANNELS = 8,
-    parameter ADDR_WIDTH = 40,
-    parameter DATA_WIDTH = 512,
-    parameter MAX_BURST = 64
-)(
-    input wire clk,
-    input wire rst_n,
-    
-    // 通道配置接口
-    input wire [NUM_CHANNELS-1:0] ch_start,
-    dma_descriptor_t ch_desc [NUM_CHANNELS-1:0],
-    output wire [NUM_CHANNELS-1:0] ch_done,
-    output wire [NUM_CHANNELS-1:0] ch_busy,
-    
-    // AXI主接口（读）
-    output wire [NUM_CHANNELS-1:0] axi_arvalid,
-    input wire [NUM_CHANNELS-1:0] axi_arready,
-    output wire [ADDR_WIDTH-1:0] axi_araddr [NUM_CHANNELS-1:0],
-    output wire [7:0] axi_arlen [NUM_CHANNELS-1:0],
-    output wire [2:0] axi_arsize [NUM_CHANNELS-1:0],
-    
-    input wire [NUM_CHANNELS-1:0] axi_rvalid,
-    output wire [NUM_CHANNELS-1:0] axi_rready,
-    input wire [DATA_WIDTH-1:0] axi_rdata [NUM_CHANNELS-1:0],
-    input wire [NUM_CHANNELS-1:0] axi_rlast,
-    
-    // AXI主接口（写）
-    output wire [NUM_CHANNELS-1:0] axi_awvalid,
-    input wire [NUM_CHANNELS-1:0] axi_awready,
-    output wire [ADDR_WIDTH-1:0] axi_awaddr [NUM_CHANNELS-1:0],
-    output wire [7:0] axi_awlen [NUM_CHANNELS-1:0],
-    
-    output wire [NUM_CHANNELS-1:0] axi_wvalid,
-    input wire [NUM_CHANNELS-1:0] axi_wready,
-    output wire [DATA_WIDTH-1:0] axi_wdata [NUM_CHANNELS-1:0],
-    output wire [NUM_CHANNELS-1:0] axi_wlast,
-    
-    input wire [NUM_CHANNELS-1:0] axi_bvalid,
-    output wire [NUM_CHANNELS-1:0] axi_bready
-);
+**高性能DMA引擎的架构设计：**
 
-    // 描述符格式
-    typedef struct packed {
-        logic [ADDR_WIDTH-1:0] src_addr;
-        logic [ADDR_WIDTH-1:0] dst_addr;
-        logic [31:0] byte_count;
-        logic [15:0] src_stride;    // 2D传输
-        logic [15:0] dst_stride;
-        logic [15:0] line_count;
-        logic [15:0] line_size;
-        logic [7:0] flags;          // bit0: 2D, bit1: chain
-        logic [ADDR_WIDTH-1:0] next_desc;
-    } dma_descriptor_t;
-    
-    // 每个通道的状态机
-    genvar ch;
-    generate
-        for (ch = 0; ch < NUM_CHANNELS; ch = ch + 1) begin : channel_gen
-            DMAChannel #(
-                .ADDR_WIDTH(ADDR_WIDTH),
-                .DATA_WIDTH(DATA_WIDTH),
-                .CHANNEL_ID(ch)
-            ) dma_ch (
-                .clk(clk),
-                .rst_n(rst_n),
-                
-                // 控制
-                .start(ch_start[ch]),
-                .desc(ch_desc[ch]),
-                .done(ch_done[ch]),
-                .busy(ch_busy[ch]),
-                
-                // AXI接口
-                .m_axi_arvalid(axi_arvalid[ch]),
-                .m_axi_arready(axi_arready[ch]),
-                .m_axi_araddr(axi_araddr[ch]),
-                .m_axi_arlen(axi_arlen[ch]),
-                
-                .m_axi_rvalid(axi_rvalid[ch]),
-                .m_axi_rready(axi_rready[ch]),
-                .m_axi_rdata(axi_rdata[ch]),
-                .m_axi_rlast(axi_rlast[ch]),
-                
-                .m_axi_awvalid(axi_awvalid[ch]),
-                .m_axi_awready(axi_awready[ch]),
-                .m_axi_awaddr(axi_awaddr[ch]),
-                .m_axi_awlen(axi_awlen[ch]),
-                
-                .m_axi_wvalid(axi_wvalid[ch]),
-                .m_axi_wready(axi_wready[ch]),
-                .m_axi_wdata(axi_wdata[ch]),
-                .m_axi_wlast(axi_wlast[ch]),
-                
-                .m_axi_bvalid(axi_bvalid[ch]),
-                .m_axi_bready(axi_bready[ch])
-            );
-        end
-    endgenerate
-    
-    // 优先级仲裁器（当多个通道访问同一内存时）
-    ChannelArbiter #(
-        .NUM_CHANNELS(NUM_CHANNELS)
-    ) arbiter (
-        .clk(clk),
-        .rst_n(rst_n),
-        .ch_req(ch_busy),
-        .ch_priority(ch_priority),
-        .ch_grant(ch_grant)
-    );
-endmodule
-```
+现代NPU的DMA引擎通常采用8通道并行架构：
+
+1. **多通道设计优势**：
+   - 8个独立通道，支持并发传输
+   - 每通道512位数据宽度
+   - 最大突发64传输，优化DDR带宽利用
+   - 40位地址支持大内存系统
+
+2. **AXI接口特性**：
+   - 读写通道分离，全双工传输
+   - 支持Outstanding事务
+   - 可配置突发长度和大小
+   - 内置流量控制
+
+3. **描述符管理**：
+   - 描述符格式包含：源/目标地址、字节数、步长等
+   - 支持2D传输模式（行列步长）
+   - 链式描述符支持复杂传输序列
+   - 标志位控制传输模式
+
+4. **通道仲裁机制**：
+   - 优先级仲裁器处理多通道竞争
+   - 防止单通道垄断带宽
+   - 支持QoS保证关键传输
+
+5. **性能优化特性**：
+   - 数据预取缓冲
+   - 写合并优化
+   - 地址对齐检查
+   - 错误处理机制
 
 ### 5.5.2 2D/3D传输模式
 
-```verilog
-// 支持复杂数据布局的DMA通道
-module FlexibleDMAChannel #(
-    parameter ADDR_WIDTH = 40,
-    parameter DATA_WIDTH = 512
-)(
-    input wire clk,
-    input wire rst_n,
-    
-    // 描述符输入
-    input wire desc_valid,
-    input wire [2:0] transfer_mode, // 0:1D, 1:2D, 2:3D, 3:Gather, 4:Scatter
-    
-    // 1D参数
-    input wire [ADDR_WIDTH-1:0] src_addr,
-    input wire [ADDR_WIDTH-1:0] dst_addr,
-    input wire [31:0] total_bytes,
-    
-    // 2D参数
-    input wire [15:0] width,        // X维度大小
-    input wire [15:0] height,       // Y维度大小
-    input wire [31:0] src_pitch,    // 源行间距
-    input wire [31:0] dst_pitch,    // 目标行间距
-    
-    // 3D参数
-    input wire [15:0] depth,         // Z维度大小
-    input wire [31:0] src_slice_pitch, // 源片间距
-    input wire [31:0] dst_slice_pitch, // 目标片间距
-    
-    // Gather/Scatter参数
-    input wire [ADDR_WIDTH-1:0] index_addr, // 索引数组地址
-    input wire [15:0] num_elements,
-    
-    // 状态输出
-    output reg transfer_done,
-    output reg [31:0] bytes_transferred
-);
+**支持复杂数据布局的DMA通道设计：**
 
-    // 状态机
-    typedef enum logic [3:0] {
-        IDLE,
-        PARSE_DESC,
-        CALC_ADDR,
-        ISSUE_READ,
-        WAIT_READ,
-        ISSUE_WRITE,
-        WAIT_WRITE,
-        UPDATE_ADDR,
-        COMPLETE
-    } state_t;
-    
-    state_t state, next_state;
-    
-    // 地址计算器
-    reg [ADDR_WIDTH-1:0] current_src_addr;
-    reg [ADDR_WIDTH-1:0] current_dst_addr;
-    reg [15:0] x_count, y_count, z_count;
-    
-    // 3D地址计算
-    always @(posedge clk) begin
-        case (state)
-            CALC_ADDR: begin
-                case (transfer_mode)
-                    3'b000: begin // 1D
-                        current_src_addr <= src_addr + bytes_transferred;
-                        current_dst_addr <= dst_addr + bytes_transferred;
-                    end
-                    
-                    3'b001: begin // 2D
-                        current_src_addr <= src_addr + 
-                                          y_count * src_pitch + 
-                                          x_count * (DATA_WIDTH/8);
-                        current_dst_addr <= dst_addr + 
-                                          y_count * dst_pitch + 
-                                          x_count * (DATA_WIDTH/8);
-                    end
-                    
-                    3'b010: begin // 3D
-                        current_src_addr <= src_addr + 
-                                          z_count * src_slice_pitch +
-                                          y_count * src_pitch + 
-                                          x_count * (DATA_WIDTH/8);
-                        current_dst_addr <= dst_addr + 
-                                          z_count * dst_slice_pitch +
-                                          y_count * dst_pitch + 
-                                          x_count * (DATA_WIDTH/8);
-                    end
-                    
-                    3'b011: begin // Gather
-                        // 读取索引，计算源地址
-                        // current_src_addr <= base_addr + index[i] * element_size
-                    end
-                    
-                    3'b100: begin // Scatter  
-                        // 读取索引，计算目标地址
-                        // current_dst_addr <= base_addr + index[i] * element_size
-                    end
-                endcase
-            end
-            
-            UPDATE_ADDR: begin
-                case (transfer_mode)
-                    3'b001: begin // 2D
-                        x_count <= x_count + 1;
-                        if (x_count >= width - 1) begin
-                            x_count <= 0;
-                            y_count <= y_count + 1;
-                        end
-                    end
-                    
-                    3'b010: begin // 3D
-                        x_count <= x_count + 1;
-                        if (x_count >= width - 1) begin
-                            x_count <= 0;
-                            y_count <= y_count + 1;
-                            if (y_count >= height - 1) begin
-                                y_count <= 0;
-                                z_count <= z_count + 1;
-                            end
-                        end
-                    end
-                endcase
-                
-                bytes_transferred <= bytes_transferred + (DATA_WIDTH/8);
-            end
-        endcase
-    end
-    
-    // 传输完成检测
-    always @(*) begin
-        case (transfer_mode)
-            3'b000: transfer_done = (bytes_transferred >= total_bytes);
-            3'b001: transfer_done = (y_count >= height);
-            3'b010: transfer_done = (z_count >= depth);
-            3'b011, 3'b100: transfer_done = (x_count >= num_elements);
-            default: transfer_done = 1'b0;
-        endcase
-    end
-endmodule
+现代NPU的DMA需要支持多种数据布局传输模式：
 
-// 张量布局转换DMA
-module TensorLayoutDMA #(
-    parameter MAX_DIM = 4,
-    parameter ADDR_WIDTH = 40
-)(
-    input wire clk,
-    input wire rst_n,
-    
-    // 张量描述
-    input wire [3:0] num_dims,
-    input wire [15:0] shape [MAX_DIM-1:0],
-    input wire [3:0] src_layout [MAX_DIM-1:0], // 维度排列
-    input wire [3:0] dst_layout [MAX_DIM-1:0],
-    
-    // 地址
-    input wire [ADDR_WIDTH-1:0] src_base,
-    input wire [ADDR_WIDTH-1:0] dst_base,
-    
-    // 控制
-    input wire start,
-    output reg done
-);
+1. **传输模式类型**：
+   - **1D模式**：连续内存块传输
+   - **2D模式**：矩阵数据，支持行步长（pitch）
+   - **3D模式**：三维张量，支持片步长（slice pitch）
+   - **Gather模式**：根据索引数组收集离散数据
+   - **Scatter模式**：根据索引数组分散写入数据
 
-    // 计算stride
-    reg [31:0] src_strides [MAX_DIM-1:0];
-    reg [31:0] dst_strides [MAX_DIM-1:0];
-    
-    always @(*) begin
-        // 根据layout计算各维度的stride
-        for (int d = 0; d < MAX_DIM; d++) begin
-            src_strides[d] = 1;
-            dst_strides[d] = 1;
-            
-            for (int i = d + 1; i < num_dims; i++) begin
-                if (src_layout[i] > src_layout[d]) begin
-                    src_strides[d] = src_strides[d] * shape[i];
-                end
-                if (dst_layout[i] > dst_layout[d]) begin
-                    dst_strides[d] = dst_strides[d] * shape[i];
-                end
-            end
-        end
-    end
-    
-    // 多维索引到线性地址
-    function [ADDR_WIDTH-1:0] index_to_addr(
-        input [15:0] indices [MAX_DIM-1:0],
-        input [31:0] strides [MAX_DIM-1:0],
-        input [ADDR_WIDTH-1:0] base
-    );
-        reg [ADDR_WIDTH-1:0] offset = 0;
-        for (int d = 0; d < MAX_DIM; d++) begin
-            offset = offset + indices[d] * strides[d] * 4; // 假设float32
-        end
-        index_to_addr = base + offset;
-    endfunction
-    
-    // 迭代器
-    reg [15:0] indices [MAX_DIM-1:0];
-    
-    always @(posedge clk) begin
-        if (start) begin
-            // 初始化索引
-            for (int d = 0; d < MAX_DIM; d++) begin
-                indices[d] <= 0;
-            end
-            done <= 0;
-        end else if (!done) begin
-            // 计算当前元素的源和目标地址
-            reg [ADDR_WIDTH-1:0] src_addr = index_to_addr(indices, src_strides, src_base);
-            reg [ADDR_WIDTH-1:0] dst_addr = index_to_addr(indices, dst_strides, dst_base);
-            
-            // 发起DMA传输
-            // ...
-            
-            // 更新索引
-            indices[0] <= indices[0] + 1;
-            for (int d = 0; d < MAX_DIM-1; d++) begin
-                if (indices[d] >= shape[d]) begin
-                    indices[d] <= 0;
-                    indices[d+1] <= indices[d+1] + 1;
-                end
-            end
-            
-            // 检查完成
-            if (indices[num_dims-1] >= shape[num_dims-1]) begin
-                done <= 1;
-            end
-        end
-    end
-endmodule
-```
+2. **地址计算策略**：
+   - 1D：`addr = base + offset`
+   - 2D：`addr = base + y*pitch + x*width`
+   - 3D：`addr = base + z*slice_pitch + y*pitch + x*width`
+   - Gather/Scatter：`addr = base + index[i]*element_size`
+
+3. **状态机设计**：
+   - 9状态机：IDLE → PARSE_DESC → CALC_ADDR → ISSUE_READ → WAIT_READ → ISSUE_WRITE → WAIT_WRITE → UPDATE_ADDR → COMPLETE
+   - 支持流水线操作
+   - 错误处理和重试机制
+
+4. **计数器管理**：
+   - 三维计数器（x_count, y_count, z_count）
+   - 自动换行换片逻辑
+   - 边界检查和溢出保护
+
+5. **性能优化**：
+   - 地址预计算减少关键路径
+   - 突发传输合并小请求
+   - 支持地址对齐优化
+
+**张量布局转换DMA的设计：**
+
+张量布局转换是NPU中的重要功能，支持NCHW、NHWC等不同数据格式间的高效转换：
+
+1. **布局转换原理**：
+   - 支持最多4维张量（批次、通道、高度、宽度）
+   - 维度排列可配置：src_layout和dst_layout定义维度顺序
+   - 自动计算各维度的stride（步长）
+
+2. **Stride计算算法**：
+   - 对于每个维度，stride等于其后所有维度大小的乘积
+   - 例如NCHW布局：C的stride = H×W，N的stride = C×H×W
+   - 支持任意维度排列组合
+
+3. **地址映射公式**：
+   ```
+   linear_addr = base + Σ(index[d] × stride[d] × element_size)
+   ```
+   - 多维坐标转换为线性地址
+   - 支持不同数据类型（float32、int8等）
+
+4. **迭代器设计**：
+   - 多维索引自动递增
+   - 支持边界检查和自动换行
+   - 完成检测基于最高维度
+
+5. **性能优化策略**：
+   - 批量传输相邻元素
+   - 缓存友好的访问模式
+   - 支持并行多通道传输
 
 ## <a name="56"></a>5.6 内存压缩技术
 
@@ -1489,107 +862,54 @@ endmodule
 
 ### 5.6.1 权重压缩
 
-```verilog
-// 结构化稀疏权重压缩器
-module StructuredSparsityCompressor #(
-    parameter BLOCK_SIZE = 4,  // 4个权重为一组
-    parameter N_SPARSE = 2,    // 每组保留2个非零值
-    parameter DATA_WIDTH = 8
-)(
-    input wire clk,
-    input wire rst_n,
-    
-    // 输入权重
-    input wire valid_in,
-    input wire [DATA_WIDTH*BLOCK_SIZE-1:0] weights_in,
-    
-    // 压缩输出
-    output reg valid_out,
-    output reg [DATA_WIDTH*N_SPARSE-1:0] values_out,
-    output reg [BLOCK_SIZE-1:0] mask_out,
-    output reg [15:0] compression_ratio
-);
+**结构化稀疏权重压缩器设计：**
 
-    // 找到最大的N_SPARSE个值
-    reg [DATA_WIDTH-1:0] sorted_weights [BLOCK_SIZE-1:0];
-    reg [BLOCK_SIZE-1:0] sorted_indices;
-    
-    // 简化的排序网络（用于4个元素）
-    always @(*) begin
-        reg [DATA_WIDTH-1:0] w0, w1, w2, w3;
-        reg [1:0] idx0, idx1, idx2, idx3;
-        
-        // 提取权重
-        w0 = weights_in[DATA_WIDTH*0 +: DATA_WIDTH];
-        w1 = weights_in[DATA_WIDTH*1 +: DATA_WIDTH];
-        w2 = weights_in[DATA_WIDTH*2 +: DATA_WIDTH];
-        w3 = weights_in[DATA_WIDTH*3 +: DATA_WIDTH];
-        
-        // 按绝对值排序（简化：假设都是正数）
-        // 这里应该实现完整的排序网络
-        if (w0 >= w1 && w0 >= w2 && w0 >= w3) begin
-            sorted_weights[0] = w0; sorted_indices[0] = 1;
-        end
-        // ... 完整排序逻辑
-    end
-    
-    // 生成压缩输出
-    always @(posedge clk) begin
-        if (valid_in) begin
-            valid_out <= 1;
-            
-            // 保留最大的N_SPARSE个值
-            for (int i = 0; i < N_SPARSE; i++) begin
-                values_out[i*DATA_WIDTH +: DATA_WIDTH] <= sorted_weights[i];
-            end
-            
-            // 生成掩码
-            mask_out <= 0;
-            for (int i = 0; i < N_SPARSE; i++) begin
-                mask_out <= mask_out | sorted_indices[i];
-            end
-            
-            // 计算压缩比
-            compression_ratio <= (BLOCK_SIZE * 100) / N_SPARSE;
-        end else begin
-            valid_out <= 0;
-        end
-    end
-endmodule
+结构化稀疏是现代NPU中常用的压缩技术，特别是2:4稀疏模式：
 
-// 量化压缩器
-module WeightQuantizer #(
-    parameter IN_WIDTH = 16,
-    parameter OUT_WIDTH = 4,
-    parameter NUM_WEIGHTS = 16
-)(
-    input wire clk,
-    input wire rst_n,
-    
-    // 输入权重
-    input wire valid_in,
-    input wire signed [IN_WIDTH-1:0] weights_in [NUM_WEIGHTS-1:0],
-    
-    // 量化输出
-    output reg valid_out,
-    output reg [OUT_WIDTH-1:0] weights_out [NUM_WEIGHTS-1:0],
-    output reg signed [IN_WIDTH-1:0] scale,
-    output reg signed [IN_WIDTH-1:0] zero_point
-);
+1. **2:4稀疏模式**：
+   - 每4个权重中保留2个非零值
+   - 压缩率50%，精度损失最小
+   - 硬件加速器可直接支持
 
-    // 计算动态范围
-    reg signed [IN_WIDTH-1:0] min_val, max_val;
-    
-    always @(posedge clk) begin
-        if (valid_in) begin
-            // 找最大最小值
-            min_val = weights_in[0];
-            max_val = weights_in[0];
-            
-            for (int i = 1; i < NUM_WEIGHTS; i++) begin
-                if (weights_in[i] < min_val) min_val = weights_in[i];
-                if (weights_in[i] > max_val) max_val = weights_in[i];
-            end
+2. **压缩算法**：
+   - 使用排序网络找出最大的N个值
+   - 生成位掩码指示非零位置
+   - 将零值剪枝，只存储非零值
+
+3. **硬件实现要点**：
+   - 并行比较器网络
+   - 流水线化处理
+   - 低延迟输出
+
+4. **存储格式**：
+   - 值数组：存储非零权重
+   - 掩码数组：指示非零位置
+   - 元数据：压缩比等信息
+
+**权重量化压缩器设计：**
+
+量化是将高精度权重转换为低位宽表示的技术：
+
+1. **动态量化算法**：
+   - 输入：16位浮点或定点数
+   - 输出：4位整数（INT4）
+   - 压缩率75%，显著减少存储和带宽
+
+2. **量化参数计算**：
+   - 找出权重的最大最小值
+   - 计算scale：`(max-min)/(2^bits-1)`
+   - 计算zero_point：`round(-min/scale)`
+
+3. **量化公式**：
+   ```
+   quantized = round((weight - zero_point) / scale)
+   dequantized = quantized * scale + zero_point
+   ```
+
+4. **硬件优化**：
+   - 并行最大最小值查找
+   - 流水线化量化计算
+   - 支持批量处理
             
             // 计算量化参数
             scale = (max_val - min_val) >> OUT_WIDTH;
@@ -1611,116 +931,84 @@ endmodule
 
 ### 5.6.2 激活值压缩
 
-```verilog
-// 动态激活值压缩器
-module ActivationCompressor #(
-    parameter DATA_WIDTH = 16,
-    parameter VECTOR_SIZE = 32
-)(
-    input wire clk,
-    input wire rst_n,
-    
-    // 输入激活值
-    input wire valid_in,
-    input wire [DATA_WIDTH*VECTOR_SIZE-1:0] activations_in,
-    
-    // 压缩模式选择
-    input wire [2:0] compression_mode,
-    // 0: 无压缩
-    // 1: RLE (Run-Length Encoding)
-    // 2: Bit-packing
-    // 3: Delta encoding
-    // 4: Sparse (只存非零值)
-    
-    // 压缩输出
-    output reg valid_out,
-    output reg [511:0] compressed_data,
-    output reg [9:0] compressed_size,
-    output reg [3:0] metadata
-);
+**动态激活值压缩器设计：**
 
-    // RLE压缩逻辑
-    task compress_rle;
-        reg [DATA_WIDTH-1:0] current_value;
-        reg [7:0] run_length;
-        reg [9:0] output_pos;
-        
-        output_pos = 0;
-        run_length = 1;
-        current_value = activations_in[DATA_WIDTH-1:0];
-        
-        for (int i = 1; i < VECTOR_SIZE; i++) begin
-            if (activations_in[i*DATA_WIDTH +: DATA_WIDTH] == current_value && 
-                run_length < 255) begin
-                run_length = run_length + 1;
-            end else begin
-                // 输出当前游程
-                compressed_data[output_pos +: 8] = run_length;
-                compressed_data[output_pos+8 +: DATA_WIDTH] = current_value;
-                output_pos = output_pos + 8 + DATA_WIDTH;
-                
-                // 开始新游程
-                current_value = activations_in[i*DATA_WIDTH +: DATA_WIDTH];
-                run_length = 1;
-            end
-        end
-        
-        // 输出最后的游程
-        compressed_data[output_pos +: 8] = run_length;
-        compressed_data[output_pos+8 +: DATA_WIDTH] = current_value;
-        compressed_size = output_pos + 8 + DATA_WIDTH;
-    endtask
-    
-    // 稀疏压缩逻辑
-    task compress_sparse;
-        reg [9:0] output_pos;
-        reg [7:0] non_zero_count;
-        
-        output_pos = 8; // 预留空间存储非零元素个数
-        non_zero_count = 0;
-        
-        for (int i = 0; i < VECTOR_SIZE; i++) begin
-            if (activations_in[i*DATA_WIDTH +: DATA_WIDTH] != 0) begin
-                // 存储索引和值
-                compressed_data[output_pos +: 8] = i;
-                compressed_data[output_pos+8 +: DATA_WIDTH] = 
-                    activations_in[i*DATA_WIDTH +: DATA_WIDTH];
-                output_pos = output_pos + 8 + DATA_WIDTH;
-                non_zero_count = non_zero_count + 1;
-            end
-        end
-        
-        // 写入非零元素个数
-        compressed_data[7:0] = non_zero_count;
-        compressed_size = output_pos;
-    endtask
-    
-    // 主压缩逻辑
-    always @(posedge clk) begin
-        if (valid_in) begin
-            case (compression_mode)
-                3'b001: compress_rle();
-                3'b100: compress_sparse();
-                default: begin
-                    // 无压缩，直接传输
-                    compressed_data = activations_in;
-                    compressed_size = DATA_WIDTH * VECTOR_SIZE / 8;
-                end
-            endcase
-            
-            metadata = compression_mode;
-            valid_out <= 1;
-        end else begin
-            valid_out <= 0;
-        end
-    end
-endmodule
-```
+激活值压缩针对神经网络推理中的中间结果，采用多种压缩策略：
+
+1. **支持的压缩模式**：
+   - **无压缩**：原始数据直接传输
+   - **RLE（游程编码）**：适合大量重复值（如ReLU后的零值）
+   - **Bit-packing**：去除高位零值
+   - **Delta编码**：存储相邻值的差异
+   - **稀疏压缩**：只存储非零值及其索引
+
+2. **RLE压缩算法**：
+   - 格式：[长度(8bit)][值(16bit)]
+   - 最大游程长度：255
+   - 适合连续相同值的场景
+   - 压缩比取决于数据分布
+
+3. **稀疏压缩算法**：
+   - 格式：[非零数(8bit)][索引1,值1][索引2,值2]...
+   - 索引占8位，支持256个元素
+   - 适合稀疏度>50%的数据
+   - 压缩比：稀疏度/(1+索引开销)
+
+4. **硬件实现特点**：
+   - 单周期压缩决策
+   - 固定大小输出缓冲（512位）
+   - 元数据记录压缩类型
+   - 支持流水线操作
+
+5. **选择策略**：
+   - ReLU层输出：优先RLE（大量零值）
+   - 全连接层：稀疏压缩
+   - 卷积层：根据稀疏度动态选择
 
 ### 5.6.3 自适应压缩策略
 
+**自适应压缩选择器设计：**
+
+自适应压缩根据数据特征动态选择最优压缩算法：
+
+1. **数据特征分析**：
+   - **稀疏度**：零值占比
+   - **值域范围**：最大值-最小值
+   - **重复模式**：游程长度统计
+   - **唯一值数量**：用于哈夫曼编码
+
+2. **压缩算法选择策略**：
+
+   **权重压缩**：
+   - Conv层：稀疏度>60%用2:4稀疏，否则INT8量化
+   - FC层：稀疏度>70%用4:8稀疏，否则INT4量化
+   - Attention层：保持高精度，使用INT16量化
+
+   **激活值压缩**：
+   - ReLU后：优先RLE（游程编码）
+   - 稀疏度>50%：稀疏压缩
+   - 其他：INT8动态量化
+
+   **梯度压缩**：
+   - 稀疏度>90%：Top-K稀疏（只传输最大的10%）
+   - 小范围值：差分编码
+   - 其他：FP16量化
+
+3. **压缩比预测**：
+   - INT4量化：8倍压缩
+   - INT8量化：4倍压缩
+   - 2:4稀疏：2倍压缩
+   - RLE：1.5-6倍（取决于数据分布）
+   - Top-K稀疏：10倍以上
+
+4. **自适应机制**：
+   - 采样窗口：64个样本
+   - 统计分析：实时计算特征
+   - 动态决策：基于历史数据
+   - 参数调整：根据层类型优化
+
 ```verilog
-// 自适应压缩选择器
+// 简化的自适应压缩选择器框架
 module AdaptiveCompressionSelector #(
     parameter DATA_WIDTH = 256,
     parameter SAMPLE_SIZE = 64
