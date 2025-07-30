@@ -39,57 +39,20 @@ FinFET（鳍式场效应晶体管）是当前先进工艺的主流技术，相�
 3. **更高的驱动能力**：增加的有效沟道宽度
 4. **更好的工艺变异控制**：减少随机掺杂波动
 
-```python
-# FinFET晶体管建模示例（简化的SPICE模型参数）
-class FinFETModel:
-    def __init__(self, process_node):
-        self.node = process_node
-        
-        # 7nm FinFET典型参数
-        if process_node == "7nm":
-            self.vth_nominal = 0.35      # 阈值电压 (V)
-            self.tox_equivalent = 0.8    # 等效氧化层厚度 (nm)
-            self.fin_width = 7           # 鳍宽度 (nm)
-            self.fin_height = 42         # 鳍高度 (nm)
-            self.gate_pitch = 54         # 栅极间距 (nm)
-            self.metal_pitch = 36        # 金属层间距 (nm)
-            
-            # 性能参数
-            self.drive_current_nmos = 0.75  # mA/μm @ VDD
-            self.drive_current_pmos = 0.35  # mA/μm @ VDD
-            self.gate_capacitance = 1.2     # fF/μm
-            self.junction_capacitance = 0.8  # fF/μm
-            
-        # 5nm FinFET参数
-        elif process_node == "5nm":
-            self.vth_nominal = 0.32
-            self.tox_equivalent = 0.7
-            self.fin_width = 5
-            self.fin_height = 50
-            self.gate_pitch = 48
-            self.metal_pitch = 32
-            
-            self.drive_current_nmos = 0.85
-            self.drive_current_pmos = 0.42
-            self.gate_capacitance = 1.4
-            self.junction_capacitance = 0.7
-    
-    def calculate_delay(self, load_cap, supply_voltage):
-        """计算门延迟"""
-        effective_current = self.drive_current_nmos * 1e-3  # 转换为A/μm
-        return (load_cap * 1e-15 * supply_voltage) / effective_current
-    
-    def calculate_power(self, frequency, activity_factor, supply_voltage):
-        """计算动态功耗"""
-        dynamic_power = (self.gate_capacitance * 1e-15 * 
-                        supply_voltage**2 * frequency * activity_factor)
-        
-        # 静态功耗（简化模型）
-        leakage_current = 1e-9  # 1nA/μm 漏电流
-        static_power = leakage_current * supply_voltage
-        
-        return dynamic_power + static_power
-```
+**FinFET晶体管建模和参数：**
+
+FinFET晶体管建模包括关键物理参数和电气特性的定义。典型的模型参数包括：
+
+- **几何参数**：鳍宽度、鳍高度、栅极间距、金属层间距
+- **电气参数**：阈值电压、等效氧化层厚度、驱动电流、栅极电容
+- **性能计算**：
+  - 门延迟 = (负载电容 × 电源电压) / 有效驱动电流
+  - 动态功耗 = 电容 × 电压² × 频率 × 活动因子
+  - 静态功耗 = 漏电流 × 电源电压
+
+不同工艺节点的典型参数差异：
+- 7nm：Vth≈0.35V, 鳍宽7nm, 驱动电流0.75mA/μm
+- 5nm：Vth≈0.32V, 鳍宽5nm, 驱动电流0.85mA/μm
 
 ## <a name="92"></a>9.2 多阈值电压技术
 
@@ -113,165 +76,50 @@ class FinFETModel:
 - **RV (Regular VT)**：标准性能，标准漏电
 - **HV (High VT)**：较低性能，最低漏电
 
-```tcl
-# 多阈值电压设计约束示例
-# 设置不同VT类型的使用策略
+**多阈值电压设计约束配置：**
 
-# 为关键路径指定低VT器件
-set_attribute [get_lib_cells */*LVT*] dont_use false
-set_attribute [get_lib_cells */*RVT*] dont_use false  
-set_attribute [get_lib_cells */*HVT*] dont_use false
+在EDA工具中设置多阈值电压约束的典型步骤：
 
-# MAC阵列使用LVT以获得最高性能
-set_dont_use [get_lib_cells */*HVT*] -designs mac_array
-
-# 非关键路径优先使用HVT降低功耗
-set_prefer [get_lib_cells */*HVT*] -designs control_logic
-
-# 混合VT优化：让工具自动选择
-set_multi_vth_constraint -reset
-set_multi_vth_constraint \
-    -type hard \
-    -lvt_usage_percentage 20 \
-    -hvt_usage_percentage 30
-
-# 功耗优化目标
-set_max_leakage_power 0.1 -design npu_core
-```
+1. **启用所有VT类型**：允许工具使用LVT、RVT和HVT单元库
+2. **模块级优化**：
+   - MAC阵列：禁用HVT，优先使用LVT获得最高性能
+   - 控制逻辑：优先使用HVT降低静态功耗
+3. **全局VT比例约束**：
+   - LVT使用百分比：20%
+   - HVT使用百分比：30%
+   - 剩余使用RVT
+4. **功耗目标设定**：设置最大漏电功耗限制
 
 ### 9.2.2 动态电压频率调节(DVFS)
 
-```systemverilog
-// NPU中的DVFS控制器设计
-module dvfs_controller (
-    input  wire clk,
-    input  wire rstn,
-    
-    // 工作负载指示
-    input  wire [7:0] workload_level,    // 0-255的工作负载
-    input  wire [3:0] thermal_status,    // 温度状态
-    input  wire [3:0] power_budget,      // 功耗预算
-    
-    // DVFS输出
-    output reg  [2:0] voltage_level,     // 0.6V-1.0V的8个等级
-    output reg  [3:0] frequency_divider, // 时钟分频比
-    output reg        dvfs_change_req,   // 电压频率变更请求
-    input  wire       dvfs_change_ack    // 变更完成确认
-);
+**DVFS控制器设计实现：**
 
-// DVFS工作点定义
-typedef struct {
-    logic [2:0] voltage;     // 电压等级 
-    logic [3:0] freq_div;    // 频率分频
-    logic [7:0] power_est;   // 功耗估计
-    logic [7:0] perf_ratio;  // 性能比例
-} dvfs_point_t;
+DVFS控制器是NPU功耗管理的核心模块，其主要功能包括：
 
-// 预定义的DVFS工作点
-parameter dvfs_point_t DVFS_POINTS[8] = '{
-    '{3'h7, 4'h1, 8'd100, 8'd100},  // 最高性能点：1.0V, /1
-    '{3'h6, 4'h1, 8'd85,  8'd95},   // 高性能点：0.95V, /1  
-    '{3'h5, 4'h1, 8'd72,  8'd88},   // 中高性能：0.9V, /1
-    '{3'h4, 4'h1, 8'd60,  8'd80},   // 标准性能：0.85V, /1
-    '{3'h4, 4'h2, 8'd35,  8'd40},   // 中等性能：0.85V, /2
-    '{3'h3, 4'h2, 8'd28,  8'd35},   // 低性能：0.8V, /2
-    '{3'h2, 4'h4, 8'd15,  8'd20},   // 很低性能：0.75V, /4
-    '{3'h1, 4'h8, 8'd8,   8'd10}    // 待机模式：0.7V, /8
-};
+**输入信号：**
+- 工作负载级别（0-255）
+- 温度状态监控
+- 功耗预算限制
 
-reg [2:0] current_point;
-reg [2:0] target_point;
-reg [7:0] change_timer;
+**DVFS工作点定义：**
+- 8个预定义工作点，从0.7V/8分频（待机）到1.0V/1分频（最高性能）
+- 每个工作点包含：电压等级、频率分频比、功耗估计、性能比例
 
-// 工作点选择逻辑
-always_comb begin
-    // 基于工作负载的初始选择
-    case (workload_level)
-        8'h00: target_point = 3'd7;  // 待机
-        8'h01: target_point = 3'd6;  // 很低负载
-        8'h02: target_point = 3'd5;  // 低负载  
-        8'h20: target_point = 3'd4;  // 中等负载
-        8'h60: target_point = 3'd3;  // 中高负载
-        8'h80: target_point = 3'd2;  // 高负载
-        8'hC0: target_point = 3'd1;  // 很高负载
-        default: target_point = 3'd0; // 最高负载
-    endcase
-    
-    // 温度限制
-    if (thermal_status > 4'hC) begin
-        // 过热保护：降低至少两个等级
-        target_point = (target_point >= 2) ? target_point + 2 : 3'd7;
-    end else if (thermal_status > 4'h8) begin
-        // 高温警告：降低一个等级
-        target_point = (target_point >= 1) ? target_point + 1 : 3'd7;
-    end
-    
-    // 功耗预算限制
-    if (power_budget < 4'h4) begin
-        // 低功耗预算：强制低性能点
-        target_point = (target_point < 3'd4) ? 3'd4 : target_point;
-    end
-end
+**工作点选择策略：**
+1. 基于工作负载的初始选择
+2. 温度保护：高温降级1级，过热降级2级
+3. 功耗预算限制：低预算时强制使用低性能点
 
-// DVFS变更状态机
-typedef enum logic [1:0] {
-    IDLE,
-    REQUEST,
-    WAIT_ACK,
-    SETTLE
-} dvfs_state_t;
+**状态机实现：**
+- IDLE：等待工作点变化
+- REQUEST：发送DVFS变更请求
+- WAIT_ACK：等待确认完成
+- SETTLE：50周期稳定时间
 
-dvfs_state_t state;
-
-always_ff @(posedge clk or negedge rstn) begin
-    if (!rstn) begin
-        state <= IDLE;
-        current_point <= 3'd4;  // 启动时使用标准性能点
-        voltage_level <= DVFS_POINTS[4].voltage;
-        frequency_divider <= DVFS_POINTS[4].freq_div;
-        dvfs_change_req <= 1'b0;
-        change_timer <= 8'h0;
-    end else begin
-        case (state)
-            IDLE: begin
-                if (current_point != target_point) begin
-                    state <= REQUEST;
-                    dvfs_change_req <= 1'b1;
-                end
-            end
-            
-            REQUEST: begin
-                if (dvfs_change_ack) begin
-                    // 更新电压和频率
-                    voltage_level <= DVFS_POINTS[target_point].voltage;
-                    frequency_divider <= DVFS_POINTS[target_point].freq_div;
-                    current_point <= target_point;
-                    
-                    state <= WAIT_ACK;
-                    dvfs_change_req <= 1'b0;
-                end
-            end
-            
-            WAIT_ACK: begin
-                if (!dvfs_change_ack) begin
-                    state <= SETTLE;
-                    change_timer <= 8'd50;  // 50个周期的稳定时间
-                end
-            end
-            
-            SETTLE: begin
-                if (change_timer > 0) begin
-                    change_timer <= change_timer - 1;
-                end else begin
-                    state <= IDLE;
-                end
-            end
-        endcase
-    end
-end
-
-endmodule
-```
+**性能-功耗权衡：**
+- 最高性能模式：100%性能，100%功耗
+- 标准模式：80%性能，60%功耗
+- 待机模式：10%性能，8%功耗
 
 ## <a name="93"></a>9.3 先进封装技术
 
@@ -317,68 +165,44 @@ endmodule
 
 Chiplet是当前高性能计算芯片的重要趋势，允许将不同功能模块制造在不同的工艺节点上，然后通过先进封装技术组合。
 
-```python
-# Chiplet架构的NPU设计示例
-class NPUChipletSystem:
-    def __init__(self):
-        self.chiplets = {
-            'compute_core': {
-                'process_node': '5nm',
-                'area': 100,  # mm²
-                'function': 'MAC阵列和向量处理',
-                'power': 50,  # W
-                'interfaces': ['UCIe', 'CXL']
-            },
-            'memory_controller': {
-                'process_node': '7nm',
-                'area': 25,
-                'function': 'HBM控制器和缓存',
-                'power': 15,
-                'interfaces': ['UCIe', 'HBM3']
-            },
-            'io_complex': {
-                'process_node': '12nm',
-                'area': 40,
-                'function': 'PCIe、以太网、SerDes',
-                'power': 20,
-                'interfaces': ['UCIe', 'PCIe5', 'Ethernet']
-            },
-            'security_engine': {
-                'process_node': '28nm',
-                'area': 10,
-                'function': '加密、认证、密钥管理',
-                'power': 5,
-                'interfaces': ['UCIe']
-            }
-        }
-    
-    def calculate_system_metrics(self):
-        total_area = sum(c['area'] for c in self.chiplets.values())
-        total_power = sum(c['power'] for c in self.chiplets.values())
-        
-        # Chiplet间互连开销估算
-        interconnect_area = total_area * 0.15  # 15%的面积开销
-        interconnect_power = total_power * 0.1  # 10%的功耗开销
-        
-        return {
-            'total_area': total_area + interconnect_area,
-            'total_power': total_power + interconnect_power,
-            'cost_benefit': self.calculate_cost_benefit()
-        }
-    
-    def calculate_cost_benefit(self):
-        # 与单一芯片方案的成本对比
-        monolithic_yield = 0.3  # 大型单片芯片良率
-        chiplet_yield = 0.8     # 小型chiplet良率
-        
-        # 简化的成本模型
-        monolithic_cost = 1000 / monolithic_yield
-        chiplet_cost = sum(
-            100 / chiplet_yield + 50  # 封装成本
-            for _ in self.chiplets
-        )
-        
-        return chiplet_cost / monolithic_cost
+**Chiplet架构的NPU设计方案：**
+
+Chiplet架构将NPU系统分解为多个可独立制造的模块，每个模块可以选择最适合的工艺节点：
+
+**典型Chiplet配置：**
+1. **计算核心Chiplet**：
+   - 工艺：5nm
+   - 面积：100mm²
+   - 功能：MAC阵列和向量处理
+   - 功耗：50W
+   - 接口：UCIe、CXL
+
+2. **存储控制器Chiplet**：
+   - 工艺：7nm
+   - 面积：25mm²
+   - 功能：HBM控制器和缓存
+   - 功耗：15W
+   - 接口：UCIe、HBM3
+
+3. **I/O复合体Chiplet**：
+   - 工艺：12nm
+   - 面积：40mm²
+   - 功能：PCIe、以太网、SerDes
+   - 功耗：20W
+   - 接口：UCIe、PCIe5、Ethernet
+
+4. **安全引擎Chiplet**：
+   - 工艺：28nm
+   - 面积：10mm²
+   - 功能：加密、认证、密钥管理
+   - 功耗：5W
+   - 接口：UCIe
+
+**系统指标估算：**
+- 总面积 = 各Chiplet面积之和 + 15%互连开销
+- 总功耗 = 各Chiplet功耗之和 + 10%互连功耗
+- 成本效益 = Chiplet方案成本 / 单片方案成本
+- 良率优势：Chiplet良率(~80%) vs 单片良率(~30%)
 
 ## <a name="94"></a>9.4 电源网络设计
 
@@ -388,173 +212,36 @@ class NPUChipletSystem:
 
 **NPU典型电源域：**
 
-```systemverilog
-// NPU电源域架构
-module npu_power_domain_controller (
-    input  wire clk,
-    input  wire por_rstn,  // Power-On Reset
-    
-    // 电源域控制信号
-    output wire vdd_core_en,      // 核心计算域 (0.8V)
-    output wire vdd_cache_en,     // 缓存域 (0.9V) 
-    output wire vdd_io_en,        // I/O域 (1.8V)
-    output wire vdd_pll_en,       // PLL域 (1.0V)
-    output wire vdd_analog_en,    // 模拟域 (1.8V)
-    
-    // 时钟域控制
-    output wire clk_core_en,      // 核心时钟使能
-    output wire clk_cache_en,     // 缓存时钟使能
-    output wire clk_io_en,        // I/O时钟使能
-    
-    // 功耗状态控制
-    input  wire [2:0] power_state,    // 功耗状态请求
-    output reg  [2:0] current_state,  // 当前功耗状态
-    
-    // 温度和功耗监控
-    input  wire [7:0] temperature,    // 温度传感器
-    input  wire [7:0] power_monitor,  // 功耗监控
-    
-    // 故障检测
-    output wire power_good,           // 电源正常标志
-    output wire thermal_shutdown      // 热关断信号
-);
+**NPU电源域控制器设计：**
 
-// 功耗状态定义
-typedef enum logic [2:0] {
-    POWER_OFF   = 3'b000,    // 完全关闭
-    STANDBY     = 3'b001,    // 待机模式
-    RETENTION   = 3'b010,    // 保持模式  
-    ACTIVE_LOW  = 3'b011,    // 低性能运行
-    ACTIVE_MID  = 3'b100,    // 中等性能运行
-    ACTIVE_HIGH = 3'b101,    // 高性能运行
-    TURBO       = 3'b110,    // 超频模式
-    EMERGENCY   = 3'b111     // 紧急模式
-} power_state_t;
+电源域控制器负责管理NPU中不同功能模块的电源供应，实现精细化的功耗管理。
 
-// 电源序列控制状态机
-typedef enum logic [2:0] {
-    PWR_OFF,
-    PWR_RAMP_ANALOG,
-    PWR_RAMP_IO,
-    PWR_RAMP_PLL,
-    PWR_RAMP_CACHE,
-    PWR_RAMP_CORE,
-    PWR_STABLE,
-    PWR_DOWN
-} power_seq_state_t;
+**电源域划分：**
+- 核心计算域：0.8V，为MAC阵列供电
+- 缓存域：0.9V，为片上存储供电
+- I/O域：1.8V，为接口电路供电
+- PLL域：1.0V，为时钟生成电路供电
+- 模拟域：1.8V，为模拟电路供电
 
-power_seq_state_t pwr_state;
-reg [15:0] pwr_timer;
+**功耗状态定义：**
+- POWER_OFF：完全关闭
+- STANDBY：待机模式，仅保留必要电源
+- RETENTION：保持模式，保留数据
+- ACTIVE_LOW/MID/HIGH：不同性能级别
+- TURBO：超频模式
+- EMERGENCY：紧急保护模式
 
-// 电源上电序列
-always_ff @(posedge clk or negedge por_rstn) begin
-    if (!por_rstn) begin
-        pwr_state <= PWR_OFF;
-        pwr_timer <= 16'h0;
-        vdd_analog_en <= 1'b0;
-        vdd_io_en <= 1'b0;
-        vdd_pll_en <= 1'b0;
-        vdd_cache_en <= 1'b0;
-        vdd_core_en <= 1'b0;
-        current_state <= POWER_OFF;
-    end else begin
-        case (pwr_state)
-            PWR_OFF: begin
-                if (power_state != POWER_OFF) begin
-                    pwr_state <= PWR_RAMP_ANALOG;
-                    pwr_timer <= 16'd1000;  // 1000 cycles for analog ramp
-                end
-            end
-            
-            PWR_RAMP_ANALOG: begin
-                vdd_analog_en <= 1'b1;
-                if (pwr_timer > 0) begin
-                    pwr_timer <= pwr_timer - 1;
-                end else begin
-                    pwr_state <= PWR_RAMP_IO;
-                    pwr_timer <= 16'd500;   // 500 cycles for I/O ramp
-                end
-            end
-            
-            PWR_RAMP_IO: begin
-                vdd_io_en <= 1'b1;
-                if (pwr_timer > 0) begin
-                    pwr_timer <= pwr_timer - 1;
-                end else begin
-                    pwr_state <= PWR_RAMP_PLL;
-                    pwr_timer <= 16'd2000;  // 2000 cycles for PLL lock
-                end
-            end
-            
-            PWR_RAMP_PLL: begin
-                vdd_pll_en <= 1'b1;
-                if (pwr_timer > 0) begin
-                    pwr_timer <= pwr_timer - 1;
-                end else begin
-                    pwr_state <= PWR_RAMP_CACHE;
-                    pwr_timer <= 16'd300;   // 300 cycles for cache power
-                end
-            end
-            
-            PWR_RAMP_CACHE: begin
-                vdd_cache_en <= 1'b1;
-                if (pwr_timer > 0) begin
-                    pwr_timer <= pwr_timer - 1;
-                end else begin
-                    pwr_state <= PWR_RAMP_CORE;
-                    pwr_timer <= 16'd200;   // 200 cycles for core power
-                end
-            end
-            
-            PWR_RAMP_CORE: begin
-                vdd_core_en <= 1'b1;
-                if (pwr_timer > 0) begin
-                    pwr_timer <= pwr_timer - 1;
-                end else begin
-                    pwr_state <= PWR_STABLE;
-                    current_state <= power_state;
-                end
-            end
-            
-            PWR_STABLE: begin
-                // 正常运行状态，响应功耗状态变更
-                if (power_state == POWER_OFF) begin
-                    pwr_state <= PWR_DOWN;
-                    pwr_timer <= 16'd100;
-                end else begin
-                    current_state <= power_state;
-                end
-            end
-            
-            PWR_DOWN: begin
-                // 按相反顺序关闭电源域
-                vdd_core_en <= 1'b0;
-                vdd_cache_en <= 1'b0;
-                vdd_pll_en <= 1'b0;
-                vdd_io_en <= 1'b0;
-                vdd_analog_en <= 1'b0;
-                if (pwr_timer > 0) begin
-                    pwr_timer <= pwr_timer - 1;
-                end else begin
-                    pwr_state <= PWR_OFF;
-                    current_state <= POWER_OFF;
-                end
-            end
-        endcase
-    end
-end
+**电源上电序列：**
+1. 模拟域上电（1000周期）
+2. I/O域上电（500周期）
+3. PLL域上电并等待锁定（2000周期）
+4. 缓存域上电（300周期）
+5. 核心域上电（200周期）
 
-// 时钟使能生成
-assign clk_core_en = vdd_core_en && (current_state >= ACTIVE_LOW);
-assign clk_cache_en = vdd_cache_en && (current_state >= STANDBY);
-assign clk_io_en = vdd_io_en;
-
-// 功耗监控和保护
-assign power_good = vdd_core_en && vdd_cache_en && vdd_io_en && vdd_pll_en;
-assign thermal_shutdown = (temperature > 8'd200) || (power_monitor > 8'd240);
-
-endmodule
-```
+**保护机制：**
+- 温度监控：超过200°C触发热关断
+- 功耗监控：超过240W触发保护
+- 电源完整性检查：所有域正常才输出power_good信号
 
 ### 9.4.2 电源网络拓扑设计
 

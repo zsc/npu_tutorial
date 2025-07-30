@@ -35,60 +35,16 @@
 
 #### 验证环境架构
 
-```systemverilog
-// NPU验证环境顶层架构
-class npu_verification_env extends uvm_env;
-    
-    // 验证组件
-    npu_sequencer   m_sequencer;
-    npu_driver      m_driver;
-    npu_monitor     m_monitor;
-    npu_scoreboard  m_scoreboard;
-    npu_coverage    m_coverage;
-    
-    // 接口VIP
-    axi_vip         m_axi_vip;
-    ddr_vip         m_ddr_vip;
-    
-    // 配置对象
-    npu_config      m_config;
-    
-    function new(string name, uvm_component parent);
-        super.new(name, parent);
-    endfunction
-    
-    function void build_phase(uvm_phase phase);
-        super.build_phase(phase);
-        
-        // 创建验证组件
-        m_sequencer = npu_sequencer::type_id::create("m_sequencer", this);
-        m_driver = npu_driver::type_id::create("m_driver", this);
-        m_monitor = npu_monitor::type_id::create("m_monitor", this);
-        m_scoreboard = npu_scoreboard::type_id::create("m_scoreboard", this);
-        m_coverage = npu_coverage::type_id::create("m_coverage", this);
-        
-        // 创建VIP
-        m_axi_vip = axi_vip::type_id::create("m_axi_vip", this);
-        m_ddr_vip = ddr_vip::type_id::create("m_ddr_vip", this);
-        
-        // 获取配置
-        if (!uvm_config_db#(npu_config)::get(this, "", "config", m_config))
-            `uvm_fatal("CONFIG_ERROR", "Failed to get NPU config")
-    endfunction
-    
-    function void connect_phase(uvm_phase phase);
-        super.connect_phase(phase);
-        
-        // 连接driver和sequencer
-        m_driver.seq_item_port.connect(m_sequencer.seq_item_export);
-        
-        // 连接monitor到scoreboard
-        m_monitor.analysis_port.connect(m_scoreboard.analysis_export);
-        m_monitor.analysis_port.connect(m_coverage.analysis_export);
-    endfunction
-    
-endclass
-```
+**NPU验证环境架构实现：**
+
+验证环境采用UVM框架构建，包含以下核心组件：
+- **Sequencer**：生成测试序列，控制激励生成策略
+- **Driver**：将事务级数据转换为信号级激励
+- **Monitor**：监控DUT行为，收集响应数据
+- **Scoreboard**：比较实际输出与期望输出
+- **Coverage Collector**：收集功能覆盖率数据
+
+环境集成了标准协议VIP（AXI VIP、DDR VIP），并通过配置对象实现参数化配置。组件间通过TLM端口连接，支持数据流的高效传输。
 
 ## <a name="72"></a>7.2 制定NPU验证计划
 
@@ -164,46 +120,15 @@ endclass
 | 断言覆盖率 | 触发的断言百分比 | 接口协议验证 | 100% |
 | 交叉覆盖率 | 参数组合覆盖百分比 | 配置空间验证 | >95% |
 
-```systemverilog
-// NPU功能覆盖率定义示例
-covergroup npu_operation_cg @(posedge clk);
-    
-    // 操作类型覆盖
-    operation_type: coverpoint op_type {
-        bins conv2d = {CONV2D};
-        bins matmul = {MATMUL};
-        bins pool   = {POOL};
-        bins relu   = {RELU};
-        bins add    = {ADD};
-        bins mul    = {MUL};
-    }
-    
-    // 数据类型覆盖
-    data_type: coverpoint dtype {
-        bins int8   = {INT8};
-        bins int16  = {INT16};
-        bins fp16   = {FP16};
-        bins fp32   = {FP32};
-    }
-    
-    // 张量形状覆盖
-    tensor_shape: coverpoint {batch, height, width, channel} {
-        bins small  = {[1:4], [1:32], [1:32], [1:64]};
-        bins medium = {[1:16], [33:224], [33:224], [65:512]};
-        bins large  = {[17:64], [225:1024], [225:1024], [513:2048]};
-    }
-    
-    // 交叉覆盖：操作类型与数据类型的组合
-    op_dtype_cross: cross operation_type, data_type {
-        ignore_bins unsupported = binsof(operation_type.pool) && 
-                                  binsof(data_type.fp32);
-    }
-    
-    // 交叉覆盖：数据类型与张量形状的组合
-    dtype_shape_cross: cross data_type, tensor_shape;
-    
-endgroup
-```
+**NPU功能覆盖率定义：**
+
+覆盖率定义包含多个维度：
+- **操作类型覆盖**：CONV2D、MATMUL、POOL、RELU、ADD、MUL等操作
+- **数据类型覆盖**：INT8、INT16、FP16、FP32等精度格式
+- **张量形状覆盖**：小型（1-32）、中型（33-224）、大型（225-1024）张量尺寸
+- **交叉覆盖**：操作类型与数据类型组合、数据类型与张量形状组合
+
+通过系统化的覆盖率定义，确保验证能够覆盖所有重要的使用场景和边界条件。
 
 ## <a name="73"></a>7.3 UVM验证环境构建
 
@@ -215,479 +140,117 @@ NPU的UVM环境设计面临着独特的挑战。与传统处理器不同，NPU�
 
 ### 7.3.2 NPU验证环境架构
 
-```systemverilog
-// NPU卷积模块的高级UVM测试环境
-class conv_sequence_item extends uvm_sequence_item;
-    `uvm_object_utils(conv_sequence_item)
-    
-    // 输入数据
-    rand bit [7:0] input_data[];
-    rand bit [7:0] weight_data[];
-    rand int kernel_size;
-    rand int stride;
-    rand int padding;
-    
-    // 错误注入控制
-    rand bit enable_error_injection;
-    rand error_type_e error_type;
-    rand int error_location;
-    
-    // 错误类型定义
-    typedef enum {
-        NO_ERROR,
-        DATA_CORRUPTION,      // 数据损坏
-        WEIGHT_CORRUPTION,    // 权重损坏
-        OVERFLOW_ERROR,       // 溢出错误
-        BUS_ERROR,           // 总线错误
-        MEMORY_ECC_ERROR     // 内存ECC错误
-    } error_type_e;
-    
-    // 约束
-    constraint valid_params_c {
-        kernel_size inside {1, 3, 5, 7};
-        stride inside {1, 2, 4};
-        padding inside {0, 1, 2, 3};
-        input_data.size() == 224*224*3;  // 假设输入是224x224x3
-        weight_data.size() == kernel_size*kernel_size*3*64;  // 输出64通道
-    }
-    
-    // 错误注入约束
-    constraint error_injection_c {
-        enable_error_injection dist {0 := 90, 1 := 10};  // 10%概率注入错误
-        if (enable_error_injection) {
-            error_type dist {
-                NO_ERROR := 0,
-                DATA_CORRUPTION := 30,
-                WEIGHT_CORRUPTION := 20,
-                OVERFLOW_ERROR := 20,
-                BUS_ERROR := 20,
-                MEMORY_ECC_ERROR := 10
-            };
-            error_location inside {[0:input_data.size()-1]};
-        } else {
-            error_type == NO_ERROR;
-        }
-    }
-    
-    function new(string name = "conv_sequence_item");
-        super.new(name);
-    endfunction
-    
-    // 后随机化处理
-    function void post_randomize();
-        // 根据错误类型注入错误
-        if (enable_error_injection) begin
-            case (error_type)
-                DATA_CORRUPTION: begin
-                    // 随机翻转数据中的几个比特
-                    for (int i = 0; i < 5; i++) begin
-                        int idx = $urandom_range(0, input_data.size()-1);
-                        input_data[idx] = input_data[idx] ^ (1 << $urandom_range(0, 7));
-                    end
-                end
-                WEIGHT_CORRUPTION: begin
-                    // 将某些权重设置为极值
-                    for (int i = 0; i < 10; i++) begin
-                        int idx = $urandom_range(0, weight_data.size()-1);
-                        weight_data[idx] = $urandom_range(0, 1) ? 8'hFF : 8'h00;
-                    end
-                end
-            endcase
-        end
-    endfunction
-endclass
-```
+**NPU卷积模块UVM测试环境设计：**
+
+测试环境包含以下关键特性：
+
+1. **数据结构定义**：
+   - 输入数据和权重数据的随机化数组
+   - 卷积参数（kernel_size、stride、padding）
+   - 错误注入控制参数
+
+2. **错误类型分类**：
+   - 数据损坏（DATA_CORRUPTION）
+   - 权重损坏（WEIGHT_CORRUPTION）
+   - 溢出错误（OVERFLOW_ERROR）
+   - 总线错误（BUS_ERROR）
+   - 内存ECC错误（MEMORY_ECC_ERROR）
+
+3. **约束设计**：
+   - 卷积核大小：1、3、5、7
+   - 步长：1、2、4
+   - 填充：0-3
+   - 错误注入10%概率，每种错误类型有不同权重
+
+4. **后随机化处理**：
+   - 数据损坏：随机翻转数位
+   - 权重损坏：设置极值（0xFF或0x00）
 
 ### 7.3.3 增强型Driver设计
 
-```systemverilog
-// 增强型卷积模块Driver（支持错误注入）
-class conv_driver extends uvm_driver #(conv_sequence_item);
-    `uvm_component_utils(conv_driver)
-    
-    virtual conv_if vif;
-    int error_count = 0;
-    
-    function new(string name, uvm_component parent);
-        super.new(name, parent);
-    endfunction
-    
-    task run_phase(uvm_phase phase);
-        forever begin
-            seq_item_port.get_next_item(req);
-            drive_transaction(req);
-            seq_item_port.item_done();
-        end
-    endtask
-    
-    task drive_transaction(conv_sequence_item trans);
-        // 配置卷积参数
-        vif.kernel_size <= trans.kernel_size;
-        vif.stride <= trans.stride;
-        vif.padding <= trans.padding;
-        @(posedge vif.clk);
-        
-        // 根据错误类型注入总线错误
-        if (trans.enable_error_injection && trans.error_type == conv_sequence_item::BUS_ERROR) begin
-            inject_bus_error();
-        end
-        
-        // 加载权重（可能注入ECC错误）
-        vif.weight_valid <= 1'b1;
-        foreach(trans.weight_data[i]) begin
-            vif.weight_data <= trans.weight_data[i];
-            
-            // 注入内存ECC错误
-            if (trans.enable_error_injection && 
-                trans.error_type == conv_sequence_item::MEMORY_ECC_ERROR &&
-                i == trans.error_location) begin
-                vif.mem_ecc_error <= 1'b1;
-                `uvm_info("DRIVER", $sformatf("Injecting ECC error at weight[%0d]", i), UVM_LOW)
-            end else begin
-                vif.mem_ecc_error <= 1'b0;
-            end
-            
-            @(posedge vif.clk);
-        end
-        vif.weight_valid <= 1'b0;
-        vif.mem_ecc_error <= 1'b0;
-        
-        // 输入数据（可能注入溢出）
-        vif.data_valid <= 1'b1;
-        foreach(trans.input_data[i]) begin
-            vif.input_data <= trans.input_data[i];
-            
-            // 注入溢出错误
-            if (trans.enable_error_injection && 
-                trans.error_type == conv_sequence_item::OVERFLOW_ERROR &&
-                i % 100 == 0) begin
-                vif.force_overflow <= 1'b1;
-                `uvm_info("DRIVER", "Forcing accumulator overflow", UVM_LOW)
-            end else begin
-                vif.force_overflow <= 1'b0;
-            end
-            
-            @(posedge vif.clk);
-        end
-        vif.data_valid <= 1'b0;
-        vif.force_overflow <= 1'b0;
-        
-        // 记录错误注入统计
-        if (trans.enable_error_injection) begin
-            error_count++;
-            `uvm_info("DRIVER", $sformatf("Total errors injected: %0d", error_count), UVM_MEDIUM)
-        end
-    endtask
-    
-    // 注入总线错误
-    task inject_bus_error();
-        `uvm_info("DRIVER", "Injecting AXI bus error", UVM_LOW)
-        vif.axi_error_inject <= 1'b1;
-        @(posedge vif.clk);
-        vif.axi_error_inject <= 1'b0;
-    endtask
-    
-endclass
-```
+**增强型Driver设计特点：**
+
+Driver组件负责将事务级激励转换为信号级激励，并支持多种错误注入功能：
+
+1. **基本功能**：
+   - 配置卷积参数（kernel_size、stride、padding）
+   - 加载权重数据和输入数据
+   - 控制有效信号和时序
+
+2. **错误注入策略**：
+   - **总线错误**：通过AXI错误注入信号触发
+   - **ECC错误**：在指定地址设置mem_ecc_error信号
+   - **溢出错误**：周期性强制累加器溢出
+
+3. **统计功能**：
+   - 跟踪注入的错误总数
+   - 记录每次错误注入的详细信息
+   - 支持不同级别的日志输出
+
+4. **时序控制**：
+   - 基于时钟边沿的同步操作
+   - 确保数据和控制信号的正确时序关系
 
 ### 7.3.4 智能Monitor设计
 
 Monitor是验证环境的"眼睛"，负责观察设计的行为并收集数据。在NPU验证中，Monitor需要处理大量的并行数据流。
 
-```systemverilog
-// 智能NPU Monitor设计
-class npu_monitor extends uvm_monitor;
-    `uvm_component_utils(npu_monitor)
-    
-    virtual npu_if vif;
-    uvm_analysis_port #(conv_sequence_item) analysis_port;
-    
-    // 性能计数器
-    int total_operations = 0;
-    int error_detected = 0;
-    real average_latency = 0;
-    real peak_throughput = 0;
-    
-    // 数据完整性检查
-    bit [31:0] checksum_input = 0;
-    bit [31:0] checksum_output = 0;
-    
-    function new(string name, uvm_component parent);
-        super.new(name, parent);
-        analysis_port = new("analysis_port", this);
-    endfunction
-    
-    task run_phase(uvm_phase phase);
-        fork
-            monitor_data_flow();
-            monitor_performance();
-            monitor_error_signals();
-            monitor_power_events();
-        join
-    endtask
-    
-    // 监控数据流
-    task monitor_data_flow();
-        conv_sequence_item trans;
-        forever begin
-            @(posedge vif.clk);
-            
-            if (vif.start_conv) begin
-                trans = conv_sequence_item::type_id::create("trans");
-                
-                // 收集输入数据
-                collect_input_data(trans);
-                
-                // 等待计算完成
-                wait(vif.conv_done);
-                
-                // 收集输出数据
-                collect_output_data(trans);
-                
-                // 数据完整性检查
-                verify_data_integrity(trans);
-                
-                // 发送到scoreboard
-                analysis_port.write(trans);
-                
-                total_operations++;
-            end
-        end
-    endtask
-    
-    // 监控性能指标
-    task monitor_performance();
-        time start_time, end_time;
-        int cycle_count = 0;
-        
-        forever begin
-            @(posedge vif.clk);
-            
-            if (vif.start_conv) begin
-                start_time = $time;
-                cycle_count = 0;
-            end
-            
-            if (vif.conv_done) begin
-                end_time = $time;
-                cycle_count++;
-                
-                // 计算延迟
-                real latency = (end_time - start_time) / 1ns;
-                average_latency = (average_latency * (total_operations - 1) + latency) / total_operations;
-                
-                // 计算吞吐量
-                real current_throughput = 1.0 / latency * 1000; // 每秒操作数
-                if (current_throughput > peak_throughput)
-                    peak_throughput = current_throughput;
-                
-                `uvm_info("MONITOR", $sformatf("Op %0d: Latency=%.2f ns, Throughput=%.2f ops/s", 
-                         total_operations, latency, current_throughput), UVM_LOW)
-            end
-        end
-    endtask
-    
-    // 监控错误信号
-    task monitor_error_signals();
-        forever begin
-            @(posedge vif.clk);
-            
-            if (vif.overflow_error) begin
-                `uvm_error("MONITOR", "Arithmetic overflow detected")
-                error_detected++;
-            end
-            
-            if (vif.underflow_error) begin
-                `uvm_error("MONITOR", "Arithmetic underflow detected") 
-                error_detected++;
-            end
-            
-            if (vif.memory_error) begin
-                `uvm_error("MONITOR", "Memory access error detected")
-                error_detected++;
-            end
-            
-            if (vif.protocol_error) begin
-                `uvm_error("MONITOR", "Bus protocol violation detected")
-                error_detected++;
-            end
-        end
-    endtask
-    
-    // 监控功耗事件
-    task monitor_power_events();
-        forever begin
-            @(posedge vif.clk);
-            
-            if (vif.power_gating_event) begin
-                `uvm_info("MONITOR", "Power gating event detected", UVM_MEDIUM)
-            end
-            
-            if (vif.clock_gating_event) begin
-                `uvm_info("MONITOR", "Clock gating event detected", UVM_MEDIUM)
-            end
-            
-            if (vif.dvfs_event) begin
-                `uvm_info("MONITOR", "DVFS transition detected", UVM_MEDIUM)
-            end
-        end
-    endtask
-    
-    // 数据完整性验证
-    function void verify_data_integrity(conv_sequence_item trans);
-        // 计算输入数据校验和
-        checksum_input = 0;
-        foreach(trans.input_data[i]) begin
-            checksum_input += trans.input_data[i];
-        end
-        
-        // 验证输出数据的合理性
-        foreach(trans.output_data[i]) begin
-            if (trans.output_data[i] > 16'h7FFF) begin
-                `uvm_warning("MONITOR", $sformatf("Suspicious large output value: %h", trans.output_data[i]))
-            end
-        end
-    endfunction
-    
-    // 生成最终报告
-    function void report_phase(uvm_phase phase);
-        `uvm_info("MONITOR", "=== NPU Verification Statistics ===", UVM_NONE)
-        `uvm_info("MONITOR", $sformatf("Total Operations: %0d", total_operations), UVM_NONE)
-        `uvm_info("MONITOR", $sformatf("Errors Detected: %0d", error_detected), UVM_NONE) 
-        `uvm_info("MONITOR", $sformatf("Average Latency: %.2f ns", average_latency), UVM_NONE)
-        `uvm_info("MONITOR", $sformatf("Peak Throughput: %.2f ops/s", peak_throughput), UVM_NONE)
-        
-        if (error_detected > 0) begin
-            `uvm_error("MONITOR", "Verification completed with errors!")
-        end else begin
-            `uvm_info("MONITOR", "Verification completed successfully!", UVM_NONE)
-        end
-    endfunction
-    
-endclass
-```
+**智能Monitor设计特点：**
+
+Monitor作为验证环境的"眼睛"，负责全面监控DUT的行为：
+
+1. **多线程监控架构**：
+   - 数据流监控：收集输入/输出数据，验证数据完整性
+   - 性能监控：计算延迟、吞吐量等关键指标
+   - 错误监控：检测溢出、下溢、内存错误、协议违规
+   - 功耗监控：跟踪电源门控、时钟门控、DVFS事件
+
+2. **性能指标统计**：
+   - 平均延迟计算：动态更新平均值
+   - 峰值吞吐量跟踪：记录最佳性能
+   - 操作计数：统计总操作次数
+
+3. **数据完整性验证**：
+   - 输入数据校验和计算
+   - 输出数据合理性检查（检测异常大值）
+   - 数据传输完整性确认
+
+4. **报告生成功能**：
+   - 验证统计信息汇总
+   - 错误检测结果
+   - 性能指标总结
+   - 最终验证结果判定
 
 ### 7.3.5 高级Scoreboard设计
 
-```systemverilog
-// 预测型Scoreboard，包含硬件加速的参考模型
-class npu_scoreboard extends uvm_scoreboard;
-    `uvm_component_utils(npu_scoreboard)
-    
-    uvm_analysis_export #(conv_sequence_item) analysis_export;
-    uvm_tlm_analysis_fifo #(conv_sequence_item) analysis_fifo;
-    
-    // 参考模型（可以是软件模型或硬件加速模型）
-    npu_reference_model ref_model;
-    
-    // 比较统计
-    int total_comparisons = 0;
-    int mismatches = 0;
-    real max_error = 0.0;
-    real average_error = 0.0;
-    
-    // 误差容忍度（对于量化计算）
-    real error_tolerance = 0.01;  // 1%误差容忍度
-    
-    function new(string name, uvm_component parent);
-        super.new(name, parent);
-        analysis_export = new("analysis_export", this);
-        analysis_fifo = new("analysis_fifo", this);
-    endfunction
-    
-    function void build_phase(uvm_phase phase);
-        super.build_phase(phase);
-        ref_model = npu_reference_model::type_id::create("ref_model", this);
-    endfunction
-    
-    function void connect_phase(uvm_phase phase);
-        analysis_export.connect(analysis_fifo.analysis_export);
-    endfunction
-    
-    task run_phase(uvm_phase phase);
-        conv_sequence_item trans;
-        forever begin
-            analysis_fifo.get(trans);
-            check_transaction(trans);
-        end
-    endtask
-    
-    // 检查单个transaction
-    function void check_transaction(conv_sequence_item trans);
-        conv_sequence_item expected_trans;
-        real error_percentage;
-        
-        // 使用参考模型计算期望结果
-        expected_trans = ref_model.predict(trans);
-        
-        // 比较结果
-        foreach(trans.output_data[i]) begin
-            real actual = $itor(trans.output_data[i]);
-            real expected = $itor(expected_trans.output_data[i]);
-            real error = abs(actual - expected) / (expected + 0.001); // 避免除零
-            
-            if (error > error_tolerance) begin
-                `uvm_error("SCOREBOARD", 
-                    $sformatf("Mismatch at output[%0d]: Expected=%0d, Actual=%0d, Error=%.2f%%", 
-                             i, expected_trans.output_data[i], trans.output_data[i], error*100))
-                mismatches++;
-            end
-            
-            // 更新统计信息
-            if (error > max_error) max_error = error;
-            average_error = (average_error * total_comparisons + error) / (total_comparisons + 1);
-        end
-        
-        total_comparisons++;
-        
-        // 特殊检查：量化误差分析
-        if (trans.data_type == INT8) begin
-            analyze_quantization_error(trans, expected_trans);
-        end
-        
-        `uvm_info("SCOREBOARD", $sformatf("Transaction %0d checked. Max error: %.4f%%", 
-                 total_comparisons, max_error*100), UVM_HIGH)
-    endfunction
-    
-    // 量化误差分析
-    function void analyze_quantization_error(conv_sequence_item actual, conv_sequence_item expected);
-        int histogram[10]; // 误差分布直方图
-        
-        foreach(actual.output_data[i]) begin
-            real error = abs($itor(actual.output_data[i]) - $itor(expected.output_data[i])) / 
-                         ($itor(expected.output_data[i]) + 0.001);
-            
-            int bucket = error * 1000; // 转换为千分比
-            if (bucket < 10) histogram[bucket]++;
-        end
-        
-        // 输出量化误差分析
-        `uvm_info("SCOREBOARD", "Quantization Error Distribution:", UVM_MEDIUM)
-        for (int i = 0; i < 10; i++) begin
-            if (histogram[i] > 0) begin
-                `uvm_info("SCOREBOARD", $sformatf("  %0d.%0d-%0d.%0d%%: %0d samples", 
-                         i/10, i%10, (i+1)/10, (i+1)%10, histogram[i]), UVM_MEDIUM)
-            end
-        end
-    endfunction
-    
-    function void report_phase(uvm_phase phase);
-        `uvm_info("SCOREBOARD", "=== Scoreboard Final Report ===", UVM_NONE)
-        `uvm_info("SCOREBOARD", $sformatf("Total Comparisons: %0d", total_comparisons), UVM_NONE)
-        `uvm_info("SCOREBOARD", $sformatf("Mismatches: %0d (%.2f%%)", mismatches, 
-                 mismatches*100.0/total_comparisons), UVM_NONE)
-        `uvm_info("SCOREBOARD", $sformatf("Max Error: %.4f%%", max_error*100), UVM_NONE)
-        `uvm_info("SCOREBOARD", $sformatf("Average Error: %.4f%%", average_error*100), UVM_NONE)
-        
-        if (mismatches == 0) begin
-            `uvm_info("SCOREBOARD", "✓ All comparisons passed!", UVM_NONE)
-        end else begin
-            `uvm_error("SCOREBOARD", "✗ Verification failed with mismatches!")
-        end
-    endfunction
-    
-endclass
-```
+**高级Scoreboard设计特点：**
+
+Scoreboard是验证环境的核心比较器，负责结果验证：
+
+1. **参考模型集成**：
+   - 支持软件参考模型或硬件加速模型
+   - 通过参考模型预测期望结果
+   - 实现数据流级别的验证
+
+2. **误差容忍机制**：
+   - 可配置的误差容忍度（默认1%）
+   - 适应量化计算的精度损失
+   - 避免除零错误的健壮设计
+
+3. **统计分析功能**：
+   - 总比较次数和不匹配数
+   - 最大误差和平均误差跟踪
+   - 量化误差分布直方图
+
+4. **量化误差分析**：
+   - 针对INT8等量化数据类型
+   - 误差分布统计（0.0%-0.9%区间）
+   - 详细的误差分桶统计
+
+5. **结果报告**：
+   - 全面的最终报告
+   - 错误率百分比计算
+   - 清晰的通过/失败指示
 
 ## <a name="74"></a>7.4 形式化验证
 
@@ -695,160 +258,78 @@ endclass
 
 形式化验证使用数学方法证明设计的正确性，特别适用于关键控制逻辑的验证。
 
-```systemverilog
-// NPU仲裁器的形式化验证属性
-module npu_arbiter_properties(
-    input clk,
-    input rstn,
-    input [3:0] request,
-    input [3:0] grant,
-    input [1:0] grant_id
-);
+**NPU仲裁器形式化验证属性：**
 
-// 属性1：互斥性 - 同时只能有一个grant有效
-property mutual_exclusion;
-    @(posedge clk) disable iff (!rstn)
-    $onehot0(grant);  // 最多一个bit为1
-endproperty
-assert_mutual_exclusion: assert property(mutual_exclusion)
-    else `uvm_error("FORMAL", "Multiple grants active simultaneously")
+形式化验证使用SVA（SystemVerilog Assertions）定义关键属性：
 
-// 属性2：活跃性 - 有请求必须有响应
-property liveness;
-    @(posedge clk) disable iff (!rstn)
-    |request |-> ##[1:10] |grant;  // 请求后1-10个周期内必须有grant
-endproperty
-assert_liveness: assert property(liveness)
-    else `uvm_error("FORMAL", "Request not granted within timeout")
+1. **互斥性属性**：
+   - 使用$onehot0函数确保最多一个grant有效
+   - 防止多个请求者同时获得资源
 
-// 属性3：公平性 - 长期来看各请求者获得公平服务
-property fairness;
-    @(posedge clk) disable iff (!rstn)
-    request[0] && !grant[0] |-> ##[1:20] grant[0];
-endproperty
-assert_fairness_0: assert property(fairness)
-    else `uvm_error("FORMAL", "Request 0 starved")
+2. **活跃性属性**：
+   - 有请求必须在1-10个周期内响应
+   - 防止系统死锁或无响应
 
-// 属性4：grant_id的正确性
-property grant_id_correct;
-    @(posedge clk) disable iff (!rstn)
-    grant[0] |-> grant_id == 0;
-endproperty
-assert_grant_id_0: assert property(grant_id_correct)
-    else `uvm_error("FORMAL", "Grant ID mismatch for request 0")
+3. **公平性属性**：
+   - 每个请求者在20个周期内必须得到服务
+   - 防止请求者被饿死
 
-// 重复为其他请求者定义类似属性...
+4. **正确性属性**：
+   - grant_id必须与活动的grant位匹配
+   - 确保仲裁逻辑的正确性
 
-// 覆盖率属性 - 确保所有请求者都被测试到
-cover_all_requesters: cover property(
-    @(posedge clk) disable iff (!rstn)
-    (grant[0] ##1 grant[1] ##1 grant[2] ##1 grant[3])
-);
-
-endmodule
-```
+5. **覆盖率属性**：
+   - 确保所有请求者都被测试到
+   - 使用时序延迟##1定义顺序覆盖
 
 ### 7.4.2 MAC阵列数据流形式化验证
 
-```systemverilog
-// MAC阵列数据流的形式化验证
-module mac_array_properties(
-    input clk,
-    input rstn,
-    input start_compute,
-    input [7:0] input_data,
-    input [7:0] weight_data,
-    input data_valid,
-    input weight_valid,
-    output [31:0] result,
-    output result_valid
-);
+**MAC阵列数据流形式化验证：**
 
-// 属性1：数据流延迟确定性
-property deterministic_latency;
-    @(posedge clk) disable iff (!rstn)
-    start_compute && data_valid && weight_valid |-> ##4 result_valid;
-endproperty
-assert_deterministic_latency: assert property(deterministic_latency)
-    else `uvm_error("FORMAL", "MAC array latency not deterministic")
+针对MAC阵列的关键数据流属性进行形式化验证：
 
-// 属性2：数据有效性传播
-property valid_propagation;
-    @(posedge clk) disable iff (!rstn)
-    !data_valid || !weight_valid |-> ##[1:5] !result_valid;
-endproperty
-assert_valid_propagation: assert property(valid_propagation)
-    else `uvm_error("FORMAL", "Invalid data propagated through MAC array")
+1. **延迟确定性**：
+   - 从bstart_compute到result_valid固定4个周期
+   - 确保MAC阵列延迟可预测
+   - 支持流水线设计的验证
 
-// 属性3：溢出检测
-property overflow_detection;
-    @(posedge clk) disable iff (!rstn)
-    result_valid && (result > 32'h7FFFFFFF) |-> overflow_flag;
-endproperty
-assert_overflow_detection: assert property(overflow_detection)
-    else `uvm_error("FORMAL", "Overflow not detected")
+2. **数据有效性传播**：
+   - 无效输入不会产生有效输出
+   - 1-5个周期内保持无效状态
+   - 防止错误数据传播
 
-// 覆盖率：边界条件
-cover_max_input: cover property(
-    @(posedge clk) disable iff (!rstn)
-    input_data == 8'hFF && weight_data == 8'hFF
-);
+3. **溢出检测机制**：
+   - 结果超过32位有符号整数范围时触发
+   - overflow_flag信号必须同步置位
+   - 确保算术异常被正确捕获
 
-cover_zero_input: cover property(
-    @(posedge clk) disable iff (!rstn)
-    input_data == 8'h00 || weight_data == 8'h00
-);
-
-endmodule
-```
+4. **边界条件覆盖**：
+   - 最大值输入（FF x FF）
+   - 零值输入测试
+   - 确保极端情况被测试到
 
 ### 7.4.3 功耗管理形式化验证
 
-```systemverilog
-// 功耗管理的形式化验证
-module power_management_properties(
-    input clk,
-    input rstn,
-    input power_down_req,
-    input power_up_req,
-    input idle_state,
-    input power_gated,
-    input clock_gated,
-    input retention_enable
-);
+**功耗管理形式化验证：**
 
-// 属性1：功耗状态转换安全性
-property safe_power_down;
-    @(posedge clk) disable iff (!rstn)
-    power_down_req && !idle_state |-> !power_gated until idle_state;
-endproperty
-assert_safe_power_down: assert property(safe_power_down)
-    else `uvm_error("FORMAL", "Unsafe power down during active operation")
+针对NPU功耗管理的关键安全属性进行形式化验证：
 
-// 属性2：数据保持
-property data_retention;
-    @(posedge clk) disable iff (!rstn)
-    power_down_req |-> ##[0:3] retention_enable;
-endproperty
-assert_data_retention: assert property(data_retention)
-    else `uvm_error("FORMAL", "Data retention not enabled before power down")
+1. **安全下电机制**：
+   - 在非空闲状态时禁止电源门控
+   - 使用until操作符确保状态转换安全
+   - 防止活动操作中意外断电
 
-// 属性3：时钟门控在功耗门控之前
-property clock_before_power;
-    @(posedge clk) disable iff (!rstn)
-    power_gated |-> clock_gated;
-endproperty
-assert_clock_before_power: assert property(clock_before_power)
-    else `uvm_error("FORMAL", "Power gated without clock gating")
+2. **数据保持策略**：
+   - 下电请求后0-3周期内启用数据保持
+   - 确保关键数据不丢失
+   - 支持状态保存和恢复
 
-// 属性4：上电序列
-property power_up_sequence;
-    @(posedge clk) disable iff (!rstn)
-    power_up_req && power_gated |-> 
-        ##1 !power_gated ##1 !clock_gated ##1 !retention_enable;
-endproperty
-assert_power_up_sequence: assert property(power_up_sequence)
-    else `uvm_error("FORMAL", "Incorrect power up sequence")
+3. **门控顺序约束**：
+   - 时钟门控必须在电源门控之前
+   - 避免时序冲突和交粘问题
+   - 保证逻辑稳定性
 
-endmodule
-```
+4. **上电时序验证**：
+   - 严格的上电序列：电源恢复→时钟恢复→数据释放
+   - 每步间隔1个周期延迟
+   - 确保系统稳定启动

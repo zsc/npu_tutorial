@@ -69,66 +69,15 @@ RTL设计很少能一次成功，通常需要多轮迭代优化。这就像雕�
 
 设计质量的评估不能只看单一指标。例如，一个设计可能达到了目标频率，但功耗超标50%，这在移动设备上是不可接受的。因此需要建立综合评分体系，下面的代码展示了一个实用的设计质量监控框架：
 
-```verilog
-// 设计质量评估框架
-module DesignQualityMonitor #(
-    parameter DESIGN_NAME = "NPU_TOP"
-)(
-    // 综合报告输入
-    input real target_freq_mhz,
-    input real actual_freq_mhz,
-    input real target_area_mm2,
-    input real actual_area_mm2,
-    input real target_power_mw,
-    input real actual_power_mw,
-    
-    // 质量指标输出
-    output reg timing_met,
-    output reg area_met,
-    output reg power_met,
-    output reg [7:0] overall_score
-);
-
-    // 评估逻辑
-    always @(*) begin
-        timing_met = (actual_freq_mhz >= target_freq_mhz);
-        area_met = (actual_area_mm2 <= target_area_mm2);
-        power_met = (actual_power_mw <= target_power_mw);
-        
-        // 计算综合得分
-        real timing_score = (actual_freq_mhz / target_freq_mhz) * 100;
-        real area_score = (target_area_mm2 / actual_area_mm2) * 100;
-        real power_score = (target_power_mw / actual_power_mw) * 100;
-        
-        overall_score = (timing_score * 0.4 + 
-                        area_score * 0.3 + 
-                        power_score * 0.3) / 100 * 255;
-    end
-    
-    // 生成优化建议
-    always @(*) begin
-        if (!timing_met) begin
-            $display("[%s] Timing not met. Suggestions:", DESIGN_NAME);
-            $display("  - Increase pipeline stages");
-            $display("  - Reduce logic levels");
-            $display("  - Optimize critical paths");
-        end
-        
-        if (!area_met) begin
-            $display("[%s] Area exceeded. Suggestions:", DESIGN_NAME);
-            $display("  - Enable resource sharing");
-            $display("  - Reduce data width where possible");
-            $display("  - Use memory instead of registers");
-        end
-        
-        if (!power_met) begin
-            $display("[%s] Power exceeded. Suggestions:", DESIGN_NAME);
-            $display("  - Add more clock gating");
-            $display("  - Reduce switching activity");
-            $display("  - Consider voltage scaling");
-        end
-    end
-endmodule
+```
+设计质量评估框架模块示例：
+- 输入：目标和实际的频率、面积、功耗指标
+- 输出：各项指标是否达标，以及综合评分
+- 评分算法：timing_score × 0.4 + area_score × 0.3 + power_score × 0.3
+- 自动生成优化建议：
+  * 时序未达标：增加流水线级数、减少逻辑层次、优化关键路径
+  * 面积超标：启用资源共享、减少数据位宽、使用存储器替代寄存器
+  * 功耗超标：增加时钟门控、减少翻转活动、考虑电压调节
 ```
 
 ## <a name="62"></a>6.2 编码规范
@@ -145,70 +94,29 @@ endmodule
 
 命名规则的制定需要平衡多个因素：描述性（名称要能说明用途）、简洁性（太长的名字会让代码难以阅读）、一致性（相似功能的信号应该有相似的命名模式）。下面的示例展示了业界广泛采用的命名规范：
 
-```verilog
-// ========== NPU RTL编码规范示例 ==========
+```
+NPU RTL编码规范示例：
 
-// 1. 模块命名：使用大驼峰命名法
-module NpuTopModule #(
-    parameter ARRAY_SIZE = 16,
-    parameter DATA_WIDTH = 8
-)(
-    // 2. 端口命名规则
-    // 时钟信号：clk_前缀
-    input  wire                     clk_sys,        // 系统时钟
-    input  wire                     clk_noc,        // NoC时钟
-    
-    // 复位信号：rst_前缀，_n表示低有效
-    input  wire                     rst_sys_n,      // 系统复位
-    input  wire                     rst_noc_n,      // NoC复位
-    
-    // 输入信号：_i后缀
-    input  wire [DATA_WIDTH-1:0]    weight_data_i,
-    input  wire                     weight_valid_i,
-    output wire                     weight_ready_o,
-    
-    // 输出信号：_o后缀
-    output wire [31:0]              result_data_o,
-    output wire                     result_valid_o,
-    input  wire                     result_ready_i,
-    
-    // 配置寄存器：cfg_前缀
-    input  wire [31:0]              cfg_layer_param,
-    input  wire [15:0]              cfg_tile_size
-);
+1. 模块命名规则：
+   - 使用大驼峰命名法（NpuTopModule）
+   - 参数化设计：ARRAY_SIZE、DATA_WIDTH
 
-    // 3. 内部信号命名
-    // 寄存器输出：_q后缀
-    reg  [DATA_WIDTH-1:0]           weight_buffer_q;
-    
-    // 寄存器输入：_d后缀
-    wire [DATA_WIDTH-1:0]           weight_buffer_d;
-    
-    // 组合逻辑中间信号：_comb后缀
-    wire [DATA_WIDTH-1:0]           partial_sum_comb;
-    
-    // 控制信号：描述性命名
-    wire                            compute_enable;
-    wire                            accumulate_start;
-    
-    // 4. 参数命名：全大写，下划线分隔
-    localparam BUFFER_DEPTH = 1024;
-    localparam FSM_IDLE = 3'b000;
-    localparam FSM_COMPUTE = 3'b001;
-    
-    // 5. Generate变量：gen_前缀
-    genvar gen_i, gen_j;
-    
-    // 6. 函数命名：小驼峰命名法
-    function [7:0] calculateChecksum;
-        input [31:0] data;
-        begin
-            calculateChecksum = data[7:0] ^ data[15:8] ^ 
-                               data[23:16] ^ data[31:24];
-        end
-    endfunction
+2. 端口命名规则：
+   - 时钟信号：clk_前缀（clk_sys, clk_noc）
+   - 复位信号：rst_前缀，_n表示低有效
+   - 输入信号：_i后缀
+   - 输出信号：_o后缀
+   - 配置寄存器：cfg_前缀
 
-endmodule
+3. 内部信号命名：
+   - 寄存器输出：_q后缀
+   - 寄存器输入：_d后缀
+   - 组合逻辑中间信号：_comb后缀
+   - 控制信号：描述性命名
+
+4. 参数命名：全大写，下划线分隔
+5. Generate变量：gen_前缀
+6. 函数命名：小驼峰命名法（calculateChecksum）
 ```
 
 ### 6.2.2 模块化设计原则
@@ -219,92 +127,27 @@ Google TPU的设计团队分享过一个经验：他们将整个TPU分解为约2
 
 SystemVerilog的interface构造为模块化设计提供了强大支持。相比传统的端口列表，interface可以将相关信号组织在一起，大大简化了模块间的连接。在一个典型的NPU项目中，使用interface可以减少70%的连线代码，显著降低连接错误的可能性。
 
-```verilog
-// 良好的模块划分示例
-module NpuComputeCluster #(
-    parameter CLUSTER_ID = 0,
-    parameter PE_ROWS = 4,
-    parameter PE_COLS = 4
-)(
-    input  wire         clk,
-    input  wire         rst_n,
-    
-    // 标准化接口
-    NpuDataInterface.slave      data_if,
-    NpuControlInterface.slave   ctrl_if,
-    NpuConfigInterface.slave    cfg_if
-);
+```
+模块化设计示例：
 
-    // ===== 模块化原则 =====
-    // 1. 单一职责：每个模块只负责一个功能
-    // 2. 接口清晰：使用SystemVerilog interface
-    // 3. 参数化设计：便于复用和配置
-    // 4. 层次化组织：自顶向下分解
-    
-    // 子模块实例化
-    genvar row, col;
-    generate
-        for (row = 0; row < PE_ROWS; row = row + 1) begin : gen_pe_row
-            for (col = 0; col < PE_COLS; col = col + 1) begin : gen_pe_col
-                ProcessingElement #(
-                    .PE_ID(row * PE_COLS + col),
-                    .DATA_WIDTH(data_if.DATA_WIDTH)
-                ) u_pe (
-                    .clk        (clk),
-                    .rst_n      (rst_n),
-                    .north_i    (pe_north_conn[row][col]),
-                    .south_o    (pe_south_conn[row][col]),
-                    .west_i     (pe_west_conn[row][col]),
-                    .east_o     (pe_east_conn[row][col]),
-                    .config_i   (pe_config[row][col])
-                );
-            end
-        end
-    endgenerate
-    
-    // 本地控制器
-    ClusterController #(
-        .CLUSTER_ID(CLUSTER_ID)
-    ) u_controller (
-        .clk        (clk),
-        .rst_n      (rst_n),
-        .ctrl_if    (ctrl_if),
-        .pe_enable  (pe_enable),
-        .pe_mode    (pe_mode)
-    );
-    
-    // 数据分发网络
-    DataDistributionNetwork #(
-        .NUM_PE(PE_ROWS * PE_COLS)
-    ) u_data_network (
-        .clk        (clk),
-        .rst_n      (rst_n),
-        .data_if    (data_if),
-        .pe_data    (pe_data_conn)
-    );
+模块化原则：
+1. 单一职责：每个模块只负责一个功能
+2. 接口清晰：使用SystemVerilog interface
+3. 参数化设计：便于复用和配置
+4. 层次化组织：自顶向下分解
 
-endmodule
+NpuComputeCluster模块组成：
+- 参数：CLUSTER_ID、PE_ROWS、PE_COLS
+- 子模块：
+  * ProcessingElement阵列（使用generate生成）
+  * ClusterController（本地控制器）
+  * DataDistributionNetwork（数据分发网络）
 
-// SystemVerilog Interface定义
-interface NpuDataInterface #(
-    parameter DATA_WIDTH = 256,
-    parameter ADDR_WIDTH = 32
-);
-    logic [DATA_WIDTH-1:0]  data;
-    logic [ADDR_WIDTH-1:0]  addr;
-    logic                   valid;
-    logic                   ready;
-    
-    modport master (
-        output data, addr, valid,
-        input  ready
-    );
-    
-    modport slave (
-        input  data, addr, valid,
-        output ready
-    );
-endinterface
+SystemVerilog Interface优势：
+- 封装相关信号（data, addr, valid, ready）
+- modport定义不同视角（master/slave）
+- 参数化位宽支持
+- 减少连线错误
 ```
 
 ### 6.2.3 可综合RTL编码准则
@@ -315,226 +158,69 @@ endinterface
 
 可综合RTL编码的核心原则包括：1）明确区分时序逻辑和组合逻辑；2）避免产生锁存器（除非明确需要）；3）确保所有条件分支都有明确的赋值；4）使用综合工具友好的编码模式。下面的代码展示了这些原则的具体应用：
 
-```verilog
-// ===== 可综合RTL编码示例 =====
+```
+可综合RTL编码示例：
 
-module SynthesizableDesign (
-    input  wire         clk,
-    input  wire         rst_n,
-    input  wire [7:0]   data_in,
-    input  wire         data_valid,
-    output reg  [15:0]  data_out,
-    output reg          data_ready
-);
+1. 时序逻辑规范：
+   - 统一使用非阻塞赋值 (<=)
+   - always @(posedge clk or negedge rst_n)
+   - 复位优先处理
 
-    // 1. 时序逻辑：统一使用非阻塞赋值
-    reg [7:0] data_reg_q;
-    reg [2:0] state_q;
-    
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            data_reg_q <= 8'h00;
-            state_q <= 3'b000;
-        end else begin
-            data_reg_q <= data_in;    // 非阻塞赋值
-            state_q <= next_state;     // 非阻塞赋值
-        end
-    end
-    
-    // 2. 组合逻辑：使用阻塞赋值，完整的条件覆盖
-    reg [2:0] next_state;
-    reg [15:0] compute_result;
-    
-    always @(*) begin
-        // 默认赋值，避免锁存器
-        next_state = state_q;
-        compute_result = 16'h0000;
-        data_ready = 1'b0;
-        
-        case (state_q)
-            3'b000: begin  // IDLE
-                if (data_valid) begin
-                    next_state = 3'b001;
-                end
-            end
-            
-            3'b001: begin  // COMPUTE
-                compute_result = {data_reg_q, data_in};  // 阻塞赋值
-                next_state = 3'b010;
-            end
-            
-            3'b010: begin  // OUTPUT
-                data_ready = 1'b1;
-                if (data_valid) begin
-                    next_state = 3'b001;
-                end else begin
-                    next_state = 3'b000;
-                end
-            end
-            
-            default: begin  // 必须有default分支
-                next_state = 3'b000;
-            end
-        endcase
-    end
-    
-    // 3. 输出寄存器化，改善时序
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            data_out <= 16'h0000;
-        end else begin
-            data_out <= compute_result;
-        end
-    end
-    
-    // 4. 避免的写法示例（注释形式）
-    // initial begin              // 不可综合
-    //     data_out = 0;
-    // end
-    
-    // always @(data_in) begin    // 不完整的敏感列表
-    //     result = data_in + offset;
-    // end
-    
-    // #10 data_out = result;     // 延时语句不可综合
+2. 组合逻辑规范：
+   - 使用阻塞赋值 (=)
+   - always @(*) 或 always_comb
+   - 默认赋值避免锁存器
+   - 完整case分支（必须有default）
 
-endmodule
+3. 状态机设计：
+   - IDLE -> COMPUTE -> OUTPUT
+   - 状态编码：3'b000, 3'b001, 3'b010
+   - next_state逻辑与state寄存器分离
 
-// 5. 推荐的参数化移位器实现
-module ParametricShifter #(
-    parameter WIDTH = 32,
-    parameter SHIFT_WIDTH = 5
-)(
-    input  wire [WIDTH-1:0]         data_in,
-    input  wire [SHIFT_WIDTH-1:0]   shift_amount,
-    input  wire                     shift_dir,  // 0: left, 1: right
-    output wire [WIDTH-1:0]         data_out
-);
+4. 输出寄存器化：
+   - 改善时序性能
+   - 避免组合逻辑直接输出
 
-    // 使用generate实现可配置的移位器
-    wire [WIDTH-1:0] shift_stages [SHIFT_WIDTH:0];
-    assign shift_stages[0] = data_in;
-    
-    genvar i;
-    generate
-        for (i = 0; i < SHIFT_WIDTH; i = i + 1) begin : gen_shift
-            assign shift_stages[i+1] = shift_amount[i] ? 
-                (shift_dir ? 
-                    (shift_stages[i] >> (1 << i)) : 
-                    (shift_stages[i] << (1 << i))) : 
-                shift_stages[i];
-        end
-    endgenerate
-    
-    assign data_out = shift_stages[SHIFT_WIDTH];
+5. 参数化移位器实现：
+   - 使用generate语句
+   - 多级移位结构
+   - 支持左右移位
+   - 可配置位宽和移位量
 
-endmodule
+避免的写法：
+- initial语句（不可综合）
+- 不完整敏感列表
+- 延时语句#
+- 混合使用阻塞/非阻塞赋值
 ```
 
 ### 6.2.4 RTL编码反例（Anti-patterns）
 
 > **⚠️ 常见的RTL编码错误示例：**
 
-```verilog
-// ❌ 错误示例1：产生锁存器的组合逻辑
-module bad_latch_example (
-    input wire [1:0] sel,
-    input wire [7:0] a, b, c,
-    output reg [7:0] out
-);
-    // 错误：不完整的条件覆盖会产生锁存器
-    always @(*) begin
-        case (sel)
-            2'b00: out = a;
-            2'b01: out = b;
-            2'b10: out = c;
-            // 缺少default或2'b11的情况！
-        endcase
-    end
-endmodule
+```
+RTL编码反例分析：
 
-// ✅ 正确做法：完整的条件覆盖
-module good_comb_example (
-    input wire [1:0] sel,
-    input wire [7:0] a, b, c,
-    output reg [7:0] out
-);
-    always @(*) begin
-        case (sel)
-            2'b00: out = a;
-            2'b01: out = b;
-            2'b10: out = c;
-            default: out = 8'h00;  // 必须有default
-        endcase
-    end
-endmodule
+错误示例1：产生锁存器
+- 问题：case语句不完整覆盖（缺少2'b11分支）
+- 后果：综合工具推断出锁存器
+- 解决：添加default分支或完整枚举所有情况
 
-// ❌ 错误示例2：阻塞与非阻塞赋值混用
-module bad_assignment_mix (
-    input wire clk, rst_n,
-    input wire [7:0] d,
-    output reg [7:0] q
-);
-    reg [7:0] temp;
-    
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            temp = 8'h00;    // 错误：时序逻辑中使用阻塞赋值
-            q <= 8'h00;
-        end else begin
-            temp = d;        // 错误：混用赋值类型
-            q <= temp;       // 会导致仿真与综合不一致
-        end
-    end
-endmodule
+错误示例2：赋值类型混用
+- 问题：时序逻辑中混用阻塞(=)和非阻塞(<=)赋值
+- 后果：仿真与综合结果不一致
+- 解决：时序逻辑统一使用<=，组合逻辑使用=
 
-// ✅ 正确做法：时序逻辑统一使用非阻塞赋值
-module good_sequential (
-    input wire clk, rst_n,
-    input wire [7:0] d,
-    output reg [7:0] q
-);
-    reg [7:0] temp;
-    
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            temp <= 8'h00;
-            q <= 8'h00;
-        end else begin
-            temp <= d;
-            q <= temp;
-        end
-    end
-endmodule
+错误示例3：组合逻辑环路
+- 问题：data_out依赖internal，internal又依赖data_out
+- 后果：仿真出现X态传播，综合出现timing loop
+- 解决：使用寄存器打破组合环路
 
-// ❌ 错误示例3：组合逻辑环路
-module bad_comb_loop (
-    input wire enable,
-    input wire [7:0] data_in,
-    output wire [7:0] data_out
-);
-    wire [7:0] internal;
-    
-    // 错误：创建了组合逻辑环路
-    assign internal = enable ? data_in : data_out;
-    assign data_out = internal + 1;
-    // 这会导致仿真时出现X态传播，综合时出现timing loop
-endmodule
-
-// ✅ 正确做法：打破组合环路
-module good_registered (
-    input wire clk, rst_n,
-    input wire enable,
-    input wire [7:0] data_in,
-    output reg [7:0] data_out
-);
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n)
-            data_out <= 8'h00;
-        else if (enable)
-            data_out <= data_in + 1;
-    end
-endmodule
+这些错误的危害：
+- 锁存器：对毛刺敏感，时序分析困难，功耗高，测试覆盖率低
+- 赋值混用：仿真行为与综合结果不一致，导致硅前验证失效
+- 组合环路：产生振荡，时序无法收敛，芯片功能失效
+- 预防措施：使用lint工具（如Spyglass）在早期发现这些问题
 ```
 
 > **这些错误的危害：**
@@ -555,268 +241,71 @@ Intel在其AI加速器中采用了一种创新的方法：GALS（Globally Asynch
 
 时钟域划分的艺术在于找到性能、功耗和复杂度之间的平衡点。过多的时钟域会增加CDC的复杂度和验证难度，过少的时钟域又会限制系统的灵活性和能效优化空间。Apple的Neural Engine采用了一种精巧的设计：在高负载时所有模块运行在高频率，在低负载时部分模块可以降频甚至关闭，这种动态调整实现了极佳的能效比。
 
-```verilog
-// NPU典型时钟域划分
-module NpuClockDomains (
-    // 多时钟输入
-    input wire clk_sys,          // 系统时钟 (1GHz)
-    input wire clk_noc,          // NoC时钟 (800MHz)
-    input wire clk_ddr,          // DDR时钟 (2.4GHz)
-    input wire clk_cfg,          // 配置时钟 (100MHz)
-    input wire clk_dbg,          // 调试时钟 (50MHz)
-    
-    input wire rst_n
-);
+```
+NPU典型时钟域划分：
+1. 计算域 (clk_sys @ 1GHz)
+   - MAC阵列
+   - 向量处理单元
+   - 本地SRAM
 
-    // ===== 时钟域功能划分 =====
-    // 1. 计算域 (clk_sys)
-    //    - MAC阵列
-    //    - 向量处理单元
-    //    - 本地SRAM
-    
-    // 2. 互连域 (clk_noc)
-    //    - 片上网络
-    //    - DMA控制器
-    //    - 全局缓冲区
-    
-    // 3. 存储域 (clk_ddr)
-    //    - DDR控制器
-    //    - PHY接口
-    
-    // 4. 低速域 (clk_cfg)
-    //    - 配置寄存器
-    //    - 中断控制器
-    //    - 电源管理
-    
-    // 5. 调试域 (clk_dbg)
-    //    - 调试接口
-    //    - 性能计数器
-    //    - Trace缓冲区
+2. 互连域 (clk_noc @ 800MHz)
+   - 片上网络
+   - DMA控制器
+   - 全局缓冲区
 
-endmodule
+3. 存储域 (clk_ddr @ 2.4GHz)
+   - DDR控制器
+   - PHY接口
+
+4. 低速域 (clk_cfg @ 100MHz)
+   - 配置寄存器
+   - 中断控制器
+   - 电源管理
+
+5. 调试域 (clk_dbg @ 50MHz)
+   - 调试接口
+   - 性能计数器
+   - Trace缓冲区
 ```
 
 ### 6.3.2 CDC同步器设计
 
 跨时钟域同步器是CDC设计的核心。一个设计不当的同步器可能在实验室环境下工作正常，但在实际产品中出现间歇性故障。这种问题的诊断极其困难，因为它可能只在特定的温度、电压和时序条件下出现。一个著名的案例是Intel Pentium的FDIV bug，虽然不是CDC问题，但它展示了一个小错误可能带来的巨大损失。
 
-```verilog
-// 1. 单比特信号同步器（2级触发器）
-module SyncBit #(
-    parameter SYNC_STAGES = 2  // 可配置同步级数
-)(
-    input  wire clk_dst,
-    input  wire rst_dst_n,
-    input  wire data_in,
-    output wire data_out
-);
-
-    reg [SYNC_STAGES-1:0] sync_regs;
-    
-    always @(posedge clk_dst or negedge rst_dst_n) begin
-        if (!rst_dst_n) begin
-            sync_regs <= {SYNC_STAGES{1'b0}};
-        end else begin
-            sync_regs <= {sync_regs[SYNC_STAGES-2:0], data_in};
-        end
-    end
-    
-    assign data_out = sync_regs[SYNC_STAGES-1];
-
-endmodule
+```
+1. 单比特信号同步器（2级触发器）
+   - 参数：可配置同步级数（默认2级）
+   - 功能：使用移位寄存器链实现跨时钟域同步
+   - 原理：通过多级触发器降低亚稳态传播概率
+   - 输出：同步后的信号从最后一级寄存器输出
+```
 
 // 2. 多比特数据CDC - 握手协议
-module HandshakeCDC #(
-    parameter DATA_WIDTH = 32
-)(
-    // 源时钟域
-    input  wire                     clk_src,
-    input  wire                     rst_src_n,
-    input  wire [DATA_WIDTH-1:0]    data_src,
-    input  wire                     valid_src,
-    output wire                     ready_src,
-    
-    // 目标时钟域
-    input  wire                     clk_dst,
-    input  wire                     rst_dst_n,
-    output wire [DATA_WIDTH-1:0]    data_dst,
-    output wire                     valid_dst,
-    input  wire                     ready_dst
-);
-
-    // 源域：数据寄存和请求生成
-    reg [DATA_WIDTH-1:0] data_hold_q;
-    reg req_q;
-    wire ack_sync_src;
-    
-    always @(posedge clk_src or negedge rst_src_n) begin
-        if (!rst_src_n) begin
-            data_hold_q <= {DATA_WIDTH{1'b0}};
-            req_q <= 1'b0;
-        end else begin
-            if (valid_src && ready_src) begin
-                data_hold_q <= data_src;
-                req_q <= 1'b1;
-            end else if (ack_sync_src) begin
-                req_q <= 1'b0;
-            end
-        end
-    end
-    
-    assign ready_src = !req_q || ack_sync_src;
-    
-    // 请求信号同步到目标域
-    wire req_sync_dst;
-    SyncBit u_req_sync (
-        .clk_dst    (clk_dst),
-        .rst_dst_n  (rst_dst_n),
-        .data_in    (req_q),
-        .data_out   (req_sync_dst)
-    );
-    
-    // 目标域：接收数据和应答生成
-    reg ack_q;
-    reg req_sync_d1;
-    
-    always @(posedge clk_dst or negedge rst_dst_n) begin
-        if (!rst_dst_n) begin
-            ack_q <= 1'b0;
-            req_sync_d1 <= 1'b0;
-        end else begin
-            req_sync_d1 <= req_sync_dst;
-            
-            if (req_sync_dst && !req_sync_d1) begin  // 上升沿检测
-                ack_q <= 1'b1;
-            end else if (!req_sync_dst) begin
-                ack_q <= 1'b0;
-            end
-        end
-    end
-    
-    assign data_dst = data_hold_q;  // 数据保持稳定
-    assign valid_dst = req_sync_dst && !ack_q;
-    
-    // 应答信号同步回源域
-    SyncBit u_ack_sync (
-        .clk_dst    (clk_src),
-        .rst_dst_n  (rst_src_n),
-        .data_in    (ack_q),
-        .data_out   (ack_sync_src)
-    );
-
-endmodule
+握手协议 CDC实现原理：
+- 参数：DATA_WIDTH（数据位宽）
+- 源域操作：
+  * 数据寄存：当valid_src且ready_src时锁存数据
+  * 请求生成：设置req信号并保持直到收到ack
+- 目标域操作：
+  * 请求检测：检测 req上升沿
+  * 应答生成：生成ack信号并同步回源域
+- 数据保持：握手期间数据必须保持稳定
+- ready/valid採掌：实现流控制
 
 // 3. 异步FIFO实现
-module AsyncFIFO #(
-    parameter DATA_WIDTH = 32,
-    parameter ADDR_WIDTH = 4,
-    parameter DEPTH = 16
-)(
-    // 写时钟域
-    input  wire                     wr_clk,
-    input  wire                     wr_rst_n,
-    input  wire                     wr_en,
-    input  wire [DATA_WIDTH-1:0]    wr_data,
-    output wire                     wr_full,
-    
-    // 读时钟域
-    input  wire                     rd_clk,
-    input  wire                     rd_rst_n,
-    input  wire                     rd_en,
-    output wire [DATA_WIDTH-1:0]    rd_data,
-    output wire                     rd_empty
-);
-
-    // 双端口RAM
-    reg [DATA_WIDTH-1:0] mem [DEPTH-1:0];
-    
-    // 写指针（二进制和格雷码）
-    reg [ADDR_WIDTH:0] wr_ptr_bin_q;
-    reg [ADDR_WIDTH:0] wr_ptr_gray_q;
-    wire [ADDR_WIDTH:0] wr_ptr_bin_next;
-    wire [ADDR_WIDTH:0] wr_ptr_gray_next;
-    
-    // 读指针（二进制和格雷码）
-    reg [ADDR_WIDTH:0] rd_ptr_bin_q;
-    reg [ADDR_WIDTH:0] rd_ptr_gray_q;
-    wire [ADDR_WIDTH:0] rd_ptr_bin_next;
-    wire [ADDR_WIDTH:0] rd_ptr_gray_next;
-    
-    // 同步后的指针
-    wire [ADDR_WIDTH:0] wr_ptr_gray_sync;
-    wire [ADDR_WIDTH:0] rd_ptr_gray_sync;
-    
-    // 二进制转格雷码
-    function [ADDR_WIDTH:0] bin2gray(input [ADDR_WIDTH:0] bin);
-        bin2gray = bin ^ (bin >> 1);
-    endfunction
-    
-    // 格雷码转二进制
-    function [ADDR_WIDTH:0] gray2bin(input [ADDR_WIDTH:0] gray);
-        integer i;
-        begin
-            gray2bin[ADDR_WIDTH] = gray[ADDR_WIDTH];
-            for (i = ADDR_WIDTH-1; i >= 0; i = i-1) begin
-                gray2bin[i] = gray2bin[i+1] ^ gray[i];
-            end
-        end
-    endfunction
-    
-    // 写逻辑
-    assign wr_ptr_bin_next = wr_ptr_bin_q + (wr_en && !wr_full);
-    assign wr_ptr_gray_next = bin2gray(wr_ptr_bin_next);
-    
-    always @(posedge wr_clk or negedge wr_rst_n) begin
-        if (!wr_rst_n) begin
-            wr_ptr_bin_q <= 0;
-            wr_ptr_gray_q <= 0;
-        end else begin
-            wr_ptr_bin_q <= wr_ptr_bin_next;
-            wr_ptr_gray_q <= wr_ptr_gray_next;
-            
-            if (wr_en && !wr_full) begin
-                mem[wr_ptr_bin_q[ADDR_WIDTH-1:0]] <= wr_data;
-            end
-        end
-    end
-    
-    // 读逻辑
-    assign rd_ptr_bin_next = rd_ptr_bin_q + (rd_en && !rd_empty);
-    assign rd_ptr_gray_next = bin2gray(rd_ptr_bin_next);
-    
-    always @(posedge rd_clk or negedge rd_rst_n) begin
-        if (!rd_rst_n) begin
-            rd_ptr_bin_q <= 0;
-            rd_ptr_gray_q <= 0;
-        end else begin
-            rd_ptr_bin_q <= rd_ptr_bin_next;
-            rd_ptr_gray_q <= rd_ptr_gray_next;
-        end
-    end
-    
-    assign rd_data = mem[rd_ptr_bin_q[ADDR_WIDTH-1:0]];
-    
-    // 指针同步
-    SyncBus #(.WIDTH(ADDR_WIDTH+1)) u_wr2rd_sync (
-        .clk_dst    (rd_clk),
-        .rst_dst_n  (rd_rst_n),
-        .data_in    (wr_ptr_gray_q),
-        .data_out   (wr_ptr_gray_sync)
-    );
-    
-    SyncBus #(.WIDTH(ADDR_WIDTH+1)) u_rd2wr_sync (
-        .clk_dst    (wr_clk),
-        .rst_dst_n  (wr_rst_n),
-        .data_in    (rd_ptr_gray_q),
-        .data_out   (rd_ptr_gray_sync)
-    );
-    
-    // 空满判断
-    assign wr_full = (wr_ptr_gray_next == {~rd_ptr_gray_sync[ADDR_WIDTH:ADDR_WIDTH-1], 
-                                            rd_ptr_gray_sync[ADDR_WIDTH-2:0]});
-    assign rd_empty = (rd_ptr_gray_q == wr_ptr_gray_sync);
-
-endmodule
+异步FIFO核心设计要点：
+- 参数：数据位宽、地址位宽、深度
+- 存储：双端口RAM实现
+- 指针管理：
+  * 读写指针分别维护二进制和格雷码版本
+  * 格雷码转换：bin ^ (bin >> 1)
+  * 反向转换通过递归异或
+- 同步机制：
+  * 写指针格雷码同步到读时钟域
+  * 读指针格雷码同步到写时钟域
+- 空满判断：
+  * 空：读指针 == 同步后的写指针
+  * 满：写指针高位取反后与读指针相等
 ```
 
 ### 6.3.3 CDC方案对比与选择
@@ -1018,88 +507,30 @@ endmodule
 <details>
 <summary>查看答案</summary>
 
-```verilog
-module ResetManager (
-    input wire clk,
-    input wire por_n,           // Power-on reset (highest priority)
-    input wire soft_rst_req,    // Software reset request
-    input wire wdt_rst_n,       // Watchdog reset
-    
-    // APB接口用于状态查询
-    input wire psel,
-    input wire penable,
-    input wire pwrite,
-    input wire [7:0] paddr,
-    input wire [31:0] pwdata,
-    output reg [31:0] prdata,
-    
-    // 复位输出
-    output wire sys_rst_n
-);
+```
+复位管理器实现要点：
 
-    // 复位状态寄存器
-    reg [2:0] rst_source;  // 记录复位源
-    reg soft_rst_pending;
-    
-    // 复位源编码
-    localparam RST_POR = 3'b001;
-    localparam RST_SOFT = 3'b010;
-    localparam RST_WDT = 3'b100;
-    
-    // 软件复位脉冲生成
-    reg soft_rst_req_d1;
-    wire soft_rst_pulse = soft_rst_req && !soft_rst_req_d1;
-    
-    always @(posedge clk or negedge por_n) begin
-        if (!por_n) begin
-            soft_rst_req_d1 <= 1'b0;
-            soft_rst_pending <= 1'b0;
-            rst_source <= RST_POR;
-        end else begin
-            soft_rst_req_d1 <= soft_rst_req;
-            
-            // 软件复位请求锁存
-            if (soft_rst_pulse) begin
-                soft_rst_pending <= 1'b1;
-            end else if (!sys_rst_n) begin
-                soft_rst_pending <= 1'b0;
-            end
-            
-            // 复位源记录（优先级：POR > WDT > SOFT）
-            if (!por_n) begin
-                rst_source <= RST_POR;
-            end else if (!wdt_rst_n) begin
-                rst_source <= RST_WDT;
-            end else if (soft_rst_pending) begin
-                rst_source <= RST_SOFT;
-            end
-        end
-    end
-    
-    // 复位输出生成
-    wire rst_combined = por_n & wdt_rst_n & !soft_rst_pending;
-    
-    // 异步复位同步释放
-    ResetSync u_rst_sync (
-        .clk         (clk),
-        .async_rst_n (rst_combined),
-        .sync_rst_n  (sys_rst_n)
-    );
-    
-    // APB读操作
-    always @(posedge clk or negedge por_n) begin
-        if (!por_n) begin
-            prdata <= 32'h0;
-        end else if (psel && !pwrite && penable) begin
-            case (paddr[7:0])
-                8'h00: prdata <= {29'h0, rst_source};  // 复位源状态
-                8'h04: prdata <= {31'h0, sys_rst_n};   // 当前复位状态
-                default: prdata <= 32'h0;
-            endcase
-        end
-    end
+1. 输入接口：
+   - por_n：上电复位（最高优先级）
+   - soft_rst_req：软件复位请求
+   - wdt_rst_n：看门狗复位
+   - APB接口：用于状态查询
 
-endmodule
+2. 复位优先级管理：
+   - POR > WDT > SOFT
+   - 使用3位编码记录复位源
+   - 软件复位通过脉冲检测和锁存实现
+
+3. 核心功能：
+   - 软件复位脉冲生成：边沿检测
+   - 复位源记录和优先级判断
+   - 合并所有复位源：AND逻辑
+   - 调用ResetSync实现异步复位同步释放
+
+4. APB状态查询：
+   - 地址0x00：读取复位源状态
+   - 地址0x04：读取当前复位状态
+   - 只读寄存器，供软件调试使用
 ```
 
 </details>
