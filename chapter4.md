@@ -85,6 +85,62 @@ MAC单元采用3级流水线设计：
 TPU v1只支持INT8，通过大规模并行（256×256阵列）弥补精度限制。这种"以量取胜"的策略在推理场景下取得了巨大成功，但在训练场景下不得不在TPU v2中加入FP16/BF16支持。
 
 ### 4.1.3 MAC阵列组织
+
+#### 数据复用的数学基础
+
+矩阵乘法C = A×B的计算复杂度为O(M×N×K)，但聪明的数据复用可以大幅降低内存访问。以M=N=K=1024为例：
+
+**三种基本复用模式的理论分析：**
+
+| 复用模式 | 内存访问次数 | 复用因子 | 片上存储需求 | 适用场景 |
+|---------|------------|---------|------------|----------|
+| 无复用 | 3×N³ | 1 | O(1) | 内存带宽无限 |
+| 输入复用 | N³ + 2N² | N | O(N) | 批处理推理 |
+| 权重复用 | 2N³ + N² | N | O(N) | 单样本推理 |
+| 输出复用 | 2N³ + N² | N | O(N) | 训练场景 |
+
+数学证明：对于分块矩阵乘法，最优分块大小Tₘ×Tₙ×Tₖ应满足：
+- Tₘ×Tₙ + Tₘ×Tₖ + Tₙ×Tₖ ≤ 片上存储容量
+- max(Tₘ×Tₙ×Tₖ) 获得最大计算密度
+
+#### MAC阵列的拓扑选择
+
+**1. 一维阵列：简单但受限**
+- 线性排列，适合向量运算
+- 典型规模：32-128个MAC
+- 代表：早期DSP和ARM NEON
+
+**2. 二维阵列：主流选择**
+- 矩形网格，数据流动规则
+- 典型规模：16×16到256×256
+- 代表：Google TPU、华为达芬奇
+
+**3. 三维阵列：未来趋势**
+- 立方体结构，支持张量运算
+- 需要3D封装技术支持
+- 代表：Cerebras WSE（概念上的3D）
+
+#### 互连网络的关键设计
+
+**全局互连 vs 局部互连的权衡：**
+
+```
+全局互连（Crossbar）          局部互连（Mesh）
+┌─┬─┬─┬─┐                  ┌─┬─┬─┬─┐
+├─┼─┼─┼─┤                  │ │ │ │ │
+├─┼─┼─┼─┤                  ├─┼─┼─┼─┤
+├─┼─┼─┼─┤                  │ │ │ │ │
+└─┴─┴─┴─┘                  └─┴─┴─┴─┘
+面积：O(N²)                 面积：O(N)
+延迟：O(1)                  延迟：O(√N)
+功耗：高                    功耗：低
+```
+
+现代NPU通常采用分层互连：
+- **第一层：** PE内部的局部连接
+- **第二层：** PE簇（如8×8）内的全连接
+- **第三层：** 簇间的片上网络（NoC）
+
 **二维MAC阵列组织设计：**
 
 8×8 MAC阵列的关键设计要点：
@@ -230,6 +286,94 @@ Chisel版本特点：
 | 延迟 | 较低 | 较高（需要数据对齐） | WS: 实时推理<br>OS: 批处理训练 |
 | 能效 | 权重读取能耗低 | 部分和读写能耗低 | WS: 边缘设备<br>OS: 数据中心 |
 
+### 4.2.6 脉动阵列的性能建模
+
+#### 理论性能分析
+
+对于N×N的脉动阵列执行M×K×N的矩阵乘法：
+
+**计算吞吐率：**
+- 理论峰值：2N² OPS/cycle（每个PE每周期2次操作）
+- 实际吞吐率：2N² × 利用率
+- 利用率 = min(M/N, K/N, 1)
+
+**带宽需求：**
+```
+Weight Stationary:
+- 输入带宽： N × 数据宽度 bytes/cycle
+- 输出带宽： N × 数据宽度 bytes/cycle
+- 权重加载： N² × 数据宽度 bytes（一次性）
+
+Output Stationary:
+- 输入带宽： N × 数据宽度 bytes/cycle
+- 权重带宽： N × 数据宽度 bytes/cycle
+- 输出读写： N² × 数据宽度 bytes（最终）
+```
+
+#### 真实世界的性能瓶颈
+
+**1. 数据对齐开销（Data Skewing Overhead）**
+
+脉动阵列需要输入数据按特定时序错位输入，这需要额外的缓冲器：
+- Skew buffer大小： N × (N-1)/2 个元素
+- 对于256×256阵列，需要32K个缓冲单元
+- 增加了N-1个周期的启动延迟
+
+**2. 边界效应（Edge Effects）**
+
+当矩阵尺寸不是N的整数倍时：
+- 填充开销：(N - M%N) × (N - K%N) 个无效计算
+- 利用率下降：对于129×129矩阵在128×128阵列上，利用率仅25%
+
+**3. 流水线泡沫（Pipeline Bubbles）**
+
+切换不同计算任务时的空闲：
+- 清空流水线：N个周期
+- 重新加载权重：N个周期
+- 总开销：2N个周期/任务切换
+
+#### 现代脉动阵列的创新优化
+
+**1. 双缓冲技术（Double Buffering）**
+```
+时刻1: Buffer A计算，Buffer B加载下一批数据
+时刻2: Buffer B计算，Buffer A加载下一批数据
+```
+隐藏数据加载延迟，提高利用率
+
+**2. 可变维度支持（Variable Dimension Support）**
+- Nvidia Ampere：支持8/16/32/64等多种尺寸
+- 通过遮罩（masking）和路由重组实现
+- 减少填充开销，提高实际利用率
+
+**3. 稀疏支持（Sparsity Support）**
+- 跳过零值计算
+- 压缩数据表示
+- 动态PE分配
+
+### 4.2.7 未来脉动阵列的发展方向
+
+#### 3D脉动阵列
+
+将传统2D脉动阵列扩展到第三维度：
+- 支持张量运算的原生加速
+- 利用3D封装技术的垂直互连
+- 适合Transformer等多维注意力计算
+
+#### 动态可重构脉动阵列
+
+根据工作负载动态调整：
+- 大矩阵：使用整个阵列
+- 小矩阵：划分成多个小阵列并行处理
+- 稀疏矩阵：重组成稀疏处理模式
+
+#### 近数据计算（Near-Data Computing）
+
+将脉动阵列与存储器集成：
+- 消除数据移动的能耗
+- 提供更高的内部带宽
+- 例子：三星的HBM-PIM技术
+
 ## <a name="43"></a>4.3 向量处理单元
 
 ### 4.3.1 SIMD架构设计
@@ -280,6 +424,71 @@ VPU的SIMD架构特点：
 | 池化单元 | max/avg pooling | 比较树/加法树 | 低 |
 | LUT单元 | sigmoid/tanh | 查找表+插值 | 中等 |
 | 归一化单元 | batch/layer norm | 乘法器+移位器 | 高 |
+
+#### 特殊功能单元的设计权衡
+
+**1. 激活函数单元的进化**
+
+从简单到复杂的激活函数硬件实现：
+
+| 激活函数 | 计算复杂度 | 硬件实现 | 精度要求 | 现代NPU支持 |
+|----------|----------|----------|----------|-------------|
+| ReLU | O(1) | 比较器 | 无损 | ✓ 全部 |
+| Leaky ReLU | O(1) | 比较+选择 | 无损 | ✓ 全部 |
+| Sigmoid | O(log N) | LUT+插值 | 16-bit | ✓ 部分 |
+| Tanh | O(log N) | LUT+插值 | 16-bit | ✓ 部分 |
+| GELU | O(N) | 多项式近似 | 16-bit | ✓ 高端 |
+| SiLU/Swish | O(N) | Sigmoid×x | 16-bit | ✓ 高端 |
+
+**2. 查找表（LUT）优化技术**
+
+现代NPU使用分段线性插值来平衡精度和存储：
+
+```
+分段策略：
+- 线性区域：粗粒度分段（如16段）
+- 非线性区域：细粒度分段（如128段）
+- 饱和区域：直接返回常数
+
+存储需求：
+- 均匀分段：256×2×16-bit = 1KB
+- 自适应分段：512×3×16-bit = 3KB
+```
+
+**3. 归一化单元的挑战**
+
+LayerNorm和BatchNorm的硬件实现难点：
+- 需要计算均值和方差（两遍扫描）
+- 除法和平方根运算昂贵
+- 数值稳定性要求高
+
+解决方案：
+- **在线算法：** Welford算法单遍计算均值和方差
+- **快速倒数平方根：** Newton-Raphson迭代
+- **融合计算：** 与前后层操作合并
+
+#### 现代向量单元的创新设计
+
+**1. 多函数融合单元（Multi-Function Fusion Unit）**
+
+NVIDIA H100的Transformer Engine可以在一个单元中完成：
+- MatMul → Add Bias → LayerNorm → Activation
+- 减少中间结果的存储
+- 提高5倍能效
+
+**2. 可编程向量单元（Programmable Vector Unit）**
+
+Intel Habana Gaudi的TPC（Tensor Processor Core）：
+- VLIW架构，支持自定义指令
+- 用户可编程新的激活函数
+- 适应未来的算法创新
+
+**3. 自适应精度单元（Adaptive Precision Unit）**
+
+Qualcomm Cloud AI 100的动态精度：
+- 根据输入范围自动选择精度
+- INT8/FP16/FP32自动切换
+- 保持精度同时最大化性能
 
 ### 4.3.3 TPU Softmax 实现深度解析
 
@@ -417,3 +626,426 @@ Tensor Core的矩阵运算：D = A×B + C
 - 减少50%的乘法运算
 - 适合经过稀疏优化的模型
 - NVIDIA Ampere首次引入此技术
+
+#### 稀疏计算的数学基础与硬件实现
+
+**稀疏性的类型与应用**
+
+| 稀疏类型 | 稀疏模式 | 压缩率 | 硬件复杂度 | 应用场景 |
+|---------|---------|--------|----------|----------|
+| 非结构化 | 随机分布 | 90%+ | 高 | 科学计算 |
+| 结构化 | 2:4, 4:8 | 50% | 中 | 深度学习 |
+| 块稀疏 | 16×16块 | 75%+ | 低 | 大模型 |
+| 通道稀疏 | 整通道剪枝 | 60%+ | 最低 | 边缘部署 |
+
+**结构化稀疏的优势**
+1. **可预测的内存访问：** 固定模式便于硬件优化
+2. **简化索引编码：** 2-bit索引足以表示2:4模式
+3. **保持对齐：** 不破坏SIMD并行性
+
+**硬件实现的关键技术**
+
+```
+2:4稀疏计算流程：
+1. 压缩存储：权重(2值) + 索引(2-bit)
+2. 索引解码：选择对应的激活值
+3. 并行计算：2个MAC单元代替4个
+4. 结果累加：与密集计算相同
+```
+
+#### 稀疏加速的未来方向
+
+**1. 动态稀疏（Dynamic Sparsity）**
+- 根据输入动态跳过零值
+- 需要复杂的零值检测和调度
+- 适合激活值稀疏
+
+**2. 级联稀疏（Cascading Sparsity）**
+- 利用权重和激活值的双重稀疏
+- 理论上可达4×加速
+- 需要复杂的运行时支持
+
+**3. 学习型稀疏（Learned Sparsity）**
+- 训练时学习最优稀疏模式
+- 与硬件约束协同设计
+- 例如：NVIDIA的结构化稀疏训练
+
+### 4.4.3 新兴计算范式
+
+#### 存内计算（Processing-in-Memory）
+
+**核心思想：** 将计算移到数据所在的地方，而不是将数据移到计算单元。
+
+| 技术方案 | 实现方式 | 优势 | 挑战 |
+|---------|---------|------|------|
+| DRAM-PIM | HBM内集成ALU | 高带宽 | 工艺复杂 |
+| SRAM-CIM | 6T SRAM改造 | 低延迟 | 容量有限 |
+| ReRAM-CIM | 电阻式存储 | 非易失 | 精度受限 |
+| Flash-CIM | 3D NAND计算 | 大容量 | 速度较慢 |
+
+#### 光子计算（Photonic Computing）
+
+**光学MAC单元原理：**
+- 乘法：光强度调制
+- 加法：光束合束
+- 累加：光电探测器积分
+
+**优势与挑战：**
+- ✓ 光速计算，零功耗传输
+- ✓ 天然并行，无电磁干扰
+- ✗ 难以实现非线性操作
+- ✗ 光电转换开销
+
+## 4.5 练习题
+
+### 理论题
+
+**1. MAC阵列设计分析**
+
+对于一个128×128的MAC阵列，执行256×512×128的矩阵乘法：
+a) 计算Weight Stationary模式下的数据复用率
+b) 分析所需的片上存储容量
+c) 估算带宽需求（假设 INT8数据类型）
+
+<details>
+<summary>点击查看答案</summary>
+
+a) 数据复用率分析：
+- 权重复用次数 = 256/128 = 2次
+- 每个权重在加载后被2个不同的输入批次使用
+- 总体数据复用率 = 2
+
+b) 片上存储需求：
+- 权重存储：128×128 = 16K 个INT8 = 16KB
+- 输入缓冲：128×2 = 256 个INT8 = 256B（双缓冲）
+- 输出缓冲：128×2 = 256 个INT32 = 1KB（双缓冲）
+- 总计约：17.25KB
+
+c) 带宽需求：
+- 输入带宽：128 bytes/cycle
+- 输出带宽：128×4 = 512 bytes/cycle（INT32）
+- 假设1GHz频率，总带宽 = 640 GB/s
+</details>
+
+**2. 脉动阵列性能优化**
+
+设计一个64×64的脉动阵列用于Transformer模型的矩阵乘法。如果典型的矩阵尺寸为：
+- Q, K, V矩阵：512×64
+- 注意力矩阵：512×512
+
+请分析：
+a) 哪种数据流模式（WS/OS）更适合？
+b) 如何分块以最大化利用率？
+c) 估算完成一个注意力层的周期数
+
+<details>
+<summary>点击查看答案</summary>
+
+a) 数据流模式选择：
+- Q×K^T计算：Output Stationary更优
+  - 输出尺寸512×512较大，避免频繁移动部分和
+- Attention×V计算：Weight Stationary更优
+  - V矩阵较小（512×64），可以完全驻留
+
+b) 分块策略：
+- Q, K, V分块：512×64 = 8×1块
+- 注意力矩阵分块：512×512 = 8×8 = 64块
+- 每块完美匹配64×64阵列，利用率100%
+
+c) 周期数估算：
+- Q×K^T: 8×8×1 = 64块 × 64周期 = 4096周期
+- Softmax: 512行 × 10周期 = 5120周期
+- Attention×V: 8×1×8 = 64块 × 64周期 = 4096周期
+- 总计约：13,312周期
+</details>
+
+**3. 向量处理单元设计**
+
+设计一个支持GELU激活函数的向量处理单元。GELU(x) = x × Φ(x)，其中Φ是标准正态分布的CDF。
+
+请回答：
+a) 如何设计LUT以平衡精度和存储？
+b) 估算所需的硬件资源
+c) 与ReLU相比，延迟增加多少？
+
+<details>
+<summary>点击查看答案</summary>
+
+a) LUT设计：
+- 输入范围：[-4, 4]（覆盖99.99%的值）
+- 分段策略：
+  - [-4, -2]: 32段（梯度较小）
+  - [-2, 2]: 192段（梯度较大）
+  - [2, 4]: 32段（梯度较小）
+- 每段存储：起点值(16-bit) + 斜率(16-bit)
+- 总存储：256 × 32-bit = 1KB
+
+b) 硬件资源：
+- LUT存储：1KB SRAM
+- 地址计算：8-bit比较器 + 编码器
+- 插值单元：1个16-bit乘法器 + 1个加法器
+- 最终乘法：1个16-bit乘法器（x × Φ(x)）
+
+c) 延迟对比：
+- ReLU: 1周期（简单比较）
+- GELU: 4周期
+  - 地址计算：1周期
+  - LUT读取：1周期
+  - 插值计算：1周期
+  - 最终乘法：1周期
+</details>
+
+### 设计题
+
+**4. Tensor Core优化**
+
+为一个边缘AI芯片设计4×4×4的Tensor Core。要求：
+- 支持INT8和FP16混合精度
+- 面积限制在1mm²以内（7nm工艺）
+- 功耗不超过2W
+
+请提供：
+a) 详细的微架构设计
+b) 面积和功耗估算
+c) 与传统MAC阵列的对比
+
+<details>
+<summary>点击查看答案</summary>
+
+a) 微架构设计：
+```
+Tensor Core组成：
+- 16个点积单元（DPU）
+- 每个DPU包含：
+  - 4个INT8乘法器（可组合2个FP16）
+  - 3级加法树
+  - 累加器（INT32/FP32）
+- 共享资源：
+  - 3个输入缓冲（4×4×8-bit×3）
+  - 1个输出缓冲（4×4×32-bit）
+  - 控制逻辑
+```
+
+b) PPA估算：
+- 面积：
+  - DPU阵列：0.6mm²
+  - 缓冲器：0.2mm²
+  - 控制逻辑：0.1mm²
+  - 总计：0.9mm²
+- 功耗（@1GHz）：
+  - 动态功耗：1.5W
+  - 静态功耗：0.3W
+  - 总计：1.8W
+
+c) 性能对比：
+- Tensor Core: 128 INT8 OPS/cycle
+- 16个MAC阵列: 32 INT8 OPS/cycle
+- 性能提升：4×
+- 能效提升：2.5×
+</details>
+
+**5. 稀疏计算加速器**
+
+设计一个支持2:4结构化稀疏的加速器。要求实现：
+- 与密集计算相比，提供2×的有效吞吐率
+- 支持16×16的矩阵块操作
+- 最小化索引存储开销
+
+<details>
+<summary>点击查看答案</summary>
+
+设计方案：
+
+1. **索引编码方案：**
+   - 每4个元素使用2-bit索引
+   - 16种可能的非零位置组合
+   - 每个16×16块需要16×4 = 64个索引
+   - 索引存储：128 bits/块
+
+2. **计算单元设计：**
+   ```
+   稀疏PE结构：
+   - 2个MAC单元（原有4个）
+   - 4:1输入选择器
+   - 索引解码器
+   - 累加器
+   ```
+
+3. **性能分析：**
+   - 计算减少：50%
+   - 存储减少：~45%（考虑索引开销）
+   - 有效吞吐率：1.8-2.0×
+</details>
+
+### 编程题
+
+**6. 实现一个简单的4×4脉动阵列仿真器**
+
+使用Python实现一个Weight Stationary脉动阵列仿真器，并验证矩阵乘法的正确性。
+
+<details>
+<summary>点击查看参考代码</summary>
+
+```python
+import numpy as np
+
+class SystolicArray:
+    def __init__(self, size=4):
+        self.size = size
+        self.weights = np.zeros((size, size))
+        self.pe_array = np.zeros((size, size))
+        
+    def load_weights(self, W):
+        """Load weights into the systolic array"""
+        assert W.shape == (self.size, self.size)
+        self.weights = W.copy()
+        
+    def compute(self, A, B):
+        """Compute C = A @ B using systolic array"""
+        assert A.shape[1] == B.shape[0] == self.size
+        M, K = A.shape
+        K, N = B.shape
+        
+        # Load weights from B
+        self.load_weights(B)
+        
+        # Initialize output
+        C = np.zeros((M, N))
+        
+        # Systolic computation with data skewing
+        for t in range(M + N + K - 2):
+            # Input activations (with skewing)
+            for i in range(self.size):
+                for j in range(self.size):
+                    if t - j >= 0 and t - j < M and i < K:
+                        act = A[t - j, i]
+                    else:
+                        act = 0
+                    
+                    # MAC operation
+                    if j == 0:
+                        self.pe_array[i, j] = act * self.weights[i, j]
+                    else:
+                        self.pe_array[i, j] = self.pe_array[i, j-1] + \
+                                              act * self.weights[i, j]
+            
+            # Collect outputs
+            for j in range(self.size):
+                row = t - j - K + 1
+                if 0 <= row < M:
+                    C[row, j] = self.pe_array[K-1, j]
+                    
+        return C
+
+# Test
+if __name__ == "__main__":
+    sa = SystolicArray(4)
+    A = np.random.randint(0, 10, (4, 4))
+    B = np.random.randint(0, 10, (4, 4))
+    
+    C_systolic = sa.compute(A, B)
+    C_reference = A @ B
+    
+    print("Systolic result:")
+    print(C_systolic)
+    print("\nReference result:")
+    print(C_reference)
+    print("\nMatch:", np.allclose(C_systolic, C_reference))
+```
+</details>
+
+**7. 向量处理单元的Softmax实现**
+
+用Verilog实现一个简化的Softmax计算单元，支持8个元素的并行处理。
+
+<details>
+<summary>点击查看参考代码框架</summary>
+
+```verilog
+module softmax_unit #(
+    parameter DATA_WIDTH = 16,
+    parameter NUM_ELEMENTS = 8
+)(
+    input clk,
+    input rst_n,
+    input valid_in,
+    input [DATA_WIDTH*NUM_ELEMENTS-1:0] data_in,
+    output reg valid_out,
+    output reg [DATA_WIDTH*NUM_ELEMENTS-1:0] data_out
+);
+
+    // State machine states
+    localparam IDLE = 0, FIND_MAX = 1, SUBTRACT = 2, 
+               EXP = 3, SUM = 4, DIVIDE = 5;
+    
+    reg [2:0] state;
+    reg [DATA_WIDTH-1:0] max_val;
+    reg [DATA_WIDTH-1:0] sum_exp;
+    
+    // Pipeline registers
+    reg [DATA_WIDTH*NUM_ELEMENTS-1:0] data_reg;
+    reg [DATA_WIDTH*NUM_ELEMENTS-1:0] exp_reg;
+    
+    // Simplified implementation outline
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            state <= IDLE;
+            valid_out <= 0;
+        end else begin
+            case (state)
+                IDLE: begin
+                    if (valid_in) begin
+                        data_reg <= data_in;
+                        state <= FIND_MAX;
+                    end
+                end
+                
+                FIND_MAX: begin
+                    // Find maximum using parallel comparison tree
+                    // ... (implementation details)
+                    state <= SUBTRACT;
+                end
+                
+                SUBTRACT: begin
+                    // Subtract max from all elements
+                    // ... (implementation details)
+                    state <= EXP;
+                end
+                
+                EXP: begin
+                    // Compute exponentials (using LUT)
+                    // ... (implementation details)
+                    state <= SUM;
+                end
+                
+                SUM: begin
+                    // Sum all exponentials
+                    // ... (implementation details)
+                    state <= DIVIDE;
+                end
+                
+                DIVIDE: begin
+                    // Divide each exp by sum
+                    // ... (implementation details)
+                    valid_out <= 1;
+                    state <= IDLE;
+                end
+            endcase
+        end
+    end
+    
+endmodule
+```
+</details>
+
+## 本章小结
+
+本章深入探讨了NPU计算核心的设计，从基础的MAC单元到复杂的脉动阵列，再到专门的向量处理单元和特殊计算单元。
+
+**关键要点：**
+1. MAC阵列是NPU的核心，通过大规模并行化实现高吞吐率
+2. 脉动阵列通过规则的数据流动实现高效的数据复用
+3. 向量处理单元补充了非线性操作的支持
+4. 现代NPU趋向于支持多精度、稀疏计算和新型计算范式
+
+下一章我们将讨论如何为这些计算核心设计高效的存储系统。
